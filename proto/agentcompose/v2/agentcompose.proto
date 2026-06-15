@@ -1,0 +1,600 @@
+syntax = "proto3";
+
+package agentcompose.v2;
+
+option go_package = "agent-compose/proto/agentcompose/v2;agentcomposev2";
+
+service ProjectService {
+  rpc ValidateProject(ValidateProjectRequest) returns (ValidateProjectResponse);
+  rpc ApplyProject(ApplyProjectRequest) returns (ApplyProjectResponse);
+  rpc GetProject(GetProjectRequest) returns (GetProjectResponse);
+  rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
+  rpc RemoveProject(RemoveProjectRequest) returns (RemoveProjectResponse);
+  rpc WatchProject(WatchProjectRequest) returns (stream WatchProjectResponse);
+}
+
+service RunService {
+  rpc RunAgent(RunAgentRequest) returns (RunAgentResponse);
+  rpc RunAgentStream(RunAgentRequest) returns (stream RunAgentStreamResponse);
+  rpc GetRun(GetRunRequest) returns (GetRunResponse);
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+  rpc StopRun(StopRunRequest) returns (StopRunResponse);
+}
+
+service ExecService {
+  rpc Exec(ExecRequest) returns (ExecResponse);
+  rpc ExecStream(ExecRequest) returns (stream ExecStreamResponse);
+}
+
+service ImageService {
+  rpc ListImages(ListImagesRequest) returns (ListImagesResponse);
+  rpc PullImage(PullImageRequest) returns (PullImageResponse);
+  rpc InspectImage(InspectImageRequest) returns (InspectImageResponse);
+  rpc RemoveImage(RemoveImageRequest) returns (RemoveImageResponse);
+}
+
+enum ProjectValidationSeverity {
+  PROJECT_VALIDATION_SEVERITY_UNSPECIFIED = 0;
+  PROJECT_VALIDATION_SEVERITY_WARNING = 1;
+  PROJECT_VALIDATION_SEVERITY_ERROR = 2;
+}
+
+enum ProjectChangeAction {
+  PROJECT_CHANGE_ACTION_UNSPECIFIED = 0;
+  PROJECT_CHANGE_ACTION_CREATED = 1;
+  PROJECT_CHANGE_ACTION_UPDATED = 2;
+  PROJECT_CHANGE_ACTION_REMOVED = 3;
+  PROJECT_CHANGE_ACTION_UNCHANGED = 4;
+}
+
+enum ProjectWatchEventType {
+  PROJECT_WATCH_EVENT_TYPE_UNSPECIFIED = 0;
+  PROJECT_WATCH_EVENT_TYPE_APPLIED = 1;
+  PROJECT_WATCH_EVENT_TYPE_REMOVED = 2;
+  PROJECT_WATCH_EVENT_TYPE_CHANGED = 3;
+}
+
+enum RunStatus {
+  RUN_STATUS_UNSPECIFIED = 0;
+  RUN_STATUS_PENDING = 1;
+  RUN_STATUS_RUNNING = 2;
+  RUN_STATUS_SUCCEEDED = 3;
+  RUN_STATUS_FAILED = 4;
+  RUN_STATUS_CANCELED = 5;
+}
+
+enum RunSource {
+  RUN_SOURCE_UNSPECIFIED = 0;
+  RUN_SOURCE_MANUAL = 1;
+  RUN_SOURCE_SCHEDULER = 2;
+  RUN_SOURCE_API = 3;
+}
+
+enum RunAgentStreamEventType {
+  RUN_AGENT_STREAM_EVENT_TYPE_UNSPECIFIED = 0;
+  RUN_AGENT_STREAM_EVENT_TYPE_STARTED = 1;
+  RUN_AGENT_STREAM_EVENT_TYPE_OUTPUT = 2;
+  RUN_AGENT_STREAM_EVENT_TYPE_STATUS = 3;
+  RUN_AGENT_STREAM_EVENT_TYPE_COMPLETED = 4;
+}
+
+enum RunSessionCleanupPolicy {
+  RUN_SESSION_CLEANUP_POLICY_UNSPECIFIED = 0;
+  RUN_SESSION_CLEANUP_POLICY_STOP_ON_COMPLETION = 1;
+  RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING = 2;
+}
+
+enum ExecStreamEventType {
+  EXEC_STREAM_EVENT_TYPE_UNSPECIFIED = 0;
+  EXEC_STREAM_EVENT_TYPE_STARTED = 1;
+  EXEC_STREAM_EVENT_TYPE_OUTPUT = 2;
+  EXEC_STREAM_EVENT_TYPE_COMPLETED = 3;
+}
+
+enum ImageStoreKind {
+  IMAGE_STORE_KIND_UNSPECIFIED = 0;
+  IMAGE_STORE_KIND_DOCKER_DAEMON = 1;
+  IMAGE_STORE_KIND_OCI_CACHE = 2;
+}
+
+enum ImageAvailabilityStatus {
+  IMAGE_AVAILABILITY_STATUS_UNSPECIFIED = 0;
+  IMAGE_AVAILABILITY_STATUS_AVAILABLE = 1;
+  IMAGE_AVAILABILITY_STATUS_MISSING = 2;
+  IMAGE_AVAILABILITY_STATUS_ERROR = 3;
+}
+
+enum ImageOperationStatus {
+  IMAGE_OPERATION_STATUS_UNSPECIFIED = 0;
+  IMAGE_OPERATION_STATUS_SUCCEEDED = 1;
+  IMAGE_OPERATION_STATUS_FAILED = 2;
+}
+
+message ValidateProjectRequest {
+  ProjectSpec spec = 1;
+  ProjectSource source = 2;
+  string expected_spec_hash = 3;
+}
+
+message ValidateProjectResponse {
+  bool valid = 1;
+  repeated ProjectValidationIssue issues = 2;
+  string spec_hash = 3;
+}
+
+message ApplyProjectRequest {
+  ProjectSpec spec = 1;
+  ProjectSource source = 2;
+  string expected_spec_hash = 3;
+  bool dry_run = 4;
+}
+
+message ApplyProjectResponse {
+  Project project = 1;
+  ProjectRevision revision = 2;
+  repeated ProjectChange changes = 3;
+  repeated ProjectValidationIssue issues = 4;
+  bool applied = 5;
+  bool unchanged = 6;
+}
+
+message GetProjectRequest {
+  ProjectRef project = 1;
+  bool include_spec = 2;
+}
+
+message GetProjectResponse {
+  Project project = 1;
+}
+
+message ListProjectsRequest {
+  string query = 1;
+  bool include_removed = 2;
+  uint32 offset = 3;
+  uint32 limit = 4;
+}
+
+message ListProjectsResponse {
+  repeated ProjectSummary projects = 1;
+  uint32 total_count = 2;
+  bool has_more = 3;
+  uint32 next_offset = 4;
+}
+
+message RemoveProjectRequest {
+  ProjectRef project = 1;
+  bool remove_history = 2;
+  bool stop_running_sessions = 3;
+}
+
+message RemoveProjectResponse {
+  Project project = 1;
+  repeated ProjectChange changes = 2;
+}
+
+message WatchProjectRequest {
+  ProjectRef project = 1;
+}
+
+message WatchProjectResponse {
+  ProjectWatchEventType type = 1;
+  Project project = 2;
+  ProjectRevision revision = 3;
+  repeated ProjectChange changes = 4;
+}
+
+message ProjectRef {
+  string project_id = 1;
+  string name = 2;
+  string source_path = 3;
+}
+
+message ProjectSource {
+  string compose_path = 1;
+  string project_dir = 2;
+}
+
+message Project {
+  ProjectSummary summary = 1;
+  ProjectSpec spec = 2;
+  repeated ProjectAgent agents = 3;
+  repeated ProjectScheduler schedulers = 4;
+}
+
+message ProjectSummary {
+  string project_id = 1;
+  string name = 2;
+  string source_path = 3;
+  uint64 current_revision = 4;
+  string spec_hash = 5;
+  uint32 agent_count = 6;
+  uint32 scheduler_count = 7;
+  uint32 running_run_count = 8;
+  string latest_run_id = 9;
+  string created_at = 10;
+  string updated_at = 11;
+  string removed_at = 12;
+}
+
+message ProjectRevision {
+  string project_id = 1;
+  uint64 revision = 2;
+  string spec_hash = 3;
+  ProjectSpec spec = 4;
+  string created_at = 5;
+}
+
+message ProjectAgent {
+  string project_id = 1;
+  string agent_name = 2;
+  string managed_agent_id = 3;
+  string provider = 4;
+  string model = 5;
+  string image = 6;
+  string driver = 7;
+  bool scheduler_enabled = 8;
+}
+
+message ProjectScheduler {
+  string project_id = 1;
+  string agent_name = 2;
+  string scheduler_id = 3;
+  string managed_loader_id = 4;
+  bool enabled = 5;
+  uint32 trigger_count = 6;
+}
+
+message ProjectValidationIssue {
+  ProjectValidationSeverity severity = 1;
+  string path = 2;
+  string message = 3;
+}
+
+message ProjectChange {
+  ProjectChangeAction action = 1;
+  string resource_type = 2;
+  string resource_id = 3;
+  string name = 4;
+  string message = 5;
+}
+
+message ProjectSpec {
+  string name = 1;
+  repeated EnvVarSpec variables = 2;
+  WorkspaceSpec workspace = 3;
+  repeated AgentSpec agents = 4;
+  NetworkSpec network = 5;
+}
+
+message AgentSpec {
+  string name = 1;
+  string provider = 2;
+  string model = 3;
+  string system_prompt = 4;
+  string image = 5;
+  DriverSpec driver = 6;
+  repeated EnvVarSpec env = 7;
+  WorkspaceSpec workspace = 8;
+  SchedulerSpec scheduler = 9;
+}
+
+message EnvVarSpec {
+  string name = 1;
+  string value = 2;
+  bool secret = 3;
+}
+
+message WorkspaceSpec {
+  string provider = 1;
+  string url = 2;
+  string branch = 3;
+  string path = 4;
+}
+
+message NetworkSpec {
+  string mode = 1;
+}
+
+message SchedulerSpec {
+  bool enabled = 1;
+  repeated TriggerSpec triggers = 2;
+  string script = 3;
+}
+
+message TriggerSpec {
+  string name = 1;
+  string kind = 2;
+  string cron = 3;
+  string interval = 4;
+  string timeout = 5;
+  EventTriggerSpec event = 6;
+  string prompt = 7;
+}
+
+message EventTriggerSpec {
+  string topic = 1;
+}
+
+message DriverSpec {
+  string name = 1;
+  BoxliteDriverSpec boxlite = 2;
+  DockerDriverSpec docker = 3;
+  MicrosandboxDriverSpec microsandbox = 4;
+}
+
+message BoxliteDriverSpec {
+  string kernel = 1;
+  string rootfs = 2;
+}
+
+message DockerDriverSpec {
+  string host = 1;
+}
+
+message MicrosandboxDriverSpec {
+  string profile = 1;
+}
+
+message RunAgentRequest {
+  string project_id = 1;
+  string agent_name = 2;
+  string prompt = 3;
+  RunSource source = 4;
+  string session_id = 5;
+  repeated EnvVarSpec env = 6;
+  RunSessionCleanupPolicy cleanup_policy = 7;
+  string scheduler_id = 8;
+  string trigger_id = 9;
+  string output_schema_json = 10;
+  string client_request_id = 11;
+}
+
+message RunAgentResponse {
+  RunDetail run = 1;
+}
+
+message RunAgentStreamResponse {
+  RunAgentStreamEventType event_type = 1;
+  RunSummary run = 2;
+  string run_id = 3;
+  string chunk = 4;
+  bool is_stderr = 5;
+  string created_at = 6;
+}
+
+message GetRunRequest {
+  string run_id = 1;
+  string project_id = 2;
+}
+
+message GetRunResponse {
+  RunDetail run = 1;
+}
+
+message ListRunsRequest {
+  string project_id = 1;
+  string agent_name = 2;
+  string session_id = 3;
+  string scheduler_id = 4;
+  RunStatus status = 5;
+  RunSource source = 6;
+  string started_from = 7;
+  string started_to = 8;
+  uint32 offset = 9;
+  uint32 limit = 10;
+}
+
+message ListRunsResponse {
+  repeated RunSummary runs = 1;
+}
+
+message StopRunRequest {
+  string run_id = 1;
+  string reason = 2;
+}
+
+message StopRunResponse {
+  RunDetail run = 1;
+  bool stop_requested = 2;
+}
+
+message RunSummary {
+  string run_id = 1;
+  string project_id = 2;
+  string project_name = 3;
+  uint64 project_revision = 4;
+  string agent_id = 5;
+  string agent_name = 6;
+  RunSource source = 7;
+  string scheduler_id = 8;
+  string trigger_id = 9;
+  RunStatus status = 10;
+  string session_id = 11;
+  int32 exit_code = 12;
+  string error = 13;
+  string started_at = 14;
+  string completed_at = 15;
+  int64 duration_ms = 16;
+  string created_at = 17;
+  string updated_at = 18;
+}
+
+message RunDetail {
+  RunSummary summary = 1;
+  string prompt = 2;
+  string output = 3;
+  string result_json = 4;
+  string logs_path = 5;
+  string artifacts_dir = 6;
+  string cleanup_error = 7;
+  string driver = 8;
+  string image_ref = 9;
+}
+
+message ExecRequest {
+  oneof target {
+    string session_id = 1;
+    string run_id = 2;
+    ExecSessionSelector selector = 3;
+  }
+  ExecCommand command = 4;
+  string cwd = 5;
+  repeated EnvVarSpec env = 6;
+  uint32 timeout_ms = 7;
+  uint32 max_output_bytes = 8;
+}
+
+message ExecSessionSelector {
+  string project_id = 1;
+  string project_name = 2;
+  string agent_name = 3;
+}
+
+message ExecCommand {
+  string command = 1;
+  repeated string args = 2;
+}
+
+message ExecResponse {
+  ExecResult result = 1;
+}
+
+message ExecStreamResponse {
+  ExecStreamEventType event_type = 1;
+  string exec_id = 2;
+  string session_id = 3;
+  string run_id = 4;
+  string chunk = 5;
+  bool is_stderr = 6;
+  ExecResult result = 7;
+}
+
+message ExecResult {
+  string exec_id = 1;
+  string session_id = 2;
+  string run_id = 3;
+  ExecCommand command = 4;
+  string cwd = 5;
+  int32 exit_code = 6;
+  bool success = 7;
+  string stdout = 8;
+  string stderr = 9;
+  string output = 10;
+  bool stdout_truncated = 11;
+  bool stderr_truncated = 12;
+  bool output_truncated = 13;
+  string error = 14;
+}
+
+message ListImagesRequest {
+  ImageStoreKind store = 1;
+  string query = 2;
+  bool all = 3;
+  bool include_cache_status = 4;
+  uint32 offset = 5;
+  uint32 limit = 6;
+}
+
+message ListImagesResponse {
+  repeated Image images = 1;
+  uint32 total_count = 2;
+  bool has_more = 3;
+  uint32 next_offset = 4;
+  ImageStoreStatus store_status = 5;
+}
+
+message PullImageRequest {
+  string image_ref = 1;
+  ImageStoreKind store = 2;
+  ImagePlatform platform = 3;
+}
+
+message PullImageResponse {
+  Image image = 1;
+  ImageOperationStatus status = 2;
+  string resolved_ref = 3;
+  repeated ImagePullProgress progress = 4;
+  repeated string warnings = 5;
+}
+
+message InspectImageRequest {
+  string image_ref = 1;
+  ImageStoreKind store = 2;
+  bool include_cache_status = 3;
+}
+
+message InspectImageResponse {
+  Image image = 1;
+  ImageStoreStatus store_status = 2;
+}
+
+message RemoveImageRequest {
+  string image_ref = 1;
+  ImageStoreKind store = 2;
+  bool force = 3;
+  bool prune_children = 4;
+}
+
+message RemoveImageResponse {
+  string image_ref = 1;
+  repeated string untagged_refs = 2;
+  repeated string deleted_ids = 3;
+  repeated string warnings = 4;
+}
+
+message Image {
+  string image_id = 1;
+  string image_ref = 2;
+  string resolved_ref = 3;
+  repeated string repo_tags = 4;
+  repeated string repo_digests = 5;
+  ImageStoreKind store = 6;
+  ImageAvailabilityStatus availability_status = 7;
+  ImagePlatform platform = 8;
+  uint64 size_bytes = 9;
+  uint64 virtual_size_bytes = 10;
+  string created_at = 11;
+  string inspected_at = 12;
+  bool dangling = 13;
+  uint64 container_count = 14;
+  DockerImageStatus docker = 15;
+  OCIImageStatus oci = 16;
+  map<string, string> labels = 17;
+}
+
+message ImagePlatform {
+  string os = 1;
+  string architecture = 2;
+  string variant = 3;
+  string os_version = 4;
+}
+
+message ImageStoreStatus {
+  ImageStoreKind store = 1;
+  bool available = 2;
+  string endpoint = 3;
+  string error = 4;
+}
+
+message DockerImageStatus {
+  bool local = 1;
+  string parent_id = 2;
+  int64 shared_size_bytes = 3;
+}
+
+message OCIImageStatus {
+  bool layout_cached = 1;
+  bool rootfs_cached = 2;
+  string cache_key = 3;
+  string manifest_digest = 4;
+  string config_digest = 5;
+  string media_type = 6;
+}
+
+message ImagePullProgress {
+  string id = 1;
+  string status = 2;
+  string progress = 3;
+  uint64 current_bytes = 4;
+  uint64 total_bytes = 5;
+}

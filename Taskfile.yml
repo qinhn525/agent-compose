@@ -1,0 +1,247 @@
+# https://taskfile.dev
+version: '3'
+
+dotenv: ['.env']
+
+vars:
+  VERSION:
+    sh: git describe --always --tags --long 2>/dev/null || git rev-parse --short=12 HEAD 2>/dev/null || echo 'unknown'
+  GO_LDFLAGS: -X agent-compose/pkg/config.BuildVersion={{.VERSION}}
+  GO_TOOLCHAIN_ENV: '{{.TASKFILE_DIR}}/scripts/with-go-toolchain.sh'
+  GOLANGCI_LINT_CACHE_DIR: '{{.TASKFILE_DIR}}/.cache/golangci-lint'
+  GO_BUILD_CACHE_DIR: '{{.TASKFILE_DIR}}/.cache/go-build'
+  GO_LINT_PACKAGES: ./cmd/... ./pkg/... ./proto/health/v1 ./proto/health/v1/healthv1connect ./proto/agentcompose/v1 ./proto/agentcompose/v1/agentcomposev1connect ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect
+  BUILD_HTTP_PROXY: '{{default "" .HTTP_PROXY}}'
+  BUILD_HTTPS_PROXY: '{{default "" .HTTPS_PROXY}}'
+  BUILD_ALL_PROXY: '{{default "" .ALL_PROXY}}'
+  BUILD_REGISTRY_MIRROR: '{{default "docker.io" .REGISTRY_MIRROR}}'
+  BUILD_GOPROXY: '{{default "https://goproxy.cn,direct" .GOPROXY}}'
+  GOARCH:
+    sh: |
+      if [ -n "${GOARCH:-}" ]; then
+        printf '%s\n' "$GOARCH"
+      else
+        ./scripts/with-go-toolchain.sh go env GOARCH
+      fi
+
+tasks:
+  default:
+    desc: List all available tasks
+    cmds:
+      - task --list-all
+
+  all:
+    desc: Run all project checks, builds, and image tasks
+    cmds:
+      - task lint
+      - task test
+      - task build
+      - task image:agent-compose-guest
+      - task image:agent-compose
+      - task image:agent-compose-frontend
+
+  prepare:
+    desc: Install local dev dependencies
+    cmds:
+      - |
+        if ! command -v golangci-lint >/dev/null 2>&1; then
+          echo "Installing golangci-lint..."
+          {{.GO_TOOLCHAIN_ENV}} go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0 || true
+        fi
+
+        if ! command -v nilaway >/dev/null 2>&1; then
+          echo "Installing nilaway..."
+          {{.GO_TOOLCHAIN_ENV}} go install go.uber.org/nilaway/cmd/nilaway@latest || true
+        fi
+      - npm install
+      - echo "Deps ready"
+
+  clean:
+    desc: Remove generated build, test, and cache artifacts
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - rm -rf ./build ./dist ./.cache ./coverage ./runtime/agent-compose-runtime-sdk/dist ./runtime/javascript/dist ./runtime/javascript/coverage
+      - echo "clean done"
+
+  image:agent-compose-guest:
+    desc: Build the agent-compose guest image used by BoxLite at runtime
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - ./scripts/build-agent-compose-guest.sh
+
+  lint:
+    desc: Lint/format code
+    deps: ['lint:go']
+    cmds:
+      - npm run check:ui
+      - echo "lint all done"
+
+  lint:go:
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - mkdir -p {{.GOLANGCI_LINT_CACHE_DIR}} {{.GO_BUILD_CACHE_DIR}}
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} GOLANGCI_LINT_CACHE={{.GOLANGCI_LINT_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} golangci-lint fmt --no-config --diff {{.GO_LINT_PACKAGES}}
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} GOLANGCI_LINT_CACHE={{.GOLANGCI_LINT_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} golangci-lint run --no-config --allow-parallel-runners {{.GO_LINT_PACKAGES}}
+
+  test:
+    desc: Run all test shapes with coverage quality gates
+    cmds:
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} ./scripts/test-coverage.sh
+
+  test:unit:
+    desc: Run unit tests
+    cmds:
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} ./scripts/run-go-test-shape.sh unit
+      - cd runtime/agent-compose-runtime-sdk && npm test
+      - cd runtime/javascript && TEST_SHAPE=unit npm run test:unit
+
+  test:integration:
+    desc: Run integration tests
+    cmds:
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} ./scripts/run-go-test-shape.sh integration
+      - cd runtime/javascript && TEST_SHAPE=integration npm run test:unit
+
+  test:e2e:
+    desc: Run E2E tests
+    cmds:
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} ./scripts/run-go-test-shape.sh e2e
+      - cd runtime/javascript && TEST_SHAPE=e2e npm run test:unit
+
+  test:runtime-smoke:
+    desc: Run opt-in real BoxLite/Microsandbox runtime smoke tests
+    dir: '{{.TASKFILE_DIR}}'
+    deps: ['prepare:agent-compose:boxlite-dev', 'prepare:agent-compose:microsandbox-dev']
+    cmds:
+      - |
+        set -euo pipefail
+        drivers="${SMOKE_RUNTIME_DRIVERS:-boxlite,microsandbox}"
+        drivers="${drivers//[[:space:]]/}"
+        if [[ ",$drivers," == *",all,"* || ",$drivers," == *",boxlite,"* ]]; then
+          SMOKE_RUNTIME_DRIVERS=boxlite \
+            LD_LIBRARY_PATH="$PWD/build/boxlite/lib:${LD_LIBRARY_PATH:-}" \
+            GOCACHE={{.GO_BUILD_CACHE_DIR}} \
+            {{.GO_TOOLCHAIN_ENV}} go test -tags boxlitecgo ./pkg/driver -run '^TestSmokeBoxLite(RuntimeMountManifestDirectoryOnlyStarts|UsesGoContainerRegistryOCIImage)$' -count=1 -v
+        fi
+        if [[ ",$drivers," == *",all,"* || ",$drivers," == *",microsandbox,"* ]]; then
+          SMOKE_RUNTIME_DRIVERS=microsandbox \
+            LD_LIBRARY_PATH="$PWD/build/microsandbox/lib:${LD_LIBRARY_PATH:-}" \
+            GOCACHE={{.GO_BUILD_CACHE_DIR}} \
+            {{.GO_TOOLCHAIN_ENV}} go test ./pkg/driver -run '^TestSmokeMicrosandbox(RuntimeMountManifestDirectoryOnlyStarts|UsesGoContainerRegistryOCIImage)$' -count=1 -v
+        fi
+
+  test:boxlite-mount-repro:
+    desc: Run manual BoxLite multi-directory mount repro tests
+    dir: '{{.TASKFILE_DIR}}'
+    deps: ['prepare:agent-compose:boxlite-dev']
+    cmds:
+      - |
+        set -euo pipefail
+        SMOKE_RUNTIME_DRIVERS=boxlite \
+          SMOKE_KEEP_TMP="${SMOKE_KEEP_TMP:-1}" \
+          LD_LIBRARY_PATH="$PWD/build/boxlite/lib:${LD_LIBRARY_PATH:-}" \
+          GOCACHE={{.GO_BUILD_CACHE_DIR}} \
+          {{.GO_TOOLCHAIN_ENV}} go test -tags 'boxlitecgo,boxlite_repro' ./pkg/driver -run '^TestManualBoxLiteFiveDirMountRepro$' -count=1 -v
+
+  build:
+    desc: Build project binaries and frontend assets
+    deps: ['build:ui', 'build:agent-compose', 'build:runtime-sdk']
+    cmds:
+      - echo "build all done"
+
+  build:runtime-sdk:
+    desc: Build and verify the guest runtime SDK package
+    dir: '{{.TASKFILE_DIR}}/runtime/agent-compose-runtime-sdk'
+    cmds:
+      - npm ci
+      - npm run build
+      - npm run test:packaging
+
+  build:ui:
+    desc: Build the standalone product UI
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - npm run build:ui
+
+  prepare:agent-compose:boxlite-dev:
+    internal: true
+    desc: Export BoxLite cgo headers/libs from Dockerfile when needed
+    dir: '{{.TASKFILE_DIR}}'
+    sources:
+      - Dockerfile
+      - scripts/export-boxlite-dev-artifact.sh
+    generates:
+      - build/boxlite/include/boxlite.h
+      - build/boxlite/lib/libboxlite.a
+      - build/boxlite/lib/libboxlite.so
+    cmds:
+      - HTTP_PROXY={{.BUILD_HTTP_PROXY}} HTTPS_PROXY={{.BUILD_HTTPS_PROXY}} ALL_PROXY={{.BUILD_ALL_PROXY}} REGISTRY_MIRROR={{.BUILD_REGISTRY_MIRROR}} ./scripts/export-boxlite-dev-artifact.sh ./build/boxlite
+
+  prepare:agent-compose:microsandbox-dev:
+    internal: true
+    desc: Export Microsandbox runtime binaries/libs from Dockerfile when needed
+    dir: '{{.TASKFILE_DIR}}'
+    sources:
+      - Dockerfile
+      - scripts/export-microsandbox-dev-artifact.sh
+    generates:
+      - build/microsandbox/bin/msb
+      - build/microsandbox/bin/agentd
+      - build/microsandbox/lib/libkrunfw.so.5.2.1
+      - build/microsandbox/lib/libmicrosandbox_go_ffi.so
+    cmds:
+      - HTTP_PROXY={{.BUILD_HTTP_PROXY}} HTTPS_PROXY={{.BUILD_HTTPS_PROXY}} ALL_PROXY={{.BUILD_ALL_PROXY}} REGISTRY_MIRROR={{.BUILD_REGISTRY_MIRROR}} ./scripts/export-microsandbox-dev-artifact.sh ./build/microsandbox
+
+  build:agent-compose:
+    desc: Build the agent-compose binary without optional BoxLite cgo support
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - mkdir -p ./build/
+      - CGO_ENABLED=0 GOOS=linux GOARCH={{.GOARCH}} {{.GO_TOOLCHAIN_ENV}} go build -v -ldflags '{{.GO_LDFLAGS}}' -tags netgo,osusergo -o ./build/agent-compose ./cmd/agent-compose/
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} go build ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect
+
+  build:agent-compose:boxlite:
+    desc: Build the agent-compose binary with BoxLite cgo support
+    dir: '{{.TASKFILE_DIR}}'
+    deps: ['prepare:agent-compose:boxlite-dev']
+    cmds:
+      - mkdir -p ./build/
+      - CGO_ENABLED=1 GOOS=linux GOARCH={{.GOARCH}} {{.GO_TOOLCHAIN_ENV}} go build -v -x -ldflags '{{.GO_LDFLAGS}}' -tags netgo,osusergo,boxlitecgo -o ./build/agent-compose ./cmd/agent-compose/
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} go build ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect
+
+  docs:
+    desc: Generate/validate documentation (placeholder)
+    cmds:
+      - echo 'docs not configured'
+
+  build:image:agent-compose:
+    dir: '{{.TASKFILE_DIR}}'
+    deps: ['prepare:agent-compose:boxlite-dev', 'prepare:agent-compose:microsandbox-dev']
+    cmds:
+      - IMAGE_NAME={{default "agent-compose:latest" .IMAGE_NAME}} DOCKERFILE=Dockerfile.agent-compose-local BUILD_CONTEXT={{.TASKFILE_DIR}} VERSION={{.VERSION}} HTTP_PROXY={{.BUILD_HTTP_PROXY}} HTTPS_PROXY={{.BUILD_HTTPS_PROXY}} ALL_PROXY={{.BUILD_ALL_PROXY}} REGISTRY_MIRROR={{.BUILD_REGISTRY_MIRROR}} GOPROXY={{.BUILD_GOPROXY}} ./build_docker.sh
+
+  image:agent-compose:
+    deps: [build:image:agent-compose]
+    cmds:
+      - echo 'build:image:agent-compose done'
+
+  build:image:agent-compose-frontend:
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - IMAGE_NAME={{default "agent-compose-frontend:latest" .FRONTEND_IMAGE_NAME}} DOCKERFILE=nginx/Dockerfile BUILD_CONTEXT={{.TASKFILE_DIR}} VERSION={{.VERSION}} HTTP_PROXY={{.BUILD_HTTP_PROXY}} HTTPS_PROXY={{.BUILD_HTTPS_PROXY}} ALL_PROXY={{.BUILD_ALL_PROXY}} REGISTRY_MIRROR={{.BUILD_REGISTRY_MIRROR}} ./build_docker.sh
+
+  image:agent-compose-frontend:
+    deps: [build:image:agent-compose-frontend]
+    cmds:
+      - echo 'build:image:agent-compose-frontend done'
+
+  playground:push-agent-compose-guest:
+    dir: '{{.TASKFILE_DIR}}/playground'
+    deps: ['image:agent-compose-guest']
+    cmds:
+      - docker image inspect agent-compose-guest:latest >/dev/null
+
+  playground:agent-compose:
+    dir: '{{.TASKFILE_DIR}}/playground'
+    deps: ['playground:push-agent-compose-guest', 'image:agent-compose']
+    cmds:
+      - docker compose up -d agent-compose

@@ -1,0 +1,62 @@
+ARG REGISTRY_MIRROR=docker.io
+ARG GOPROXY=https://goproxy.cn,direct
+
+FROM ${REGISTRY_MIRROR}/library/golang:1-alpine AS golang-toolchain
+
+FROM scratch AS boxlite-local
+COPY build/boxlite /out
+
+FROM scratch AS microsandbox-local
+COPY build/microsandbox /out
+
+FROM ${REGISTRY_MIRROR}/library/debian:bookworm AS go-build
+ARG VERSION=0
+ARG TARGETARCH
+ARG GOPROXY
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG ALL_PROXY
+ARG NO_PROXY
+ENV HTTP_PROXY=${HTTP_PROXY}
+ENV HTTPS_PROXY=${HTTPS_PROXY}
+ENV ALL_PROXY=${ALL_PROXY}
+ENV NO_PROXY=${NO_PROXY}
+ENV no_proxy=${NO_PROXY}
+RUN if [ -f /etc/apt/sources.list ]; then       sed -i -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list &&       sed -i -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list;     fi &&     if [ -f /etc/apt/sources.list.d/debian.sources ]; then       sed -i -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources &&       sed -i -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources;     fi
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential ca-certificates curl git tar && rm -rf /var/lib/apt/lists/*
+COPY --from=golang-toolchain /usr/local/go /usr/local/go
+ENV PATH=/usr/local/go/bin:${PATH}
+WORKDIR /app
+COPY --from=boxlite-local /out /app/build/boxlite
+COPY go.mod go.sum ./
+RUN go env -w GOPROXY="${GOPROXY}" && go mod download
+COPY cmd ./cmd
+COPY pkg ./pkg
+COPY assets ./assets
+COPY proto ./proto
+RUN target_arch="${TARGETARCH:-$(dpkg --print-architecture)}" && CGO_ENABLED=1 GOOS=linux GOARCH=${target_arch} go build -ldflags "-X agent-compose/pkg/config.BuildVersion=${VERSION}" -tags 'netgo,osusergo,boxlitecgo' -o /out/agent-compose ./cmd/agent-compose
+
+FROM scratch AS agent-compose-artifact
+COPY --from=go-build /out/agent-compose /out/agent-compose
+
+FROM ${REGISTRY_MIRROR}/library/debian:trixie-slim
+RUN if [ -f /etc/apt/sources.list ]; then       sed -i -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list &&       sed -i -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list;     fi &&     if [ -f /etc/apt/sources.list.d/debian.sources ]; then       sed -i -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources &&       sed -i -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources;     fi
+RUN apt-get update &&     apt-get install -y --no-install-recommends ca-certificates git python3 tini tzdata e2fsprogs &&     rm -rf /var/lib/apt/lists/*
+RUN ln -sfv /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo "Asia/Shanghai" > /etc/timezone
+WORKDIR /app
+COPY --from=go-build /out/agent-compose /app/agent-compose
+COPY --from=boxlite-local /out/runtime /app/boxlite/runtime
+COPY --from=microsandbox-local /out /app/microsandbox
+ENV RUNTIME_DRIVER=docker
+ENV DEFAULT_IMAGE=debian:bookworm-slim
+ENV GUEST_WORKSPACE=/workspace
+ENV GUEST_STATE_ROOT=/data/state
+ENV GUEST_RUNTIME_ROOT=/data/runtime
+ENV GUEST_LOG_ROOT=/data/logs
+ENV BOXLITE_RUNTIME_DIR=/app/boxlite/runtime
+ENV MICROSANDBOX_MSB_PATH=/app/microsandbox/bin/msb
+ENV MICROSANDBOX_LIB_PATH=/app/microsandbox/lib/libmicrosandbox_go_ffi.so
+ENV BOXLITE_RUNTIME_DIR=/app/boxlite/runtime
+ENV LD_LIBRARY_PATH=/app/boxlite/runtime:/app/microsandbox/lib
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/app/agent-compose", "daemon"]

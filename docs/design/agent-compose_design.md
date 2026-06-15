@@ -1,0 +1,659 @@
+# agent-compose Architecture
+
+Chinese version: [../zh-CN/design/agent-compose_design.md](../zh-CN/design/agent-compose_design.md)
+
+This document describes the agent-compose architecture currently implemented in
+the codebase, including the daemon and CLI design that has already landed.
+Earlier refactoring plans, phase plans, and acceptance checklists are no longer
+kept as design documents.
+
+The current code facts are anchored by these entry points:
+
+- CLI and daemon entrypoint: `cmd/agent-compose/main.go`
+- Daemon service registration: `pkg/agentcompose/service.go`
+- Compose parsing and normalization: `pkg/compose/`
+- v1 API: `proto/agentcompose/v1/agentcompose.proto`
+- v2 API: `proto/agentcompose/v2/agentcompose.proto`
+- Project/run persistence: `pkg/agentcompose/project_schema.go` and
+  `pkg/agentcompose/project_store.go`
+- Jupyter proxy: `pkg/agentcompose/proxy.go`
+- Loader runtime and scheduling: `pkg/agentcompose/loader_engine.go` and
+  `pkg/agentcompose/loader_manager.go`
+- Standalone frontend image: `nginx/Dockerfile`
+
+## Architecture Goals
+
+agent-compose is an agent/session control plane. Its shape is similar to Docker
+Engine + CLI + Compose, while keeping its own domain model for agents,
+scheduler, workspaces, runtime drivers, and notebook proxying.
+
+Core boundaries:
+
+- The daemon is the state authority. It owns persistence, scheduler execution,
+  runtime lifecycle, Connect APIs, HTTP APIs, and Jupyter proxying.
+- The CLI is a daemon client. It reads local `agent-compose.yml`, performs local
+  syntax validation and normalization, calls daemon APIs, and renders output.
+- `agent-compose.yml` describes projects and agent definitions. It does not
+  describe an already running session.
+- Web/UI is no longer built into the daemon image or hosted by the daemon
+  process. It is deployed as an independent frontend service.
+- The v1 session-centric API remains available for the existing Web/UI and
+  compatibility clients. The v2 API is the primary path for the CLI and newer
+  clients.
+
+```text
+CLI / Web / Connect clients
+  |
+  | Unix socket or HTTP/Connect
+  v
+agent-compose daemon
+  |
+  | v1/v2 Connect handlers, HTTP routes, scheduler, store
+  v
+project / run / loader / session control plane
+  |
+  | runtime driver
+  v
+boxlite / docker / microsandbox runtime
+  |
+  v
+guest Jupyter + agent runtime
+```
+
+## Process And Transport
+
+`cmd/agent-compose/main.go` uses Cobra to provide a single binary with multiple
+subcommands. Running the binary without a subcommand still starts the daemon,
+but explicit daemon startup is recommended:
+
+```bash
+agent-compose daemon
+```
+
+Daemon construction has been split into testable app construction:
+
+- Load `.env` and environment configuration.
+- Initialize Echo, structured logging, and DI.
+- Register `/api/version`, v1/v2 Connect handlers, webhook/event routes,
+  workspace HTTP routes, and Jupyter proxy routes.
+- Inject optional global BasicAuth from `HTTP_BASIC_AUTH`.
+- Register the service graph through `agentcompose.Register(di)`.
+- Start the loader manager, event dispatcher, capability proxy, and startup
+  session reconciliation through `agentcompose.StartBackground(di)`.
+- On graceful shutdown, close all listeners and remove the Unix socket file.
+
+The daemon listens on a Unix socket by default:
+
+- `AGENT_COMPOSE_SOCKET` is used when explicitly set.
+- Otherwise `$XDG_RUNTIME_DIR/agent-compose.sock` is preferred.
+- Otherwise `/tmp/agent-compose-<uid>.sock` is used.
+
+A TCP HTTP/Connect listener is enabled only when `HTTP_LISTEN` is explicitly
+set. CLI connection priority is `--host`, then `AGENT_COMPOSE_HOST`, then the
+default Unix socket.
+
+```bash
+HTTP_LISTEN=127.0.0.1:7410 agent-compose daemon
+agent-compose --host http://127.0.0.1:7410 status
+```
+
+## CLI Semantics
+
+The CLI does not directly manipulate runtime state, session files, or SQLite
+reconciliation logic. It reads and normalizes the local compose file, then calls
+daemon v2 APIs.
+
+Current main commands:
+
+- `config`: parse and normalize local `agent-compose.yml`; supports `--json`
+  and `--quiet`; does not connect to the daemon.
+- `up`: call `ProjectService.ApplyProject`; create or update the project,
+  revision, managed agent definitions, and scheduler/loader; does not directly
+  create a run or session.
+- `down`: call `ProjectService.RemoveProject`; disable managed
+  scheduler/loader and stop running sessions for the project; preserves project,
+  run, and session history by default.
+- `ps`: query project, agent, latest run, and running session state.
+- `run <agent>`: call `RunService.RunAgentStream` for a manual agent run;
+  creates a new session by default, supports reusing an existing session with
+  `--session-id`, stops the runtime after completion by default, and can keep it
+  running with `--keep-running`.
+- `logs`: inspect run output by project, agent, run id, or session id; supports
+  `--follow`.
+- `exec`: call `ExecService.ExecStream` inside a running session; can locate the
+  target by session id, run id, or project/agent selector.
+- `images`, `image ls`, `pull`, `image pull`, `rmi`, `image rm`,
+  `image inspect`: call `ImageService` to manage the daemon image store. The
+  default store is selected by daemon `IMAGE_STORE_MODE`.
+- `inspect <project|agent|run|session>`: inspect project-related objects.
+
+## `agent-compose.yml` Model
+
+Compose parsing lives in `pkg/compose`. The normalized output is used for local
+`config` output, spec hashing, and daemon apply.
+
+Example:
+
+```yaml
+name: review-project
+
+variables:
+  OPENAI_API_KEY:
+    value: ${OPENAI_API_KEY}
+    secret: true
+
+workspace:
+  provider: git
+  url: https://github.com/org/repo.git
+  branch: main
+
+agents:
+  reviewer:
+    provider: codex
+    model: gpt-5
+    image: ghcr.io/org/agent-runtime:latest
+    driver:
+      boxlite:
+        kernel: s3://bucket/kernel
+    env:
+      REVIEW_MODE: strict
+    scheduler:
+      enabled: true
+      triggers:
+        - name: hourly
+          cron: "0 * * * *"
+          prompt: "Review the latest workspace state."
+        - event:
+            topic: git.push
+          prompt: "Review changes from the incoming event."
+
+network:
+  mode: default
+```
+
+The same scheduler can also declare a loader script directly with inline QJS:
+
+```yaml
+agents:
+  reviewer:
+    provider: codex
+    image: ghcr.io/org/agent-runtime:latest
+    scheduler:
+      script: |
+        scheduler.interval("hourly-review", function hourlyReview() {
+          return scheduler.agent("Review the latest workspace state.");
+        }, 3600000);
+
+        function main(payload) {
+          return { ok: true, payload };
+        }
+```
+
+Normalization rules:
+
+- If `name` is empty, it is derived from the compose file directory.
+- Agent map keys must be stable identifiers. Output is sorted by agent name.
+- Driver is a one-of shape: `boxlite`, `docker`, or `microsandbox`. When
+  omitted, the default is `docker`.
+- `firecracker` may appear in the schema, but current normalization returns
+  unsupported.
+- Empty `network` or `mode: default` is accepted. Other network modes return
+  unsupported.
+- Triggers support `cron`, `interval`, `timeout`, and `event`. Each trigger must
+  specify exactly one type.
+- `scheduler.script` is an inline QJS scalar saved into the managed loader
+  `script` field. Blank scripts are treated as unset.
+- `scheduler.script` and non-empty `scheduler.triggers` are mutually exclusive.
+  `scheduler.script_file`, `import` / `require`, and bundling are not currently
+  supported.
+- `${NAME}` is read from the CLI process environment or explicitly injected
+  environment. Missing variables produce field-path errors. Empty variable values
+  are valid.
+- Values marked `secret: true` participate in the normalized spec and hash, but
+  are redacted in YAML/JSON display output.
+- The spec hash is computed from canonical JSON and is insensitive to YAML/JSON
+  field ordering.
+
+Workspace providers currently supported during project run preparation:
+
+- `local`: materialize a relative path under the project source path into a file
+  workspace snapshot.
+- `git`: generate a Git workspace config that is later cloned by existing
+  workspace provisioning.
+
+## API Boundaries
+
+### v1 Connect API
+
+The v1 API is the stable interface for the existing Web/UI and compatibility
+clients. The daemon currently registers:
+
+- `SessionService`
+- `KernelService`
+- `AgentService`
+- `AgentDefinitionService`
+- `LLMService`
+- `ConfigService`
+- `LoaderService`
+- `DashboardService`
+- `CapabilityService`
+
+v1 still covers session, cell, agent event, global env, workspace config,
+loader, dashboard overview, and capability management.
+
+### v2 Connect API
+
+The v2 API is for project/run/image/exec workflows:
+
+- `ProjectService`
+  - `ValidateProject`
+  - `ApplyProject`
+  - `GetProject`
+  - `ListProjects`
+  - `RemoveProject`
+  - `WatchProject` is currently covered only by an unimplemented handler.
+- `RunService`
+  - `RunAgent`
+  - `RunAgentStream`
+  - `GetRun`
+  - `ListRuns`
+  - `StopRun`
+- `ExecService`
+  - `Exec`
+  - `ExecStream`
+- `ImageService`
+  - `ListImages`
+  - `PullImage`
+  - `InspectImage`
+  - `RemoveImage`
+
+`RemoveProject(remove_history=true)` currently returns unimplemented. The
+default `down` semantics preserve history. `ImageService` supports both Docker
+daemon store and OCI cache store; when request store is `UNSPECIFIED`, the
+daemon image store mode selects the backend.
+
+v2 `ProjectSpec` is the wire shape used by CLI and API clients to pass the
+current compose state. `AgentSpec.scheduler` contains:
+
+- `enabled`
+- declarative `triggers`
+- inline QJS `script`
+
+When the server receives a v2 `ProjectSpec`, it first converts it back to the
+compose YAML shape, then runs the same parse/normalize rules in `pkg/compose`.
+`ProjectSpecResponse` also returns the normalized `scheduler.script` to CLI and
+API responses. This keeps local `config`, CLI `up`, `ValidateProject`, and direct
+v2 API calls on the same field rules, mutual-exclusion rules, and spec hash
+calculation.
+
+### HTTP Routes
+
+Besides Connect APIs, the daemon registers these HTTP routes:
+
+- `/api/version`
+- webhook / event ingress: `/api/webhooks/:topic`, `/api/events...`
+- file workspace helper routes:
+  `/api/agent-compose/workspaces/:workspaceID/files`, `upload`, and `download`
+- Jupyter proxy: `<JupyterProxyBasePath>/:sessionID` and
+  `<JupyterProxyBasePath>/:sessionID/*`. The default base path is `/jupyter`.
+
+The Jupyter proxy implementation lives in `pkg/agentcompose/proxy.go`.
+`GetSessionProxy` returns only proxy entry information; actual HTTP/WebSocket
+forwarding is handled by the HTTP routes above. When a session is created,
+`Config.JupyterProxyBasePath` is written into `proxyPath`; the current code
+default is `/jupyter`.
+
+## Project Apply And Scheduling
+
+A project is the persisted daemon-side instance of `agent-compose.yml`. Project
+id, managed agent id, scheduler id, loader id, and run id are generated by
+stable rules.
+
+Current `ApplyProject` behavior:
+
+- Validate and normalize the v2 `ProjectSpec`.
+- Persist project revision idempotently by spec hash. Applying the same spec
+  repeatedly does not create duplicate revisions.
+- Write `project_agent`.
+- Reconcile each agent spec into a managed `AgentDefinition`, isolated from
+  manual agent definitions by `managed_project_id`, `managed_project_revision`,
+  and `managed_agent_name`.
+- Compile scheduler definitions into managed Loader/Trigger records.
+  Declarative `scheduler.triggers` generate a managed loader script. Inline
+  `scheduler.script` is used directly as the managed loader script, and triggers
+  returned from loader validation are written to `loader_trigger` and
+  `ProjectScheduler.trigger_count`.
+- Delete or disable schedulers removed from the spec, then refresh the loader
+  manager.
+- Do not directly create runs or sessions.
+- Return `issues` on reconcile failure and avoid leaving half-created enabled
+  schedulers that would continue triggering broken agents.
+
+Managed resources modify only agent definitions, loaders, and triggers that
+carry managed metadata. Manual resources with the same names are not overwritten
+or deleted.
+
+`ValidateProject` and `ApplyProject` use the same scheduler construction path.
+Declarative schedulers only receive compose and loader trigger structure
+validation. Inline QJS schedulers call existing
+`LoaderManager.Validate(ctx, "scheduler", script)`, where the QJS loader engine
+evaluates the script and collects triggers registered through
+`scheduler.interval`, `scheduler.timeout`, `scheduler.on`, and
+`scheduler.cron`. Syntax errors, duplicate trigger ids, and invalid
+timer/cron/event parameters are converted into project validation issues at the
+path `agents.<name>.scheduler.script`.
+
+Reconcile order is conservative: stage `ProjectScheduler` and managed `Loader`
+as disabled, replace loader triggers, then enable the loader and scheduler. If
+trigger replacement or enablement fails, cleanup runs to avoid leaving an
+enabled scheduler whose trigger/script state is inconsistent.
+
+## Run Execution Pipeline
+
+A run is a single agent execution record. It can come from CLI manual run,
+scheduler trigger, or future API clients.
+
+`RunService.RunAgent` and `RunAgentStream` share the same coordinator path:
+
+1. Resolve project agent and managed agent definition by project id + agent
+   name.
+2. Create a pending `project_run` record, storing source, scheduler/trigger,
+   prompt, driver, image, and related metadata.
+3. Merge runtime environment. Priority from low to high is global env, project
+   variables, agent env, then run request env.
+4. Prepare local/Git workspace snapshot from project/agent workspace spec.
+5. Create a new session or reuse an existing session with `--session-id`.
+6. Write project, agent, run_id, scheduler_id, source, and related tags to the
+   session.
+7. Mark run as running and call the existing agent executor.
+8. Stream start/output/completed events for streaming requests.
+9. Persist terminal run state for success, failure, cancellation, workspace
+   preparation failure, session startup failure, agent execution failure, and
+   stream send failure.
+10. Stop the runtime by default while preserving session/run history. The
+    `KEEP_RUNNING` cleanup policy keeps the session running.
+
+State queries primarily use project/run relationships in SQLite. Session tags
+are used for compatibility queries, `down` stopping project sessions, and
+file-level debugging.
+
+## Command Execution And Images
+
+`ExecService` does not create sessions. It executes commands only inside an
+existing running session. Target lookup can use:
+
+- explicit `session_id`
+- explicit `run_id`, then the associated run session
+- project/agent selector, which must uniquely match a running session
+
+The default cwd is the guest workspace path `/workspace`, and requests may
+override it.
+
+`ImageService` currently has three backend entry points:
+
+- `ListImages` supports reference query, `--all`, and pagination.
+- `PullImage` supports platform.
+- `InspectImage` returns image details.
+- `RemoveImage` supports force and prune children.
+
+Store selection rules:
+
+- Request store `DOCKER_DAEMON` forces Docker daemon.
+- Request store `OCI_CACHE` forces daemonless OCI cache.
+- Request store `UNSPECIFIED` uses `IMAGE_STORE_MODE`: `docker` forces Docker,
+  `oci` forces OCI cache, and `auto` briefly probes Docker daemon, using Docker
+  when available and OCI cache otherwise.
+
+OCI cache uses `pkg/imagecache` and go-containerregistry to pull images from a
+registry. It does not depend on dockerd, containerd, or Podman. `PullImage` uses
+go-containerregistry `remote.Image`, the default keychain, platform selector,
+and configured insecure registry list. When platform is not specified, daemon
+platform is used. OCI cache stores metadata, OCI Image Layout, BoxLite
+materialized layout, and Microsandbox rootfs. OCI image proto fields include
+`Store=OCI_CACHE`, `Oci` metadata, repo tags/digests, manifest/config digest,
+platform, size, labels, and store status.
+
+OCI cache query and deletion semantics keep the v2 API shape consistent with the
+Docker backend, but status comes from cache metadata:
+
+- `ListImages` query matches requested ref, normalized ref, repo tag, repo
+  digest, manifest digest, config digest, and cache key, and supports substring
+  filtering.
+- `InspectImage` uses the same lookup keys. Digest lookup ignores differences in
+  `sha256:` prefix form.
+- `RemoveImage` deletes only the matched metadata ref by default. When the same
+  image identity has multiple refs, `force` is required. `prune_children` does
+  not remove blobs in OCI cache and returns a warning. Blob cleanup is left to a
+  dedicated future mechanism; current deletion is conservative metadata deletion.
+- Not found, invalid reference, conflict, internal, and unavailable errors map
+  to stable Connect codes. Error messages retain operation, image ref, and cache
+  endpoint.
+
+For `up/run`, the `docker` driver ensures the required image is available.
+`boxlite` and `microsandbox` project/run preparation does not fail just because
+Docker daemon is unavailable. When starting runtimes, they use Docker-first image
+resolution: when Docker daemon is available, local Docker materialization is
+reused; when Docker is unavailable or the Docker image is missing, OCI cache is
+used. BoxLite consumes OCI layout and Microsandbox consumes extracted rootfs.
+Docker runtime does not consume OCI cache directly.
+
+## Storage Model
+
+Default data root:
+
+- If `DATA_ROOT` is empty, `$XDG_DATA_HOME/agent-compose` is used.
+- If `XDG_DATA_HOME` is empty, `$HOME/.local/share/agent-compose` is used.
+- `SESSION_ROOT` is `<DATA_ROOT>/sessions`.
+- If `IMAGE_CACHE_ROOT` is empty, it is `<DATA_ROOT>/images`.
+
+Image store configuration:
+
+| Environment variable | Default | Description |
+| --- | --- | --- |
+| `IMAGE_STORE_MODE` | `auto` | Default store selection mode for `UNSPECIFIED` ImageService requests. Valid values: `auto`, `docker`, `oci`. |
+| `IMAGE_CACHE_ROOT` | `<DATA_ROOT>/images` | Daemonless OCI cache root. Stores metadata and OCI Image Layout. Runtime materialization directories live beside this root under `image-cache/`. |
+| `IMAGE_INSECURE_REGISTRIES` | empty | Insecure registry host list for OCI cache pulls. Supports comma, semicolon, or newline separators and trims each item. |
+| `IMAGE_REGISTRY` | `docker.io` | Default registry for unqualified image references. Also used by runtime smoke default image resolution. |
+
+Typical layout:
+
+```text
+data/agent-compose/
+├── data.db
+├── images/
+│   ├── metadata.json
+│   └── oci/
+├── image-cache/<image-id>/
+│   ├── oci/
+│   └── rootfs/
+└── sessions/<session_id>/
+    ├── metadata.json
+    ├── workspace/
+    ├── context/
+    ├── home/
+    ├── runtime/
+    ├── state/
+    │   ├── cells.json
+    │   └── events.json
+    ├── logs/
+    ├── vm/
+    │   └── runtime.json
+    └── proxy/
+        └── jupyter.json
+```
+
+The session directory stores session metadata, workspace, home backing, runtime
+shared directory, cell/event timeline, VM state, and proxy state. By default,
+`images/` is the OCI cache root; `image-cache/<image-id>/oci` is the BoxLite
+materialized OCI layout, and `image-cache/<image-id>/rootfs` is the Microsandbox
+materialized rootfs.
+
+`DATA_ROOT/data.db` currently stores:
+
+- global env
+- workspace config
+- agent definition
+- loader / loader trigger / loader binding
+- loader run / loader event
+- webhook topic event
+- project / project_revision / project_agent / project_scheduler / project_run
+
+Project-related tables:
+
+- `project`
+- `project_revision`
+- `project_agent`
+- `project_scheduler`
+- `project_run`
+
+Managed agent definitions and loaders are isolated through managed metadata
+columns on existing tables:
+
+- `managed_project_id`
+- `managed_project_revision`
+- `managed_agent_name`
+- `managed_scheduler_id`, loader only
+
+## Session And Runtime
+
+Session is the low-level runtime lifecycle unit. Three runtime drivers are
+currently supported:
+
+- `boxlite`
+- `docker`
+- `microsandbox`
+
+The default driver is controlled by `RUNTIME_DRIVER`; when empty, it is
+`docker`. The default guest image is `debian:bookworm-slim`.
+
+Current `CreateSession` flow:
+
+1. Resolve env, tags, workspace id, driver, and guest image from the request.
+2. Merge global env and request env.
+3. Create the session directory and initialize metadata, VM state, and proxy
+   state.
+4. If workspace id is set, prepare that workspace.
+5. Start runtime through the driver.
+6. Mark session as `RUNNING`.
+7. Record `session.created` event and publish `agent-compose.session.created`
+   topic event.
+
+`ResumeSession` prepares workspace again and starts runtime. On success, it
+records `session.resumed` and publishes the corresponding topic event.
+`StopSession` stops runtime, marks the session `STOPPED`, records
+`session.stopped`, and publishes the corresponding topic event.
+
+Startup reconciles persisted session runtime state. `GetSession`,
+`ListSessions`, and `StopSession` also trigger reconciliation logic.
+
+Default guest paths:
+
+| Host path | Guest path | Purpose |
+| --- | --- | --- |
+| `<session>/workspace` | `/workspace` | Jupyter root, cell/agent/command cwd |
+| `<session>/state` | `/data/state` | Cell artifacts, agent prompt, provider state |
+| `<session>/runtime` | `/data/runtime` | Runtime shared resources |
+| `<session>/logs` | `/data/logs` | Jupyter logs |
+| `<session>/home` or child paths | `/root` or child paths | Tool config and state for Codex, Claude, Gemini, git, and related tools |
+
+For the more detailed mount manifest design, see
+[runtime_mount_manifest_design.md](runtime_mount_manifest_design.md) and
+[runtime_mount_manifest_driver_specific_design.md](runtime_mount_manifest_driver_specific_design.md).
+
+## Loader Runtime
+
+The current loader runtime is `scheduler`, supporting:
+
+- `interval`
+- `timeout`
+- `event`
+- `cron`
+
+Project compose `scheduler.script` uses the same runtime. Scripts are evaluated
+during validate/apply to collect triggers. APIs with side effects or host
+dependencies, such as `scheduler.agent`, `scheduler.llm`, `scheduler.exec`,
+`scheduler.shell`, `scheduler.event.publish`, and session RPC, should be used in
+`main()` or trigger callbacks.
+
+`scheduler` is the only product-level global object in the loader QJS
+environment. Its responsibilities are trigger registration, lightweight state,
+event publishing, and delegating work that needs sandbox capabilities to runtime
+sessions. The QJS layer is not intended to host complex Node.js workflows, npm
+dependencies, or long-running business logic.
+
+When full Node.js capabilities are needed, the current implementation calls
+workspace scripts inside the loader session through `scheduler.exec` /
+`scheduler.shell`, or uses existing agent and LLM capabilities through
+`scheduler.agent` / `scheduler.llm`. Standalone `scheduler.run(file, input,
+options)`, runtime workflow context, workflow bridge token, and an
+`agent-compose-runtime workflow` subcommand are not part of the current API
+contract. Design documents should not present those draft interfaces as
+implemented capabilities.
+
+`LoaderManager.Start()` starts the schedule loop and event loop during daemon
+background startup.
+
+Main JavaScript APIs:
+
+- `scheduler.log(message, payload)`
+- `scheduler.agent(prompt, options)`
+- `scheduler.llm(prompt, options)`
+- `scheduler.state.get(key)`
+- `scheduler.state.set(key, value)`
+- `scheduler.state.delete(key)`
+- `scheduler.exec(request)`
+- `scheduler.shell(script, options)`
+- `scheduler.event.publish(topic, payload)`
+- `scheduler.interval(...)`
+- `scheduler.timeout(...)`
+- `scheduler.on(...)`
+- `scheduler.cron(...)`
+
+`scheduler.agent` and `scheduler.llm` support `outputSchema` / `schema`. Passing
+a `scheduler.z` schema generates JSON Schema and validates the returned value
+locally. Passing plain JSON Schema performs JSON parsing.
+
+The loader also exposes a unary RPC bridge for v1 `SessionService`:
+
+- `scheduler.session.createSession(request)`
+- `scheduler.session.resumeSession(request)`
+- `scheduler.session.stopSession(request)`
+- `scheduler.session.getSession(request)`
+- `scheduler.session.listSessions()`
+- `scheduler.session.getSessionProxy(request)`
+
+Method names use lower camel case and also retain original proto method aliases,
+for example `scheduler.session.ResumeSession(...)`.
+
+## Frontend Service
+
+The daemon no longer hosts `HTTP_ROOT` / `UI_ROOT` static assets. `HTTP_ROOT` and
+`UI_ROOT` remain in the configuration structure and in some compatibility test
+paths, but the daemon main process does not register Web/UI catch-all routes or
+`/ui` static routes.
+
+The current Docker deployment provides an independent frontend service:
+
+- `nginx/Dockerfile` builds `agent-compose-frontend`.
+- Compose has two services: `agent-compose` daemon and
+  `agent-compose-frontend`.
+- The frontend service serves `frontend/` build output and reverse proxies the
+  daemon v1/v2 Connect APIs, `/api/`, and Jupyter proxy routes.
+
+For shared playground build, deployment, and verification flow, see
+[playground_setup.md](playground_setup.md).
+
+## Key Constraints
+
+- The daemon is the state and reconciliation authority. The CLI does not write
+  SQLite or session files directly.
+- `agents.<name>` is an agent definition, not a resident runtime.
+- `up` manages definitions and scheduler. It is not the same as running an
+  agent.
+- `run` is a one-shot execution. It stops runtime by default after completion.
+- `down` disables managed scheduler/loader and stops running project sessions.
+  It does not delete history by default.
+- The v1 API must remain compatible. The v2 API carries the primary
+  project/run/exec/image path.
+- Web/UI is deployed as an independent service and is not included in the daemon
+  Docker image.

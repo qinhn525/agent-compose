@@ -1,0 +1,102 @@
+# Testing Standards
+
+This project measures test coverage through three complementary test shapes:
+unit tests, integration tests, and end-to-end tests. Coverage standards apply to
+project code across the Go services, runtime components, and frontend/runtime
+JavaScript or TypeScript code.
+
+## Test Shapes
+
+### Unit Tests
+
+Unit tests verify isolated functions, types, and small modules without requiring
+external services, runtime sandboxes, Docker, network access, or persistent
+shared state.
+
+Unit tests should:
+- be deterministic and fast
+- use fakes, stubs, or in-memory stores where practical
+- cover edge cases, validation, serialization, scheduling logic, and error paths
+- avoid depending on test execution order
+
+### Integration Tests
+
+Integration tests verify collaboration between multiple project components or
+between project code and controlled local dependencies.
+
+Integration tests may use:
+- local files, temporary databases, and temporary session roots
+- in-process HTTP or Connect handlers
+- local runtime-driver adapters when they can be exercised deterministically
+- controlled Docker or sandbox dependencies when explicitly marked and isolated
+
+Integration tests should prove that service boundaries, persistence, proxying,
+configuration, loader scheduling, and runtime-driver interactions work together.
+
+### E2E Tests
+
+E2E tests verify complete user-facing workflows through the deployed service or
+a production-like local service instance.
+
+E2E tests should cover critical workflows such as:
+- creating, resuming, stopping, and proxying sessions
+- executing notebook or kernel actions through the public API surface
+- loader trigger and run workflows
+- frontend flows that depend on generated protocol clients
+- authentication and configuration workflows where applicable
+
+E2E tests should be isolated, repeatable, and explicit about required runtime
+dependencies.
+
+## Quality Gate
+
+`task test` is the project quality gate for tests.
+
+The `test` task in `Taskfile.yml` must calculate and print:
+- unit-test coverage
+- integration-test coverage
+- E2E-test coverage
+- total combined coverage
+
+Coverage output must be visible in normal task output and suitable for CI logs.
+The task should fail when any required coverage baseline is not met.
+
+Combined coverage is the merged coverage achieved by all three test shapes over
+the same project coverage scope. It must not be calculated as a simple average
+of unit, integration, and E2E percentages. When a line, branch, function, or
+statement is covered by more than one test shape, it should count once in the
+combined coverage result.
+
+Generated protocol clients, vendored code, build artifacts, and test fixtures
+should be excluded from coverage calculations unless the project intentionally
+treats them as maintained source code. Any exclusions must be documented in the
+coverage tooling or the `test` task implementation.
+
+## Coverage Baselines
+
+Minimum required coverage:
+- unit tests: at least 60%
+- integration tests: at least 60%
+- E2E tests: at least 60%
+- total combined coverage: at least 70%
+
+Recommended coverage targets:
+- unit tests: at least 80%
+- integration tests: at least 70%
+- E2E tests: at least 60%
+- total combined coverage: at least 70%
+
+The required baselines are release-blocking. The recommended targets are the
+preferred engineering standard for new and substantially changed code.
+
+## Reporting Expectations
+
+Coverage reports should make it clear which test shape produced each coverage
+number and which source-code scope was measured. When coverage cannot be
+calculated for a test shape, `task test` should fail rather than silently omit
+that number.
+
+When adding a feature or fixing a bug, choose the narrowest test shape that
+proves the behavior, then add broader integration or E2E coverage when the
+change crosses service boundaries, persistence boundaries, runtime-driver
+behavior, or user-facing workflows.

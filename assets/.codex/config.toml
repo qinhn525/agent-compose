@@ -1,0 +1,30 @@
+model_provider = "baizhi_cloud"
+model = "svip/gpt-5.4"
+
+[model_providers.openrouter]
+name = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+env_key = "LLM_API_KEY"
+wire_api = "responses"
+query_params = {}
+
+[model_providers.baizhi_cloud]
+name = "Baizhi Cloud"
+base_url = "https://ai-api-gateway.app.baizhi.cloud/api/openai"
+env_key = "LLM_API_KEY"
+wire_api = "responses"
+request_max_retries = 30
+stream_max_retries = 50
+stream_idle_timeout_ms = 120000
+
+[sandbox_workspace_write]
+exclude_tmpdir_env_var = false
+exclude_slash_tmp = false
+network_access = true
+
+[shell_environment_policy]
+inherit = "all"
+ignore_default_excludes = false
+
+[history]
+persistence = "save-all"

@@ -1,4 +1,319 @@
-
 # agent-compose
 
-Compose and run your agents using docker-compose style.
+agent-compose is an experimental control plane for running isolated agent
+sessions. It provides a daemon, CLI, Connect APIs, runtime drivers, workspace
+provisioning, scheduler automation, event history, and a Jupyter proxy for
+notebook-style guest runtimes.
+
+agent-compose is a public preview project: APIs, runtime packaging, deployment
+defaults, and operational guidance may still change.
+
+Chinese documentation is available at [docs/zh-CN/README.md](docs/zh-CN/README.md).
+
+## What It Does
+
+- Runs a long-lived daemon that owns state, scheduler execution, runtime
+  lifecycle, Connect APIs, and Jupyter proxying.
+- Provides a CLI for `up`, `run`, `logs`, `ps`, `down`, and image operations.
+- Supports project definitions in `agent-compose.yml`.
+- Starts isolated guest runtimes with Docker, BoxLite, or Microsandbox.
+- Provisions workspaces from local directories or Git repositories.
+- Exposes v1 session-oriented APIs and v2 project/run/image APIs.
+- Includes a Svelte frontend under `frontend/`.
+- Includes JavaScript runtime components under `runtime/`.
+
+## Maturity
+
+agent-compose is currently suitable for experimentation, local development, and
+preview deployments. It is not yet a stable production platform.
+
+Before using it with untrusted workloads, review the runtime driver behavior,
+network access, authentication settings, workspace upload limits, and Jupyter
+proxy assumptions.
+
+## Repository Layout
+
+```text
+cmd/agent-compose/             daemon and CLI entrypoint
+pkg/agentcompose/              sessions, projects, loaders, proxy, stores, APIs
+pkg/driver/                    Docker, BoxLite, and Microsandbox runtime drivers
+pkg/auth/                      authentication middleware and login flows
+pkg/config/                    environment configuration
+pkg/imagecache/                OCI image cache helpers
+proto/                         Connect API definitions and generated Go code
+frontend/                      Svelte frontend
+runtime/                       guest runtime SDKs and JavaScript scheduler runtime
+guest-images/                  guest image Dockerfiles
+loader-script/                 scheduler script examples and API notes
+docs/design/                   design notes
+```
+
+## Requirements
+
+- Go toolchain compatible with the version declared in `go.mod`
+- Node.js and npm
+- Task, for the documented `task ...` commands
+- Docker, when using Docker runtime or building Docker images
+- Runtime-specific dependencies for BoxLite or Microsandbox when using those
+  drivers directly
+
+## Quick Start
+
+Build the CLI and daemon:
+
+```bash
+task build
+```
+
+Start the daemon:
+
+```bash
+agent-compose daemon
+```
+
+By default, the daemon listens on a local Unix socket. To expose an HTTP endpoint
+for local development:
+
+```bash
+HTTP_LISTEN=127.0.0.1:7410 agent-compose daemon
+```
+
+Check daemon status:
+
+```bash
+agent-compose status
+agent-compose --host http://127.0.0.1:7410 status
+```
+
+Create an `agent-compose.yml`:
+
+```yaml
+name: demo
+agents:
+  reviewer:
+    provider: codex
+    model: gpt-test
+    image: debian:bookworm-slim
+    scheduler:
+      triggers:
+        - name: hourly
+          cron: "0 * * * *"
+          prompt: "Review the current workspace state."
+```
+
+Apply and run it:
+
+```bash
+agent-compose up
+agent-compose ps
+agent-compose run reviewer --prompt "Review this change"
+agent-compose logs --agent reviewer
+agent-compose down
+```
+
+## CLI
+
+The main commands are:
+
+- `agent-compose daemon`: start the HTTP/Connect daemon.
+- `agent-compose up`: read `agent-compose.yml` and apply the project to the daemon.
+- `agent-compose run <agent>`: start a project agent run.
+- `agent-compose logs`: inspect project run logs.
+- `agent-compose ps`: list project agents, recent runs, and active sessions.
+- `agent-compose down`: disable managed schedulers and stop running sessions.
+- `agent-compose images`, `pull`, `rmi`, `image inspect`: manage daemon-side images.
+
+Useful flags and environment variables:
+
+- `--file, -f`: choose a compose file.
+- `--project-name`: override the compose project name.
+- `--json`: emit stable JSON for scripts.
+- `--host` or `AGENT_COMPOSE_HOST`: connect to a TCP daemon.
+- `AGENT_COMPOSE_SOCKET`: choose the local Unix socket path.
+
+## Compose File
+
+Top-level fields:
+
+- `name`: project name. If omitted, the compose file directory name is used.
+- `variables`: project variables with `${ENV_NAME}` interpolation.
+- `workspace`: default project workspace.
+- `agents`: agent definitions keyed by agent name.
+- `network.mode`: currently supports `default`.
+
+Common agent fields:
+
+- `provider`, `model`, `system_prompt`: agent and LLM settings.
+- `image`: guest image reference.
+- `driver`: runtime driver override. Supported drivers are `boxlite`, `docker`,
+  and `microsandbox`.
+- `env`: agent environment variables. Values may be scalars or
+  `{ value, secret }` objects.
+- `workspace`: agent workspace override.
+- `scheduler.enabled`: defaults to `true`.
+- `scheduler.triggers`: supports `cron`, `interval`, `timeout`, and `event`
+  triggers.
+- `scheduler.script`: inline JavaScript scheduler runtime code. Use either
+  `scheduler.script` or `scheduler.triggers`, not both in the same scheduler.
+
+Workspace providers:
+
+```yaml
+workspace:
+  provider: git
+  url: https://github.com/example/repo.git
+  branch: main
+
+agents:
+  reviewer:
+    workspace:
+      provider: local
+      path: .
+```
+
+## Runtime Drivers
+
+agent-compose supports three runtime drivers:
+
+- `docker`: the default driver. It uses Docker containers and requires a
+  working Docker daemon.
+- `boxlite`: uses BoxLite runtime artifacts and guest images prepared by this
+  repository.
+- `microsandbox`: uses Microsandbox runtime artifacts.
+
+Image handling is selected by `IMAGE_STORE_MODE`:
+
+- `auto`: use Docker image store when Docker is available, otherwise use the OCI
+  cache.
+- `docker`: require Docker image store.
+- `oci`: use daemonless OCI image cache.
+
+The default guest image is `debian:bookworm-slim` unless overridden by
+`DEFAULT_IMAGE`, `DOCKER_DEFAULT_IMAGE`, or `MICROSANDBOX_DEFAULT_IMAGE`.
+
+## Frontend
+
+The Svelte frontend lives in `frontend/`.
+
+```bash
+npm ci
+npm run build:ui
+npm run dev:ui
+```
+
+The daemon does not host the Web UI. Serve the built frontend with a static
+server such as nginx and proxy API and Jupyter routes to the daemon. The
+repository `docker-compose.yml` includes an `agent-compose-frontend` nginx
+service for this layout.
+
+## Configuration
+
+Copy `.env.example` to `.env` for local experiments.
+
+Important variables include:
+
+- `DATA_ROOT`: daemon data root. Session data lives under `<DATA_ROOT>/sessions`.
+- `HTTP_LISTEN`: optional TCP listen address. Keep it on loopback for local
+  unauthenticated development.
+- `AGENT_COMPOSE_SOCKET`, `AGENT_COMPOSE_HOST`: daemon connection settings.
+- `AUTH_USERNAME`, `AUTH_PASSWORD`, `AUTH_SECRET`, `AUTH_SESSION_TTL`: password
+  login settings.
+- `OAUTH_*`: OAuth login settings.
+- `HTTP_BASIC_AUTH`: base64-encoded `username:password` for additional HTTP
+  Basic authentication.
+- `LLM_API_ENDPOINT`, `LLM_API_KEY`, `OPENAI_API_KEY`, `LLM_MODEL`,
+  `LLM_TIMEOUT`: LLM client settings.
+- `RUNTIME_DRIVER`: default runtime driver.
+- `DEFAULT_IMAGE`, `DOCKER_DEFAULT_IMAGE`, `MICROSANDBOX_DEFAULT_IMAGE`: guest
+  image defaults.
+- `IMAGE_STORE_MODE`, `IMAGE_CACHE_ROOT`, `IMAGE_REGISTRY`,
+  `IMAGE_INSECURE_REGISTRIES`: image store and OCI cache settings.
+- `BOXLITE_HOME`, `BOXLITE_RUNTIME_DIR`, `BOX_ROOTFS_PATH`, `BOX_DISK_SIZE_GB`,
+  `BOX_CACHE_TTL`: BoxLite settings.
+- `DOCKER_HOME`, `DOCKER_HOST_SESSION_ROOT`: Docker runtime settings.
+- `MICROSANDBOX_HOME`, `MICROSANDBOX_MSB_PATH`, `MICROSANDBOX_LIB_PATH`,
+  `MICROSANDBOX_INSECURE_REGISTRIES`: Microsandbox settings.
+- `GUEST_WORKSPACE`, `GUEST_STATE_ROOT`, `GUEST_RUNTIME_ROOT`,
+  `GUEST_LOG_ROOT`, `JUPYTER_GUEST_PORT`: guest paths and Jupyter port.
+- `WEBHOOK_BODY_LIMIT_BYTES`, `WORKSPACE_UPLOAD_LIMIT_BYTES`: request limits.
+
+## Security Notes
+
+The default configuration is designed for local development. Review and harden
+settings before exposing the daemon to a network.
+
+- Do not expose an unauthenticated daemon on a non-loopback address.
+- Set a stable, high-entropy `AUTH_SECRET` when enabling authentication.
+- Use HTTPS termination in production deployments.
+- `HTTP_LISTEN=0.0.0.0:7410` is only appropriate behind authentication and
+  network controls.
+- Jupyter runs inside guest runtimes and is expected to be reached through the
+  agent-compose proxy. Do not expose guest Jupyter ports directly.
+- Runtime drivers may allow network access from guest workloads. Check driver
+  behavior before running untrusted code.
+- Treat Git credentials, uploaded workspaces, environment variables, and LLM API
+  keys as secrets.
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting and hardening notes.
+
+## Build And Test
+
+```bash
+task lint
+task build
+task test
+```
+
+Useful subcommands:
+
+```bash
+task test:unit
+task test:integration
+task test:e2e
+task image:agent-compose-guest
+task image:agent-compose
+```
+
+Runtime SDK:
+
+```bash
+cd runtime/agent-compose-runtime-sdk
+npm ci
+npm test
+```
+
+BoxLite-enabled binary builds are optional and require BoxLite runtime artifacts:
+
+```bash
+task build:agent-compose:boxlite
+```
+
+Scheduler runtime:
+
+```bash
+cd runtime/javascript
+npm ci
+npm run test:unit
+```
+
+## API Compatibility
+
+The daemon exposes both v1 and v2 Connect APIs.
+
+- v1 is session-oriented and remains available for existing UI and clients.
+- v2 is the preferred path for newer CLI and project/run/image workflows.
+
+Protocol definitions live under `proto/`.
+
+## Related Documentation
+
+- [Documentation index](docs/README.md)
+- [Chinese documentation](docs/zh-CN/README.md)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+agent-compose is licensed under the [GNU Affero General Public License v3.0](LICENSE.txt).
