@@ -47,6 +47,9 @@ func (s *Store) ResolveCapabilitySession(ctx context.Context, token string) (cap
 		if sessionCapabilityToken(session) != token {
 			continue
 		}
+		if session.Summary.VMStatus != VMStatusRunning {
+			return capproxy.SessionBinding{}, fmt.Errorf("capability session token is not active")
+		}
 		capsetIDs := sessionCapabilityCapsets(session)
 		if len(capsetIDs) == 0 {
 			return capproxy.SessionBinding{}, fmt.Errorf("session %s has no capability capset", session.Summary.ID)
