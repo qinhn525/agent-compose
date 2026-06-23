@@ -392,7 +392,10 @@ func NewConfig(di do.Injector) (*Config, error) {
 	boxliteHome = mustAbs(boxliteHome)
 	boxliteRuntimeDir = mustAbs(boxliteRuntimeDir)
 	dockerHome = mustAbs(dockerHome)
-	dockerHostSessionRoot = mustAbs(dockerHostSessionRoot)
+	dockerHostSessionRoot, err = normalizeDockerHostSessionRoot(dockerHostSessionRoot)
+	if err != nil {
+		return nil, err
+	}
 	microsandboxHome = mustAbs(microsandboxHome)
 	microsandboxMSBPath = mustAbs(microsandboxMSBPath)
 	microsandboxLibPath = mustAbs(microsandboxLibPath)
@@ -408,9 +411,6 @@ func NewConfig(di do.Injector) (*Config, error) {
 		"DOCKER_HOME":       dockerHome,
 		"IMAGE_CACHE_ROOT":  imageCacheRoot,
 		"MICROSANDBOX_HOME": microsandboxHome,
-	}
-	if dockerHostSessionRoot != "" {
-		dirs["DOCKER_HOST_SESSION_ROOT"] = dockerHostSessionRoot
 	}
 	for name, dir := range dirs {
 		if err := ensureDirExists(dir); err != nil {
@@ -621,6 +621,45 @@ func mustAbs(path string) string {
 		return path
 	}
 	return resolved
+}
+
+func normalizeDockerHostSessionRoot(path string) (string, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", nil
+	}
+	if isWindowsHostPath(trimmed) {
+		if hasParentPathSegment(trimmed) {
+			return "", fmt.Errorf("invalid DOCKER_HOST_SESSION_ROOT %q: parent path segments are not allowed", path)
+		}
+		return trimmed, nil
+	}
+	return mustAbs(trimmed), nil
+}
+
+func isWindowsHostPath(path string) bool {
+	if strings.HasPrefix(path, `\\`) {
+		return true
+	}
+	if len(path) < 3 {
+		return false
+	}
+	drive := path[0]
+	if (drive < 'A' || drive > 'Z') && (drive < 'a' || drive > 'z') {
+		return false
+	}
+	return path[1] == ':' && (path[2] == '\\' || path[2] == '/')
+}
+
+func hasParentPathSegment(path string) bool {
+	for _, part := range strings.FieldsFunc(path, func(r rune) bool {
+		return r == '/' || r == '\\'
+	}) {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func ensureDirExists(path string) error {

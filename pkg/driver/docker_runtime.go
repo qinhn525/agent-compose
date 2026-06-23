@@ -444,7 +444,36 @@ func rebasePathUnderRoot(path, oldRoot, newRoot string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(newRoot, relativeDir), nil
+	return joinDockerHostPath(newRoot, relativeDir), nil
+}
+
+func joinDockerHostPath(root, relativePath string) string {
+	root = strings.TrimSpace(root)
+	relativePath = filepath.Clean(strings.TrimSpace(relativePath))
+	if relativePath == "." || relativePath == "" {
+		return root
+	}
+	if isWindowsHostPath(root) && strings.Contains(root, "\\") {
+		return strings.TrimRight(root, `\/`) + `\` + strings.ReplaceAll(relativePath, "/", `\`)
+	}
+	if isWindowsHostPath(root) || strings.Contains(root, "/") {
+		return strings.TrimRight(root, "/") + "/" + filepath.ToSlash(relativePath)
+	}
+	return filepath.Join(root, relativePath)
+}
+
+func isWindowsHostPath(path string) bool {
+	if strings.HasPrefix(path, `\\`) {
+		return true
+	}
+	if len(path) < 3 {
+		return false
+	}
+	drive := path[0]
+	if (drive < 'A' || drive > 'Z') && (drive < 'a' || drive > 'z') {
+		return false
+	}
+	return path[1] == ':' && (path[2] == '\\' || path[2] == '/')
 }
 
 func relativePathUnderRoot(path, root string) (string, error) {

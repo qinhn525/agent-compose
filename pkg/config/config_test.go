@@ -412,13 +412,12 @@ func testNewConfigEnsuresHostDirectoriesExist(t *testing.T) {
 	}
 
 	for name, dir := range map[string]string{
-		"DataRoot":              config.DataRoot,
-		"SessionRoot":           config.SessionRoot,
-		"BoxliteHome":           config.BoxliteHome,
-		"DockerHome":            config.DockerHome,
-		"DockerHostSessionRoot": config.DockerHostSessionRoot,
-		"ImageCacheRoot":        config.ImageCacheRoot,
-		"MicrosandboxHome":      config.MicrosandboxHome,
+		"DataRoot":         config.DataRoot,
+		"SessionRoot":      config.SessionRoot,
+		"BoxliteHome":      config.BoxliteHome,
+		"DockerHome":       config.DockerHome,
+		"ImageCacheRoot":   config.ImageCacheRoot,
+		"MicrosandboxHome": config.MicrosandboxHome,
 	} {
 		info, err := os.Stat(dir)
 		if err != nil {
@@ -427,6 +426,60 @@ func testNewConfigEnsuresHostDirectoriesExist(t *testing.T) {
 		if !info.IsDir() {
 			t.Fatalf("%s path %s is not a directory", name, dir)
 		}
+	}
+	if config.DockerHostSessionRoot != dockerHostSessionRoot {
+		t.Fatalf("DockerHostSessionRoot = %q, want %q", config.DockerHostSessionRoot, dockerHostSessionRoot)
+	}
+}
+
+func TestNewConfigPreservesWindowsDockerHostSessionRoot(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DATA_ROOT", filepath.Join(root, "data"))
+	t.Setenv("DOCKER_HOST_SESSION_ROOT", `E:/program/agent-compose-main/data/agent-compose/sessions`)
+	t.Setenv("HTTP_ROOT", filepath.Join(root, "dist"))
+
+	di := do.New()
+	do.ProvideValue(di, slog.Default())
+	config, err := NewConfig(di)
+	if err != nil {
+		t.Fatalf("NewConfig returned error: %v", err)
+	}
+
+	want := `E:/program/agent-compose-main/data/agent-compose/sessions`
+	if config.DockerHostSessionRoot != want {
+		t.Fatalf("DockerHostSessionRoot = %q, want %q", config.DockerHostSessionRoot, want)
+	}
+}
+
+func TestNewConfigPreservesUNCDockerHostSessionRoot(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DATA_ROOT", filepath.Join(root, "data"))
+	t.Setenv("DOCKER_HOST_SESSION_ROOT", `\\server\share\agent-compose\sessions`)
+	t.Setenv("HTTP_ROOT", filepath.Join(root, "dist"))
+
+	di := do.New()
+	do.ProvideValue(di, slog.Default())
+	config, err := NewConfig(di)
+	if err != nil {
+		t.Fatalf("NewConfig returned error: %v", err)
+	}
+
+	want := `\\server\share\agent-compose\sessions`
+	if config.DockerHostSessionRoot != want {
+		t.Fatalf("DockerHostSessionRoot = %q, want %q", config.DockerHostSessionRoot, want)
+	}
+}
+
+func TestNewConfigRejectsWindowsDockerHostSessionRootParentSegment(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DATA_ROOT", filepath.Join(root, "data"))
+	t.Setenv("DOCKER_HOST_SESSION_ROOT", `E:\program\..\agent-compose\sessions`)
+	t.Setenv("HTTP_ROOT", filepath.Join(root, "dist"))
+
+	di := do.New()
+	do.ProvideValue(di, slog.Default())
+	if _, err := NewConfig(di); err == nil || !strings.Contains(err.Error(), "DOCKER_HOST_SESSION_ROOT") {
+		t.Fatalf("NewConfig error = %v, want DOCKER_HOST_SESSION_ROOT validation error", err)
 	}
 }
 

@@ -100,6 +100,50 @@ func TestRebasePathUnderRoot(t *testing.T) {
 	}
 }
 
+func TestRebasePathUnderRootPreservesWindowsHostRoot(t *testing.T) {
+	got, err := rebasePathUnderRoot("/data/sessions/session-1/workspace", "/data/sessions", `E:\program\agent-compose-main\data\agent-compose\sessions`)
+	if err != nil {
+		t.Fatalf("rebasePathUnderRoot returned error: %v", err)
+	}
+	want := `E:\program\agent-compose-main\data\agent-compose\sessions\session-1\workspace`
+	if got != want {
+		t.Fatalf("rebasePathUnderRoot returned %q, want %q", got, want)
+	}
+}
+
+func TestRebasePathUnderRootPreservesWindowsHostRootWithSlashes(t *testing.T) {
+	got, err := rebasePathUnderRoot("/data/sessions/session-1/workspace", "/data/sessions", "E:/program/agent-compose-main/data/agent-compose/sessions")
+	if err != nil {
+		t.Fatalf("rebasePathUnderRoot returned error: %v", err)
+	}
+	want := "E:/program/agent-compose-main/data/agent-compose/sessions/session-1/workspace"
+	if got != want {
+		t.Fatalf("rebasePathUnderRoot returned %q, want %q", got, want)
+	}
+}
+
+func TestRebasePathUnderRootPreservesWindowsUNCHostRoot(t *testing.T) {
+	got, err := rebasePathUnderRoot("/data/sessions/session-1/workspace", "/data/sessions", `\\server\share\agent-compose\sessions`)
+	if err != nil {
+		t.Fatalf("rebasePathUnderRoot returned error: %v", err)
+	}
+	want := `\\server\share\agent-compose\sessions\session-1\workspace`
+	if got != want {
+		t.Fatalf("rebasePathUnderRoot returned %q, want %q", got, want)
+	}
+}
+
+func TestRebasePathUnderRootDoesNotTreatLinuxBackslashAsWindowsRoot(t *testing.T) {
+	got, err := rebasePathUnderRoot("/data/sessions/session-1/workspace", "/data/sessions", `/srv/agent-compose\weird/sessions`)
+	if err != nil {
+		t.Fatalf("rebasePathUnderRoot returned error: %v", err)
+	}
+	want := filepath.Join(`/srv/agent-compose\weird/sessions`, "session-1", "workspace")
+	if got != want {
+		t.Fatalf("rebasePathUnderRoot returned %q, want %q", got, want)
+	}
+}
+
 func TestDockerRuntimeMountsConsumeManifestAndRebaseEachSource(t *testing.T) {
 	root := t.TempDir()
 	config := &appconfig.Config{
