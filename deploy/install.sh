@@ -6,9 +6,8 @@
 # multi-arch container images from the registry (ghcr.io by default; Docker
 # selects the right architecture automatically).
 #
-# Run it from an extracted installer archive, from the self-extracting
-# installer, or via `curl ... | bash`. On first run it generates an admin
-# password and prints it to the terminal.
+# Run it from an extracted installer archive or via `curl ... | bash`. On first
+# run it generates an admin password and prints it to the terminal.
 
 set -euo pipefail
 
