@@ -33,7 +33,7 @@ trap cleanup EXIT
 docker build \
   --iidfile "$iidfile" \
   -f "$DOCKERFILE" \
-  --target microsandbox-build \
+  --target microsandbox-fetch \
   --build-arg "HTTP_PROXY=$HTTP_PROXY_VALUE" \
   --build-arg "HTTPS_PROXY=$HTTPS_PROXY_VALUE" \
   --build-arg "ALL_PROXY=$ALL_PROXY_VALUE" \
