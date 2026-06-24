@@ -416,6 +416,45 @@ func TestE2ERunAgentStreamAgentFailurePersistsRun(t *testing.T) {
 	testRunAgentStreamAgentFailurePersistsRun(t)
 }
 
+func TestRunAgentStreamEmptyStdoutFailureIncludesProviderStderr(t *testing.T) {
+	_, service, projectID := setupRunCoordinatorProject(t)
+	runtime := runServiceFakeRuntime(t, service)
+	runtime.agentExitCode = 1
+	runtime.agentNoPayload = true
+	runtime.agentStderr = `Codex provider config error: wire_api = "chat" is no longer supported`
+	client, closeServer := newRunServiceTestClient(t, service)
+	defer closeServer()
+	ctx := context.Background()
+
+	events, err := collectRunAgentStreamEvents(ctx, client, &agentcomposev2.RunAgentRequest{
+		ProjectId:       projectID,
+		AgentName:       "reviewer",
+		Prompt:          "trigger provider config failure",
+		ClientRequestId: "stream-agent-empty-stdout-request",
+	})
+	if err != nil {
+		t.Fatalf("RunAgentStream empty stdout failure returned RPC error: %v", err)
+	}
+	completed := lastRunAgentStreamEvent(events, agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_COMPLETED)
+	if completed == nil || completed.GetRun().GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_FAILED {
+		t.Fatalf("completed failure event = %#v events=%#v", completed, events)
+	}
+	if !strings.Contains(completed.GetRun().GetError(), "wire_api") || !strings.Contains(completed.GetRun().GetError(), "chat") {
+		t.Fatalf("completed failure error = %q, want provider stderr", completed.GetRun().GetError())
+	}
+	session, err := service.store.GetSession(ctx, completed.GetRun().GetSessionId())
+	if err != nil {
+		t.Fatalf("GetSession failure returned error: %v", err)
+	}
+	cells, err := service.store.ListCells(ctx, session.Summary.ID)
+	if err != nil {
+		t.Fatalf("ListCells failure returned error: %v", err)
+	}
+	if len(cells) == 0 || !strings.Contains(cells[len(cells)-1].Stderr, "wire_api") {
+		t.Fatalf("failed cell stderr missing provider error: %#v", cells)
+	}
+}
+
 func testRunAgentStreamAgentFailurePersistsRun(t *testing.T) {
 	store, service, projectID := setupRunCoordinatorProject(t)
 	runServiceFakeRuntime(t, service).agentExitCode = 7

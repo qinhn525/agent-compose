@@ -1875,6 +1875,10 @@ type fakeLoaderAgentRuntime struct {
 	providers              []string
 	agentSpecs             []ExecSpec
 	agentDeadlineDurations []time.Duration
+	agentStdout            string
+	agentStderr            string
+	agentOutput            string
+	agentNoPayload         bool
 	commandSpecs           []ExecSpec
 	commandExitCode        int
 	commandStdout          string
@@ -2025,6 +2029,18 @@ func (r *fakeLoaderAgentRuntime) ExecStream(ctx context.Context, session *Sessio
 		stream(ExecChunk{Text: "loader agent transcript\n", IsStderr: true})
 	}
 	exitCode := r.agentExitCode
+	if r.agentNoPayload {
+		stdout := r.agentStdout
+		stderr := r.agentStderr
+		output := firstNonEmpty(r.agentOutput, stdout+stderr)
+		return ExecResult{
+			Stdout:   stdout,
+			Stderr:   stderr,
+			Output:   output,
+			ExitCode: exitCode,
+			Success:  exitCode == 0,
+		}, nil
+	}
 	payload := agentResultPrefix + fmt.Sprintf(`{"provider":%q,"sessionId":"agent-runtime-session","stopReason":"completed","finalText":"loader agent transcript","transcript":"loader agent transcript"}`, provider)
 	return ExecResult{
 		Stdout:   payload,
