@@ -1873,6 +1873,7 @@ func (p fixedRuntimeProvider) ForSession(*Session) (BoxRuntime, error) {
 type fakeLoaderAgentRuntime struct {
 	execCalls              int
 	providers              []string
+	agentSpecs             []ExecSpec
 	agentDeadlineDurations []time.Duration
 	commandSpecs           []ExecSpec
 	commandExitCode        int
@@ -2019,6 +2020,7 @@ func (r *fakeLoaderAgentRuntime) ExecStream(ctx context.Context, session *Sessio
 		break
 	}
 	r.providers = append(r.providers, provider)
+	r.agentSpecs = append(r.agentSpecs, spec)
 	if stream != nil {
 		stream(ExecChunk{Text: "loader agent transcript\n", IsStderr: true})
 	}

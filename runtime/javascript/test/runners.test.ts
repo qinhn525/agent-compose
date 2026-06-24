@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClaudeRunner } from "../src/runners/claude.js";
 import { CodexRunner } from "../src/runners/codex.js";
 import { GeminiRunner } from "../src/runners/gemini.js";
+import { OpenCodeRunner } from "../src/runners/opencode.js";
 import { captureStdio, runnerOptions, withTempSession } from "./helpers.js";
 
 afterEach(() => {
@@ -294,6 +295,101 @@ describe("GeminiRunner", () => {
     await withTempSession(async (root) => {
       const runner = new GeminiRunner(runnerOptions(root, "", "gemini"));
       expect(runner).toBeInstanceOf(GeminiRunner);
+    });
+  });
+});
+
+describe("OpenCodeRunner", () => {
+  it("builds non-interactive args for fresh and resumed sessions", async () => {
+    await withTempSession(async (root) => {
+      const runner = new OpenCodeRunner({
+        ...runnerOptions(root, "be concise", "opencode"),
+        model: "anthropic/claude-sonnet-4-5",
+      });
+
+      expect(runner.buildArgs("review", null)).toEqual([
+        "run",
+        "be concise\n\nreview",
+        "--format",
+        "json",
+        "--dir",
+        `${root}/workspace`,
+        "--dangerously-skip-permissions",
+        "--model",
+        "anthropic/claude-sonnet-4-5",
+      ]);
+      expect(runner.buildArgs("review", { provider: "opencode", sessionId: "ses_1" })).toContain("ses_1");
+    });
+  });
+
+  it("keeps explicit OpenCode auto-update environment overrides", async () => {
+    await withTempSession(async (root) => {
+      vi.stubEnv("OPENCODE_DISABLE_AUTOUPDATE", "false");
+      const runner = new OpenCodeRunner(runnerOptions(root, "", "opencode"));
+
+      expect(runner.environment().OPENCODE_DISABLE_AUTOUPDATE).toBe("false");
+    });
+  });
+
+  it("disables OpenCode model catalog fetch by default", async () => {
+    await withTempSession(async (root) => {
+      const runner = new OpenCodeRunner(runnerOptions(root, "", "opencode"));
+
+      expect(runner.environment().OPENCODE_DISABLE_MODELS_FETCH).toBe("1");
+
+      vi.stubEnv("OPENCODE_DISABLE_MODELS_FETCH", "0");
+      expect(runner.environment().OPENCODE_DISABLE_MODELS_FETCH).toBe("0");
+    });
+  });
+
+  it("translates OpenCode JSON events into transcript and final text", async () => {
+    await withTempSession(async (root) => {
+      const runner = new OpenCodeRunner(runnerOptions(root, "", "opencode"));
+      const result = {
+        provider: "opencode" as const,
+        sessionId: "",
+        stopReason: "completed",
+        finalText: "",
+        transcript: "",
+        stderr: "",
+      };
+      const stdio = captureStdio();
+      try {
+        runner.handleEvent({ type: "message", sessionId: "session-1", message: { content: "hello" } }, result);
+        runner.handleEvent({ type: "text", part: { type: "text", text: " from part" } }, result);
+        runner.handleEvent({ type: "tool_use", name: "bash" }, result);
+        runner.handleEvent({ type: "tool_result", result: { text: "tool output" } }, result);
+        runner.handleEvent({ type: "result", response: "done", stopReason: "completed" }, result);
+      } finally {
+        stdio.restore();
+      }
+
+      expect(result.sessionId).toBe("session-1");
+      expect(result.finalText).toBe("done");
+      expect(stdio.stderr).toContain("hello");
+      expect(stdio.stderr).toContain(" from part");
+      expect(stdio.stderr).toContain("[tool:bash]");
+      expect(stdio.stderr).toContain("tool output");
+    });
+  });
+
+  it("throws OpenCode event errors and rejects structured output", async () => {
+    await withTempSession(async (root) => {
+      const runner = new OpenCodeRunner(runnerOptions(root, "", "opencode"));
+      expect(() => runner.handleEvent({ type: "error", error: { text: "bad" } }, {
+        provider: "opencode",
+        sessionId: "",
+        stopReason: "completed",
+        finalText: "",
+        transcript: "",
+        stderr: "",
+      })).toThrow("bad");
+
+      const schemaRunner = new OpenCodeRunner({
+        ...runnerOptions(root, "", "opencode"),
+        outputSchema: { type: "object" },
+      });
+      await expect(schemaRunner.runPrompt("hello")).rejects.toThrow("structured JSON output is not supported by opencode runner");
     });
   });
 });

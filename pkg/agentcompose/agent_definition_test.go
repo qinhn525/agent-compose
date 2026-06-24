@@ -258,9 +258,11 @@ func TestAgentSessionMessageUsesDefinitionProvider(t *testing.T) {
 	ctx := context.Background()
 	service, runtime, _ := newTestServiceAPIHarness(t)
 	created, err := service.CreateAgentDefinition(ctx, connect.NewRequest(&agentcomposev1.CreateAgentDefinitionRequest{
-		Name:     "Claude Runner",
-		Enabled:  true,
-		Provider: "claude",
+		Name:         "Claude Runner",
+		Enabled:      true,
+		Provider:     "open-code",
+		Model:        "anthropic/claude-sonnet-4-5",
+		SystemPrompt: "system body",
 	}))
 	if err != nil {
 		t.Fatalf("CreateAgentDefinition returned error: %v", err)
@@ -280,8 +282,20 @@ func TestAgentSessionMessageUsesDefinitionProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendAgentMessage returned error: %v", err)
 	}
-	if len(runtime.providers) != 1 || runtime.providers[0] != "claude" {
-		t.Fatalf("runtime providers = %v, want [claude]", runtime.providers)
+	if len(runtime.providers) != 1 || runtime.providers[0] != "opencode" {
+		t.Fatalf("runtime providers = %v, want [opencode]", runtime.providers)
+	}
+	if len(runtime.agentSpecs) != 1 {
+		t.Fatalf("runtime agent specs = %d, want 1", len(runtime.agentSpecs))
+	}
+	command := strings.Join(runtime.agentSpecs[0].Args, " ")
+	for _, want := range []string{"--provider 'opencode'", "--model 'anthropic/claude-sonnet-4-5'"} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("agent command %q does not contain %q", command, want)
+		}
+	}
+	if strings.Contains(command, "--system-prompt-file") {
+		t.Fatalf("agent command %q contains deprecated --system-prompt-file flag", command)
 	}
 }
 

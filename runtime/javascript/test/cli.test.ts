@@ -39,6 +39,8 @@ describe("commander CLI", () => {
         "/data/workspace",
         "--home",
         "/data/home",
+        "--model",
+        "anthropic/claude-sonnet-4-5",
         "--output-schema-file",
         "/tmp/schema.json",
       ]);
@@ -52,6 +54,7 @@ describe("commander CLI", () => {
       stateRoot: "/data/state",
       workspace: "/data/workspace",
       home: "/data/home",
+      model: "anthropic/claude-sonnet-4-5",
       outputSchemaFile: "/tmp/schema.json",
     });
     expect(stdio.stdout).toBe(`${RESULT_PREFIX}{"provider":"codex","sessionId":"s1","stopReason":"completed","finalText":"done","json":null,"transcript":"done","stderr":""}\n`);
@@ -173,9 +176,12 @@ describe("commander CLI", () => {
       const messageFile = path.join(root, "message.txt");
       const schemaFile = path.join(root, "schema.json");
       const stateRoot = path.join(root, "state");
+      const systemPromptPath = path.join(stateRoot, "agents", "system-prompts", "system-prompt.txt");
       await fs.mkdir(stateRoot, { recursive: true });
+      await fs.mkdir(path.dirname(systemPromptPath), { recursive: true });
       await fs.writeFile(messageFile, "hello", "utf8");
       await fs.writeFile(schemaFile, JSON.stringify({ type: "object", properties: { answer: { type: "string" } } }), "utf8");
+      await fs.writeFile(systemPromptPath, "system body", "utf8");
       const runPrompt = vi.fn().mockResolvedValue({
         provider: "gemini",
         sessionId: "",
@@ -194,6 +200,7 @@ describe("commander CLI", () => {
         const result = await runPromptCommand({
           provider: "gemini",
           messageFile,
+          model: "models/gemini-test",
           outputSchemaFile: schemaFile,
           stateRoot,
           home: path.join(root, "home"),
@@ -205,6 +212,8 @@ describe("commander CLI", () => {
           provider: "gemini",
           workspace: path.join(root, "workspace-from-env"),
           home: path.join(root, "home"),
+          model: "models/gemini-test",
+          systemContext: expect.stringContaining("system body"),
           runtimeRoot: path.join(root, "runtime"),
           outputSchema: { type: "object", properties: { answer: { type: "string" } } },
         }));

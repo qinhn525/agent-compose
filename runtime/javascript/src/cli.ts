@@ -20,11 +20,12 @@ export function createProgram(options: { exitOverride?: boolean } = {}): Command
 
   program
     .command("prompt")
-    .requiredOption("--provider <provider>", "agent provider: codex, claude, or gemini")
+    .requiredOption("--provider <provider>", "agent provider: codex, claude, gemini, or opencode")
     .requiredOption("--message-file <path>", "prompt file path")
     .option("--state-root <path>", "agent-compose runtime state root")
     .option("--workspace <path>", "agent working directory")
     .option("--home <path>", "agent HOME directory")
+    .option("--model <model>", "agent model")
     .option("--output-schema-file <path>", "JSON schema file for structured output")
     .action(async (options: {
       provider: string;
@@ -32,6 +33,7 @@ export function createProgram(options: { exitOverride?: boolean } = {}): Command
       stateRoot?: string;
       workspace?: string;
       home?: string;
+      model?: string;
       outputSchemaFile?: string;
     }) => {
       const result = await runPromptCommand(options);

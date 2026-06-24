@@ -664,7 +664,7 @@ create workspace-capable agent sessions or grant file, command, or MCP tool
 access. With `outputSchema`, it uses prompt guidance and `json_object` instead
 of Responses API strict JSON Schema.
 
-Guest agent providers (`codex`, `claude`, `gemini`) remain separate CLI runners
+Guest agent providers (`codex`, `claude`, `gemini`, `opencode`) remain separate CLI runners
 inside guest containers with their own API keys and session state.
 
 The loader also exposes a unary RPC bridge for v1 `SessionService`:

@@ -180,11 +180,13 @@ Command arguments:
 
 | Argument | Required | Description |
 | --- | ---: | --- |
-| `--provider` | yes | `codex`, `claude`, `gemini`, with a small set of aliases |
+| `--provider` | yes | `codex`, `claude`, `gemini`, `opencode`, with a small set of aliases |
 | `--message-file` | yes | Prompt file path |
 | `--state-root` | no | agent-compose runtime state root; default `/srv/agent-compose/session/state`. Guest discovers agent identity at `agents/system-prompts/system-prompt.txt` and MPI catalog from this root |
 | `--workspace` | no | Agent working directory; default `WORKSPACE` or `/workspace` |
 | `--home` | no | Agent HOME; default `HOME` or `/root` |
+| `--model` | no | Agent model; consumed by providers that support explicit model selection |
+| `--system-prompt-file` | no | System prompt file path; currently consumed by providers that need prompt-level system instructions |
 
 Agent identity uses the fixed convention path documented in §3.2.
 
@@ -588,6 +590,23 @@ gemini -p <systemContext + user prompt> --output-format stream-json --approval-m
 When `systemContext` is non-empty, it is prepended to the user prompt separated
 by a blank line. The current Gemini runner reads stream-json and generates a
 transcript, but does not write `/data/state/agents/providers/gemini.json`.
+
+### 10.4 OpenCode
+
+The JavaScript runtime invokes OpenCode as a subprocess:
+
+```sh
+opencode run <prompt> --format json --dir /workspace --dangerously-skip-permissions
+```
+
+When a model is provided by the host, the runner appends `--model <model>`.
+When a stored provider session exists, the runner appends
+`--session <stored session id>`. The runner sets
+`OPENCODE_DISABLE_AUTOUPDATE=true` unless the environment already defines it.
+
+OpenCode raw JSON events are converted into a human-readable transcript. The
+runner writes `/data/state/agents/providers/opencode.json` after a successful
+run with a non-empty provider session id.
 
 ## 11. Error Semantics
 

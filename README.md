@@ -147,8 +147,9 @@ Top-level fields:
 Common agent fields:
 
 - `provider`, `model`, `system_prompt`: guest agent settings (`provider` selects
-  the guest CLI runner; `model` is passed to that agent runtime). Supported guest
-  providers are `codex`, `claude`, and `gemini`. Daemon-side LLM calls
+  the guest CLI runner; `model` is passed to provider runtimes that support
+  explicit model selection). Supported guest providers are `codex`, `claude`,
+  `gemini`, and `opencode`. Daemon-side LLM calls
   (`LLMService`, `scheduler.llm`) use `LLM_MODEL` instead.
 - `image`: guest image reference.
 - `driver`: runtime driver override. Supported drivers are `boxlite`, `docker`,
@@ -289,13 +290,16 @@ key names such as `LLM_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
 `ANTHROPIC_AUTH_TOKEN`, `GOOGLE_API_KEY`, and `GEMINI_API_KEY` are filtered from
 user-supplied runtime environment variables. Compatibility aliases such as
 `LLM_API_KEY` and `LLM_API_ENDPOINT` may still appear in the runtime, but they
-are daemon-managed facade values, not upstream provider credentials.
+are daemon-managed facade values, not upstream provider credentials. Gemini and
+OpenCode still use their provider CLIs directly; OpenCode credentials depend on
+the selected OpenCode model provider.
 
 | Provider | Typical env vars | Notes |
 | --- | --- | --- |
 | `codex` | daemon LLM provider config; runtime receives `AGENT_COMPOSE_SESSION_TOKEN`, `LLM_API_KEY`, `LLM_API_ENDPOINT`, `OPENAI_BASE_URL`, and facade-token API key aliases | Uses Codex CLI/SDK in the guest image |
 | `claude` | daemon Anthropic-family provider config; runtime receives `AGENT_COMPOSE_SESSION_TOKEN`, `LLM_API_KEY`, `LLM_API_ENDPOINT`, `ANTHROPIC_BASE_URL`, and facade-token API key aliases | Uses Claude Code CLI in the guest image |
 | `gemini` | not yet routed through the LLM facade | Uses Gemini CLI in the guest image |
+| `opencode` | Provider-specific keys for the selected OpenCode model, for example `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` | Uses OpenCode CLI in the guest image |
 
 After changing guest runtime code or provider support, rebuild the guest image:
 

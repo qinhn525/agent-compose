@@ -1,4 +1,4 @@
-export type Provider = "codex" | "claude" | "gemini";
+export type Provider = "codex" | "claude" | "gemini" | "opencode";
 export type RuntimeJsonSchema = Record<string, unknown>;
 
 export interface AgentResult {
@@ -12,6 +12,7 @@ export interface AgentResult {
 
 export interface RunnerOptions {
   provider: Provider;
+  model?: string;
   stateRoot: string;
   workspace: string;
   home: string;

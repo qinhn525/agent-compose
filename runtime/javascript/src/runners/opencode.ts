@@ -1,0 +1,161 @@
+import { spawn } from "node:child_process";
+import readline from "node:readline";
+import { readStoredSession, writeStoredSession } from "../session-state.js";
+import { extractText, jsonString } from "../text.js";
+import { TranscriptWriter } from "../transcript.js";
+import type { AgentResult, RunnerOptions, StoredSession } from "../types.js";
+
+export class OpenCodeRunner {
+  private readonly writer = new TranscriptWriter();
+
+  constructor(private readonly options: RunnerOptions) {}
+
+  buildArgs(promptText: string, stored: StoredSession | null): string[] {
+    const userPrompt = this.options.systemContext
+      ? `${this.options.systemContext}\n\n${promptText}`
+      : promptText;
+    const args = [
+      "run",
+      userPrompt,
+      "--format", "json",
+      "--dir", this.options.workspace,
+      "--dangerously-skip-permissions",
+    ];
+    const model = String(this.options.model || "").trim();
+    if (model) {
+      args.push("--model", model);
+    }
+    if (stored?.sessionId) {
+      args.push("--session", stored.sessionId);
+    }
+    return args;
+  }
+
+  environment(): NodeJS.ProcessEnv {
+    return {
+      ...process.env,
+      OPENCODE_DISABLE_AUTOUPDATE: process.env.OPENCODE_DISABLE_AUTOUPDATE || "true",
+      OPENCODE_DISABLE_MODELS_FETCH: process.env.OPENCODE_DISABLE_MODELS_FETCH || "1",
+    };
+  }
+
+  handleEvent(event: Record<string, unknown>, result: AgentResult): void {
+    const sessionId = stringField(event, "sessionID", "sessionId", "session_id");
+    if (sessionId) {
+      result.sessionId = sessionId;
+    }
+
+    const eventType = String(event.type || event.event || "");
+    if (eventType === "error") {
+      const errorText = extractText(event.error) || extractText(event.message) || jsonString(event);
+      this.writer.line(errorText);
+      throw new Error(errorText);
+    }
+
+    if (eventType === "tool_use" || eventType === "tool") {
+      const tool = event.tool as Record<string, unknown> | undefined;
+      const toolName = stringField(event, "name", "toolName") || String(tool?.name || "tool");
+      this.writer.line(`\n[tool:${toolName}]`);
+      return;
+    }
+
+    if (eventType === "tool_result") {
+      const text = extractText(event.result) || extractText(event.content) || jsonString(event.result || event);
+      if (text.trim()) {
+        this.writer.line(text);
+      }
+      return;
+    }
+
+    const text = extractText(event.message) ||
+      extractText(event.content) ||
+      extractText(event.part) ||
+      extractText(event.text) ||
+      extractText(event.delta);
+    if (text) {
+      this.writer.write(text);
+    }
+
+    if (eventType === "result" || eventType === "complete" || eventType === "completed") {
+      const finalText = extractText(event.response) || extractText(event.result) || text;
+      if (finalText) {
+        result.finalText = finalText;
+      }
+      result.stopReason = stringField(event, "stopReason", "stop_reason", "finishReason", "finish_reason") || result.stopReason;
+    }
+  }
+
+  async runPrompt(promptText: string): Promise<AgentResult> {
+    if (this.options.outputSchema) {
+      throw new Error("structured JSON output is not supported by opencode runner");
+    }
+
+    const stored = await readStoredSession(this.options.stateRoot, "opencode");
+    const result: AgentResult = {
+      provider: "opencode",
+      sessionId: stored?.sessionId || "",
+      stopReason: "completed",
+      finalText: "",
+      transcript: "",
+      stderr: "",
+    };
+
+    const child = spawn("opencode", this.buildArgs(promptText, stored), {
+      cwd: this.options.workspace,
+      env: this.environment(),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const stderrChunks: string[] = [];
+    child.stderr?.on("data", (chunk) => {
+      const text = String(chunk || "");
+      stderrChunks.push(text);
+      this.writer.write(text);
+    });
+
+    const rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
+    try {
+      for await (const line of rl) {
+        if (!line.trim()) {
+          continue;
+        }
+        let event: Record<string, unknown>;
+        try {
+          event = JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          this.writer.line(line);
+          continue;
+        }
+        this.handleEvent(event, result);
+      }
+    } catch (error) {
+      child.kill("SIGTERM");
+      throw error;
+    }
+
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code) => resolve(code ?? 1));
+    });
+    if (exitCode !== 0) {
+      throw new Error(`opencode exited with code ${exitCode}: ${stderrChunks.join("")}`);
+    }
+
+    result.transcript = this.writer.transcript();
+    if (!result.finalText && result.transcript) {
+      result.finalText = result.transcript;
+    }
+    await writeStoredSession(this.options.stateRoot, "opencode", result.sessionId);
+    return result;
+  }
+}
+
+function stringField(record: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+}

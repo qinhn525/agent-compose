@@ -81,7 +81,7 @@ agent-compose down
 
 agent 常用字段：
 
-- `provider` / `model` / `system_prompt`：guest agent 配置（`provider` 选择 guest CLI runner；`model` 传给该 agent runtime）。非空 `system_prompt` 在运行时生效，并作为 Agent Identity 层注入 provider system/developer 指令。目前支持 `codex`、`claude`、`gemini`。daemon 侧 LLM 调用（`LLMService`、`scheduler.llm`）使用 `LLM_MODEL`，不是 compose 里的 agent `model`。
+- `provider` / `model` / `system_prompt`：guest agent 配置（`provider` 选择 guest CLI runner；`model` 会传给支持显式模型选择的 provider runtime）。非空 `system_prompt` 在运行时生效，并作为 Agent Identity 层注入 provider system/developer 指令。目前支持 `codex`、`claude`、`gemini`、`opencode`。daemon 侧 LLM 调用（`LLMService`、`scheduler.llm`）使用 `LLM_MODEL`，不是 compose 里的 agent `model`。
 - `image`：guest 镜像引用；为空时使用 driver 对应默认镜像。
 - `driver`：每个 agent 可选择一个 runtime，支持 `boxlite`、`docker`、`microsandbox`。
 - `env`：agent 级环境变量，支持 scalar 或 `{ value, secret }` 形状。
@@ -133,13 +133,14 @@ npm run dev:ui
 
 ### Agent Provider
 
-Guest agent session 在 guest 容器内运行 provider CLI（`agent-compose-runtime-js`）。Codex 和 Claude 通过 Runtime LLM Facade 调用：真实 provider key 保存在 daemon 侧 LLM provider 配置中，runtime 只拿 session-scoped facade token 和 facade base URL。`LLM_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`GOOGLE_API_KEY`、`GEMINI_API_KEY` 等 provider key 名称会从用户提供的 runtime env 中过滤。兼容别名 `LLM_API_KEY`、`LLM_API_ENDPOINT` 仍可能出现在 runtime 中，但它们是 daemon 写入的 facade 值，不是上游 provider 凭据。
+Guest agent session 在 guest 容器内运行 provider CLI（`agent-compose-runtime-js`）。Codex 和 Claude 通过 Runtime LLM Facade 调用：真实 provider key 保存在 daemon 侧 LLM provider 配置中，runtime 只拿 session-scoped facade token 和 facade base URL。`LLM_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`GOOGLE_API_KEY`、`GEMINI_API_KEY` 等 provider key 名称会从用户提供的 runtime env 中过滤。兼容别名 `LLM_API_KEY`、`LLM_API_ENDPOINT` 仍可能出现在 runtime 中，但它们是 daemon 写入的 facade 值，不是上游 provider 凭据。Gemini 和 OpenCode 仍直接使用各自 provider CLI；OpenCode 凭据取决于所选 OpenCode model provider。
 
 | Provider | 典型环境变量 | 说明 |
 | --- | --- | --- |
 | `codex` | daemon LLM provider 配置；runtime 获取 `AGENT_COMPOSE_SESSION_TOKEN`、`LLM_API_KEY`、`LLM_API_ENDPOINT`、`OPENAI_BASE_URL` 和 facade-token API key aliases | 使用 guest 镜像中的 Codex CLI/SDK |
 | `claude` | daemon Anthropic family provider 配置；runtime 获取 `AGENT_COMPOSE_SESSION_TOKEN`、`LLM_API_KEY`、`LLM_API_ENDPOINT`、`ANTHROPIC_BASE_URL` 和 facade-token API key aliases | 使用 guest 镜像中的 Claude Code CLI |
 | `gemini` | 暂未接入 LLM facade | 使用 guest 镜像中的 Gemini CLI |
+| `opencode` | 取决于所选 OpenCode model provider，例如 `ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY` | 使用 guest 镜像中的 OpenCode CLI |
 
 修改 guest runtime 代码或 provider 支持后，需重建 guest 镜像：
 
@@ -197,5 +198,6 @@ task test
 - [架构说明](design/agent-compose_design.md)
 - [Agent system prompt（Phase 1）](design/agent_system_prompt_design.md)
 - [Runtime JS contract](design/agent-compose-runtime-js_contract.md)
+- [OpenCode CLI Provider 支持](design/opencode_cli_support.md)
 - [Webhook design](design/webhook_design.md)
 - [Loader script API](../../loader-script/README.md)

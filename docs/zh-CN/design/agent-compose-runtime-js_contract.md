@@ -150,11 +150,13 @@ CLI 使用 `commander` 解析命令和参数。npm 包的 `bin` 入口为 `agent
 
 | 参数 | 必填 | 说明 |
 |---|---:|---|
-| `--provider` | 是 | `codex`、`claude`、`gemini`，支持少量别名 |
+| `--provider` | 是 | `codex`、`claude`、`gemini`、`opencode`，支持少量别名 |
 | `--message-file` | 是 | prompt 文件路径 |
 | `--state-root` | 否 | agent-compose runtime 状态根目录，默认 `/srv/agent-compose/session/state`。Guest 从此根路径按约定发现 agent identity（`agents/system-prompts/system-prompt.txt`）与 MPI catalog |
 | `--workspace` | 否 | agent 工作目录，默认 `WORKSPACE` 或 `/workspace` |
 | `--home` | 否 | agent HOME，默认 `HOME` 或 `/root` |
+| `--model` | 否 | agent model；由支持显式模型选择的 provider 使用 |
+| `--system-prompt-file` | 否 | system prompt 文件路径；当前由需要 prompt 级 system instructions 的 provider 使用 |
 
 Agent identity 使用 §3.2 文档中的固定约定路径。
 
@@ -501,6 +503,22 @@ gemini -p <prompt> --output-format stream-json --approval-mode yolo
 ```
 
 当前 Gemini runner 读取 stream-json 并生成 transcript，但不写 `/data/state/agents/providers/gemini.json`。
+
+### 10.4 OpenCode
+
+JS runtime 通过子进程调用 OpenCode：
+
+```sh
+opencode run <prompt> --format json --dir /workspace --dangerously-skip-permissions
+```
+
+当 host 提供 model 时，runner 会追加 `--model <model>`。当已有 provider session
+state 时，runner 会追加 `--session <stored session id>`。runner 会默认设置
+`OPENCODE_DISABLE_AUTOUPDATE=true`，除非环境变量中已经显式设置。
+
+OpenCode 原始 JSON events 会被转换成人类可读 transcript。成功运行且拿到非空
+provider session id 后，runner 会写入
+`/data/state/agents/providers/opencode.json`。
 
 ## 11. 错误语义
 

@@ -708,6 +708,7 @@ func shouldIncludeAgentJSONL(path, provider, sessionID string) bool {
 
 func (e *Executor) executeAgent(ctx context.Context, session *Session, request ExecuteAgentRequest) (NotebookCell, SessionEvent, SessionEvent, error) {
 	agent := request.Agent
+	model := strings.TrimSpace(request.Model)
 	message := request.Message
 	stream := request.Stream
 	message = strings.TrimSpace(message)
@@ -850,7 +851,7 @@ func (e *Executor) executeAgent(ctx context.Context, session *Session, request E
 		}
 	}
 
-	execResult, result, err := e.executeAgentRun(execCtx, session, agent, request.AgentDefinitionID, request.Model, request.RunID, message, request.OutputSchemaJSON, streamWriter)
+	execResult, result, err := e.executeAgentRun(execCtx, session, agent, request.AgentDefinitionID, model, request.RunID, message, request.OutputSchemaJSON, streamWriter)
 	streamErrMu.Lock()
 	deferredStreamErr := streamErr
 	streamErrMu.Unlock()

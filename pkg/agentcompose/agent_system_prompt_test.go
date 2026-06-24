@@ -230,7 +230,7 @@ func TestBuildAgentExecSpecPassesStateRootForConventionPathDiscovery(t *testing.
 	}
 	session := &Session{Summary: SessionSummary{ID: "session-1"}}
 
-	spec := buildAgentExecSpec(cfg, session, "codex", "/data/state/agents/prompts/prompt.txt", "")
+	spec := buildAgentExecSpec(cfg, session, "codex", "", "/data/state/agents/prompts/prompt.txt", "")
 	command := strings.Join(spec.Args, " ")
 	if !strings.Contains(command, "--state-root '/data/state'") {
 		t.Fatalf("command missing --state-root for convention-based system prompt discovery: %q", command)

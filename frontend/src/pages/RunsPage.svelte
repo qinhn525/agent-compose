@@ -1645,7 +1645,7 @@
       if (ctx.initialMessageSent || !initialMessage) return;
       ctx.initialMessageSent = true;
       const provider = (agent.provider || 'codex').trim().toLowerCase();
-      if (provider === 'claude' || provider === 'gemini' || provider === 'codex') {
+      if (provider === 'claude' || provider === 'gemini' || provider === 'codex' || provider === 'opencode') {
         void sendWorkSessionMessageStream(sessionId, provider, initialMessage, () => {}).catch(() => {});
       }
     }

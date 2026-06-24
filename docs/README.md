@@ -21,6 +21,7 @@ are available under [zh-CN/design/](zh-CN/design/).
 - [Agent system prompt (Phase 1)](design/agent_system_prompt_design.md)
 - [Runtime LLM Facade](zh-CN/design/agent-compose-runtime-llm-facade.md)
 - [Runtime JavaScript contract](design/agent-compose-runtime-js_contract.md)
+- [OpenCode CLI provider support](design/opencode_cli_support.md)
 - [Runtime environment variables](design/runtime_environment_variables_design.md)
 - [Runtime mount manifest](design/runtime_mount_manifest_design.md)
 - [Driver-specific runtime mount behavior](design/runtime_mount_manifest_driver_specific_design.md)

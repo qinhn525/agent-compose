@@ -733,8 +733,13 @@ func (s *Service) SendAgentMessage(ctx context.Context, req *connect.Request[age
 	if message == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("message is required"))
 	}
-	agent := s.resolveSessionAgentProvider(ctx, session, req.Msg.GetAgent())
-	cell, userEvent, assistantEvent, err := s.executor.ExecuteAgent(ctx, session, agent, message)
+	agentConfig := s.resolveSessionAgentConfig(ctx, session, req.Msg.GetAgent())
+	cell, userEvent, assistantEvent, err := s.executor.ExecuteAgentRequest(ctx, session, ExecuteAgentRequest{
+		Agent:             agentConfig.Provider,
+		AgentDefinitionID: agentConfig.AgentDefinitionID,
+		Model:             agentConfig.Model,
+		Message:           message,
+	})
 	_ = cell
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -756,7 +761,7 @@ func (s *Service) SendAgentMessageStream(ctx context.Context, req *connect.Reque
 	if message == "" {
 		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("message is required"))
 	}
-	agent := s.resolveSessionAgentProvider(ctx, session, req.Msg.GetAgent())
+	agentConfig := s.resolveSessionAgentConfig(ctx, session, req.Msg.GetAgent())
 
 	streamErr := func(sendErr error) error {
 		if sendErr == nil {
@@ -765,22 +770,28 @@ func (s *Service) SendAgentMessageStream(ctx context.Context, req *connect.Reque
 		return connect.NewError(connect.CodeUnknown, sendErr)
 	}
 
-	cell, userEvent, assistantEvent, err := s.executor.ExecuteAgentStream(ctx, session, agent, message, AgentExecutionStream{
-		OnStart: func(cell NotebookCell) error {
-			return streamErr(stream.Send(&agentcomposev1.SendAgentMessageStreamResponse{
-				EventType: agentcomposev1.SendAgentMessageStreamEventType_SEND_AGENT_MESSAGE_STREAM_EVENT_TYPE_STARTED,
-				Session:   toProtoSessionSummary(&session.Summary),
-				Run:       toProtoAgentRun(cell),
-				RunId:     cell.ID,
-			}))
-		},
-		OnChunk: func(cellID string, chunk ExecChunk) error {
-			return streamErr(stream.Send(&agentcomposev1.SendAgentMessageStreamResponse{
-				EventType: agentcomposev1.SendAgentMessageStreamEventType_SEND_AGENT_MESSAGE_STREAM_EVENT_TYPE_OUTPUT,
-				RunId:     cellID,
-				Chunk:     chunk.Text,
-				IsStderr:  chunk.IsStderr,
-			}))
+	cell, userEvent, assistantEvent, err := s.executor.ExecuteAgentRequest(ctx, session, ExecuteAgentRequest{
+		Agent:             agentConfig.Provider,
+		AgentDefinitionID: agentConfig.AgentDefinitionID,
+		Model:             agentConfig.Model,
+		Message:           message,
+		Stream: AgentExecutionStream{
+			OnStart: func(cell NotebookCell) error {
+				return streamErr(stream.Send(&agentcomposev1.SendAgentMessageStreamResponse{
+					EventType: agentcomposev1.SendAgentMessageStreamEventType_SEND_AGENT_MESSAGE_STREAM_EVENT_TYPE_STARTED,
+					Session:   toProtoSessionSummary(&session.Summary),
+					Run:       toProtoAgentRun(cell),
+					RunId:     cell.ID,
+				}))
+			},
+			OnChunk: func(cellID string, chunk ExecChunk) error {
+				return streamErr(stream.Send(&agentcomposev1.SendAgentMessageStreamResponse{
+					EventType: agentcomposev1.SendAgentMessageStreamEventType_SEND_AGENT_MESSAGE_STREAM_EVENT_TYPE_OUTPUT,
+					RunId:     cellID,
+					Chunk:     chunk.Text,
+					IsStderr:  chunk.IsStderr,
+				}))
+			},
 		},
 	})
 	if err != nil {
@@ -801,23 +812,39 @@ func (s *Service) SendAgentMessageStream(ctx context.Context, req *connect.Reque
 	}))
 }
 
-func (s *Service) resolveSessionAgentProvider(ctx context.Context, session *Session, requested string) string {
+type agentExecutionConfig struct {
+	Provider          string
+	AgentDefinitionID string
+	Model             string
+}
+
+func (s *Service) resolveSessionAgentConfig(ctx context.Context, session *Session, requested string) agentExecutionConfig {
 	provider := normalizeAgentKind(requested)
+	config := agentExecutionConfig{Provider: provider}
 	if session == nil {
-		return provider
+		return config
 	}
 	agentID := sessionTagValue(session.Summary.Tags, agentSessionTagID)
-	if agentID == "" || !sessionHasAgentTag(session, agentID) {
-		return provider
+	if agentID == "" || !sessionHasAgentTag(session, agentID) || s.configDB == nil {
+		return config
 	}
 	agent, err := s.configDB.GetAgentDefinition(ctx, agentID)
 	if err != nil {
-		return provider
+		return config
 	}
-	if saved := normalizeAgentKind(agent.Provider); saved != "" {
-		return saved
+	return agentExecutionConfigFromDefinition(agent, provider)
+}
+
+func agentExecutionConfigFromDefinition(agent AgentDefinition, fallbackProvider string) agentExecutionConfig {
+	provider := normalizeAgentKind(agent.Provider)
+	if provider == "" {
+		provider = normalizeAgentKind(fallbackProvider)
 	}
-	return provider
+	return agentExecutionConfig{
+		Provider:          provider,
+		AgentDefinitionID: strings.TrimSpace(agent.ID),
+		Model:             strings.TrimSpace(agent.Model),
+	}
 }
 
 func sessionTagValue(tags []SessionTag, name string) string {
@@ -884,6 +911,8 @@ func normalizeAgentKind(agent string) string {
 		return "claude"
 	case "gemini", "gemini-cli", "gemini_cli":
 		return "gemini"
+	case "opencode", "open-code", "open_code":
+		return "opencode"
 	default:
 		return agent
 	}
@@ -1327,6 +1356,7 @@ func (e *Executor) executeAgentRun(ctx context.Context, session *Session, agent,
 	if session.Summary.VMStatus != VMStatusRunning {
 		return ExecResult{}, AgentRunResult{}, fmt.Errorf("session is not running")
 	}
+	appconfig.ApplyDefaultGuestPaths(e.config)
 	vmState, err := e.store.GetVMState(session.Summary.ID)
 	if err != nil {
 		return ExecResult{}, AgentRunResult{}, err
@@ -1350,7 +1380,7 @@ func (e *Executor) executeAgentRun(ctx context.Context, session *Session, agent,
 	if err != nil {
 		return ExecResult{}, AgentRunResult{}, err
 	}
-	spec := buildAgentExecSpec(e.config, session, agent, promptPath, schemaPath)
+	spec := buildAgentExecSpec(e.config, session, agent, model, promptPath, schemaPath)
 	managedEnv, err := ensureSessionLLMFacadeConfig(ctx, e.config, e.configDB, session, agent, model, llmFacadeTokenSourceAgent, runID)
 	if err != nil {
 		return ExecResult{}, AgentRunResult{}, err
@@ -1378,7 +1408,7 @@ func (e *Executor) executeAgentRun(ctx context.Context, session *Session, agent,
 	return sanitizeAgentExecResult(result), parsed, nil
 }
 
-func buildAgentExecSpec(config *appconfig.Config, session *Session, agent, promptPath, schemaPath string) ExecSpec {
+func buildAgentExecSpec(config *appconfig.Config, session *Session, agent, model, promptPath, schemaPath string) ExecSpec {
 	appconfig.ApplyDefaultGuestPaths(config)
 	agentHome := guestSessionHome(config)
 	env := buildSessionExecEnv(config, session, agentHome)
@@ -1389,6 +1419,9 @@ func buildAgentExecSpec(config *appconfig.Config, session *Session, agent, promp
 		" --state-root " + shellQuote(config.GuestStateRoot) +
 		" --workspace " + shellQuote(config.GuestWorkspacePath) +
 		" --home " + shellQuote(agentHome)
+	if strings.TrimSpace(model) != "" {
+		promptCommand += " --model " + shellQuote(strings.TrimSpace(model))
+	}
 	if strings.TrimSpace(schemaPath) != "" {
 		promptCommand += " --output-schema-file " + shellQuote(schemaPath)
 	}

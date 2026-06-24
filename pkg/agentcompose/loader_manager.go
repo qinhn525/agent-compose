@@ -846,34 +846,32 @@ func (h *loaderRunHost) Agent(ctx context.Context, prompt string, request Loader
 		_ = h.manager.addLoaderEvent(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, eventType, "info", "loader session ready", map[string]any{"sessionId": session.Summary.ID}, session.Summary.ID, "", "")
 	}
 
-	agent := normalizeAgentKind(request.Agent)
+	agentConfig := agentExecutionConfig{Provider: normalizeAgentKind(request.Agent)}
 	var agentDefinitionID string
-	model := ""
-	if agent == "" {
+	if agentConfig.Provider == "" {
 		agentDefinition, err := h.manager.loaderAgentDefinition(ctx, h.loader)
 		if err != nil {
 			return LoaderAgentResult{}, err
 		}
 		if agentDefinition != nil {
-			agent = normalizeAgentKind(agentDefinition.Provider)
+			agentConfig = agentExecutionConfigFromDefinition(*agentDefinition, "")
 			agentDefinitionID = strings.TrimSpace(agentDefinition.ID)
-			model = agentDefinition.Model
 		}
 	}
 	if agentDefinitionID == "" {
 		agentDefinitionID = strings.TrimSpace(h.loader.Summary.AgentID)
 	}
-	if agent == "" {
-		agent = normalizeAgentKind(h.loader.Summary.DefaultAgent)
+	if agentConfig.Provider == "" {
+		agentConfig.Provider = normalizeAgentKind(h.loader.Summary.DefaultAgent)
 	}
-	if agent == "" {
-		agent = "codex"
+	if agentConfig.Provider == "" {
+		agentConfig.Provider = "codex"
 	}
 
 	cell, _, _, execErr := h.manager.executor.ExecuteAgentRequest(ctx, session, ExecuteAgentRequest{
-		Agent:             agent,
+		Agent:             agentConfig.Provider,
 		AgentDefinitionID: agentDefinitionID,
-		Model:             model,
+		Model:             agentConfig.Model,
 		RunID:             h.run.ID,
 		Message:           prompt,
 		Timeout:           request.Timeout,
@@ -891,7 +889,7 @@ func (h *loaderRunHost) Agent(ctx context.Context, prompt string, request Loader
 		JSON:           jsonValue,
 		SessionID:      session.Summary.ID,
 		CellID:         cell.ID,
-		Agent:          firstNonEmpty(cell.Agent, agent),
+		Agent:          firstNonEmpty(cell.Agent, agentConfig.Provider),
 		AgentSessionID: cell.AgentSessionID,
 		StopReason:     cell.StopReason,
 		Success:        cell.Success,

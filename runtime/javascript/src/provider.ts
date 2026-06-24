@@ -16,6 +16,10 @@ export function normalizeProvider(raw: unknown): Provider {
     case "gemini-cli":
     case "gemini_cli":
       return "gemini";
+    case "opencode":
+    case "open-code":
+    case "open_code":
+      return "opencode";
     default:
       throw new Error(`unsupported provider ${JSON.stringify(raw)}; expected one of: codex, claude, gemini`);
   }

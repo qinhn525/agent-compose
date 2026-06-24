@@ -107,7 +107,7 @@ func (s *Service) runProjectAgent(ctx context.Context, msg *agentcomposev2.RunAg
 	if err != nil {
 		return ProjectRunRecord{}, nil, connect.NewError(connect.CodeInternal, err)
 	}
-	agentDefinition, err := s.projectRunAgentDefinition(ctx, run)
+	agentConfig, err := s.projectRunAgentConfig(ctx, run)
 	if err != nil {
 		run, markErr := coordinator.MarkFailed(ctx, ProjectRunTransitionRequest{
 			RunID:     run.RunID,
@@ -119,10 +119,6 @@ func (s *Service) runProjectAgent(ctx context.Context, msg *agentcomposev2.RunAg
 			return ProjectRunRecord{}, nil, connect.NewError(connect.CodeInternal, markErr)
 		}
 		return run, err, nil
-	}
-	agentProvider := normalizeAgentKind(agentDefinition.Provider)
-	if agentProvider == "" {
-		agentProvider = defaultAgentProvider
 	}
 	if s.executor == nil {
 		err = fmt.Errorf("executor is required")
@@ -138,9 +134,9 @@ func (s *Service) runProjectAgent(ctx context.Context, msg *agentcomposev2.RunAg
 		return run, err, nil
 	}
 	cell, _, _, execErr := s.executor.ExecuteAgentRequest(ctx, sessionResult.Session, ExecuteAgentRequest{
-		Agent:             agentProvider,
+		Agent:             agentConfig.Provider,
 		AgentDefinitionID: run.ManagedAgentID,
-		Model:             agentDefinition.Model,
+		Model:             agentConfig.Model,
 		RunID:             run.RunID,
 		Message:           msg.GetPrompt(),
 		OutputSchemaJSON:  msg.GetOutputSchemaJson(),
@@ -163,12 +159,16 @@ func (s *Service) runProjectAgent(ctx context.Context, msg *agentcomposev2.RunAg
 	return run, nil, nil
 }
 
-func (s *Service) projectRunAgentDefinition(ctx context.Context, run ProjectRunRecord) (AgentDefinition, error) {
+func (s *Service) projectRunAgentConfig(ctx context.Context, run ProjectRunRecord) (agentExecutionConfig, error) {
 	agent, err := s.configDB.GetAgentDefinition(ctx, run.ManagedAgentID)
 	if err != nil {
-		return AgentDefinition{}, fmt.Errorf("resolve managed agent definition %s: %w", run.ManagedAgentID, err)
+		return agentExecutionConfig{}, fmt.Errorf("resolve managed agent definition %s: %w", run.ManagedAgentID, err)
 	}
-	return agent, nil
+	config := agentExecutionConfigFromDefinition(agent, defaultAgentProvider)
+	if config.Provider == "" {
+		config.Provider = defaultAgentProvider
+	}
+	return config, nil
 }
 
 func projectRunAgentExecutionStream(run ProjectRunRecord, sink *projectRunStreamSink) AgentExecutionStream {

@@ -7,6 +7,7 @@ import { normalizeProvider } from "./provider.js";
 import { ClaudeRunner } from "./runners/claude.js";
 import { CodexRunner } from "./runners/codex.js";
 import { GeminiRunner } from "./runners/gemini.js";
+import { OpenCodeRunner } from "./runners/opencode.js";
 import { agentSystemPromptPath, buildSystemContext, readSystemPromptFile } from "./system-context.js";
 import type { AgentResult, RuntimeJsonSchema } from "./types.js";
 
@@ -16,6 +17,7 @@ export interface PromptCommandOptions {
   stateRoot?: string;
   workspace?: string;
   home?: string;
+  model?: string;
   outputSchemaFile?: string;
 }
 
@@ -40,6 +42,7 @@ export async function runPromptCommand(commandOptions: PromptCommandOptions): Pr
   const mpi = await readMpiContext(stateRoot);
   const options = {
     provider,
+    model: commandOptions.model,
     stateRoot,
     workspace,
     home,
@@ -52,6 +55,9 @@ export async function runPromptCommand(commandOptions: PromptCommandOptions): Pr
   }
   if (provider === "claude") {
     return await new ClaudeRunner(options).runPrompt(promptText);
+  }
+  if (provider === "opencode") {
+    return await new OpenCodeRunner(options).runPrompt(promptText);
   }
   return await new GeminiRunner(options).runPrompt(promptText);
 }
