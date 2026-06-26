@@ -41,8 +41,6 @@ jobs:
           fi
 
       - run: npm ci
-      - run: npm run gen
-      - run: npm run build
 
       - name: Check npm token
         env:
