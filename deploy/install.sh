@@ -119,7 +119,7 @@ apply_image_refs() { # $1=file $2=mode(set-missing|overwrite)
   if [ -n "$IMAGE_PREFIX" ]; then
     for pair in \
       "AGENT_COMPOSE_IMAGE=${IMAGE_PREFIX}/agent-compose:${IMAGE_VERSION}" \
-      "AGENT_COMPOSE_FRONTEND_IMAGE=${IMAGE_PREFIX}/agent-compose-frontend:${IMAGE_VERSION}" \
+      "AGENT_COMPOSE_FRONTEND_IMAGE=${IMAGE_PREFIX}/agent-compose-frontend:latest" \
       "DEFAULT_IMAGE=${IMAGE_PREFIX}/agent-compose-guest:${IMAGE_VERSION}"; do
       key="${pair%%=*}"
       value="${pair#*=}"
