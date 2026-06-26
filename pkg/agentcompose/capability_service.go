@@ -120,6 +120,9 @@ func (s *Service) ListCapabilitySets(ctx context.Context, req *connect.Request[a
 	}
 	resp := &agentcomposev1.ListCapabilitySetsResponse{}
 	for _, item := range capsets {
+		if !item.Enabled {
+			continue
+		}
 		resp.Capsets = append(resp.Capsets, &agentcomposev1.CapabilitySet{
 			Id:          item.ID,
 			Name:        item.Name,

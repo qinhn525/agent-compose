@@ -36,6 +36,7 @@ func startFakeOctobus(t *testing.T) *fakeOctobus {
 		case r.URL.Path == "/admin/v1/capsets":
 			_ = json.NewEncoder(w).Encode(map[string]any{"capsets": []map[string]any{
 				{"id": "dev", "name": "Dev", "description": "dev capset", "enabled": true},
+				{"id": "disabled", "name": "Disabled", "description": "disabled capset", "enabled": false},
 			}})
 		case r.URL.Path == "/admin/v1/catalog/dev" && r.URL.Query().Get("format") == "md":
 			w.Header().Set("Content-Type", "text/markdown")
@@ -111,7 +112,9 @@ func TestCapabilityGatewayControlPlaneE2E(t *testing.T) {
 		t.Fatalf("OctoBus saw auth %q, want %q", octo.auth(), "Bearer secret")
 	}
 
-	// 4. Capsets and catalog flow through and are normalized.
+	// 4. Enabled capsets and catalog flow through and are normalized. Disabled
+	// capsets are hidden so callers cannot select capabilities OctoBus will
+	// reject at runtime.
 	capsets, err := service.ListCapabilitySets(ctx, connect.NewRequest(&agentcomposev1.ListCapabilitySetsRequest{}))
 	if err != nil {
 		t.Fatalf("list capsets: %v", err)
