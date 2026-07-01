@@ -6,15 +6,13 @@ import (
 	"strings"
 	"time"
 
+	"agent-compose/pkg/agentcompose/runs"
 	driverpkg "agent-compose/pkg/driver"
 
 	"github.com/google/uuid"
 )
 
-type ProjectRunSessionResult struct {
-	Session *Session
-	Created bool
-}
+type ProjectRunSessionResult = runs.SessionResult
 
 func (s *Service) ensureProjectRunSession(ctx context.Context, run ProjectRunRecord, prepared ProjectRunPreparation, requestedSessionID string) (ProjectRunSessionResult, error) {
 	if s == nil || s.config == nil || s.store == nil || s.driver == nil {
