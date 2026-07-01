@@ -519,7 +519,7 @@ func (s *ConfigStore) ReplaceLoaderTriggers(ctx context.Context, loaderID string
 				}
 			case LoaderTriggerKindCron:
 				if !sameSchedule || current.NextFireAt.IsZero() {
-					nextFireAt, err := loaderTriggerNextFireAt(now, current, false)
+					nextFireAt, err := loaders.LoaderTriggerNextFireAt(now, current, false)
 					if err != nil {
 						return nil, err
 					}
@@ -627,7 +627,7 @@ func (s *ConfigStore) SetLoaderEnabled(ctx context.Context, loaderID string, ena
 			if !trigger.Enabled || !domain.LoaderTriggerUsesSchedule(trigger.Kind) {
 				continue
 			}
-			nextFireAt, err := loaderTriggerNextFireAt(now, trigger, false)
+			nextFireAt, err := loaders.LoaderTriggerNextFireAt(now, trigger, false)
 			if err != nil {
 				return fmt.Errorf("schedule loader trigger %s/%s: %w", loaderID, trigger.ID, err)
 			}
@@ -663,7 +663,7 @@ func (s *ConfigStore) SetLoaderTriggerEnabled(ctx context.Context, loaderID, tri
 	}
 	nextFireAt := int64(0)
 	if enabled && domain.LoaderTriggerUsesSchedule(trigger.Kind) {
-		scheduledAt, err := loaderTriggerNextFireAt(time.Now().UTC(), trigger, false)
+		scheduledAt, err := loaders.LoaderTriggerNextFireAt(time.Now().UTC(), trigger, false)
 		if err != nil {
 			return fmt.Errorf("schedule loader trigger %s/%s: %w", loaderID, triggerID, err)
 		}

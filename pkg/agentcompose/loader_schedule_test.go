@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/loaders"
 	"strings"
 	"testing"
 	"time"
@@ -15,14 +16,14 @@ func testLoaderScheduleModelWorkflows(t *testing.T) {
 	t.Helper()
 	now := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
 
-	next, err := loaderTriggerNextFireAt(now, LoaderTrigger{Kind: LoaderTriggerKindInterval, IntervalMs: 1500}, false)
+	next, err := loaders.LoaderTriggerNextFireAt(now, LoaderTrigger{Kind: LoaderTriggerKindInterval, IntervalMs: 1500}, false)
 	if err != nil {
 		t.Fatalf("interval next fire returned error: %v", err)
 	}
 	if !next.Equal(now.Add(1500 * time.Millisecond)) {
 		t.Fatalf("interval next fire = %s", next)
 	}
-	next, err = loaderTriggerNextFireAt(now, LoaderTrigger{Kind: LoaderTriggerKindTimeout, IntervalMs: 2000}, true)
+	next, err = loaders.LoaderTriggerNextFireAt(now, LoaderTrigger{Kind: LoaderTriggerKindTimeout, IntervalMs: 2000}, true)
 	if err != nil {
 		t.Fatalf("fired timeout next fire returned error: %v", err)
 	}
@@ -30,44 +31,44 @@ func testLoaderScheduleModelWorkflows(t *testing.T) {
 		t.Fatalf("fired timeout next fire = %s, want zero", next)
 	}
 
-	specJSON, err := loaderCronSpecJSON("*/5 * * * *", "Asia/Shanghai")
+	specJSON, err := loaders.LoaderCronSpecJSON("*/5 * * * *", "Asia/Shanghai")
 	if err != nil {
 		t.Fatalf("loaderCronSpecJSON returned error: %v", err)
 	}
-	next, err = loaderTriggerNextFireAt(now, LoaderTrigger{Kind: LoaderTriggerKindCron, SpecJSON: specJSON}, false)
+	next, err = loaders.LoaderTriggerNextFireAt(now, LoaderTrigger{Kind: LoaderTriggerKindCron, SpecJSON: specJSON}, false)
 	if err != nil {
 		t.Fatalf("cron next fire returned error: %v", err)
 	}
 	if next.IsZero() || !next.After(now) {
 		t.Fatalf("cron next fire = %s, want after %s", next, now)
 	}
-	if source := loaderTriggerSource(LoaderTrigger{Kind: LoaderTriggerKindCron, SpecJSON: specJSON}); source != "cron:*/5 * * * *@Asia/Shanghai" {
+	if source := loaders.LoaderTriggerSource(LoaderTrigger{Kind: LoaderTriggerKindCron, SpecJSON: specJSON}); source != "cron:*/5 * * * *@Asia/Shanghai" {
 		t.Fatalf("cron source = %q", source)
 	}
-	if source := loaderTriggerSource(LoaderTrigger{Kind: LoaderTriggerKindInterval, IntervalMs: 1000}); source != "interval:1000" {
+	if source := loaders.LoaderTriggerSource(LoaderTrigger{Kind: LoaderTriggerKindInterval, IntervalMs: 1000}); source != "interval:1000" {
 		t.Fatalf("interval source = %q", source)
 	}
-	if source := loaderTriggerSource(LoaderTrigger{Kind: LoaderTriggerKindTimeout, IntervalMs: 2000}); source != "timeout:2000" {
+	if source := loaders.LoaderTriggerSource(LoaderTrigger{Kind: LoaderTriggerKindTimeout, IntervalMs: 2000}); source != "timeout:2000" {
 		t.Fatalf("timeout source = %q", source)
 	}
-	if source := loaderTriggerSource(LoaderTrigger{Kind: LoaderTriggerKindCron, SpecJSON: `{bad json`}); source != "cron" {
+	if source := loaders.LoaderTriggerSource(LoaderTrigger{Kind: LoaderTriggerKindCron, SpecJSON: `{bad json`}); source != "cron" {
 		t.Fatalf("invalid cron source = %q", source)
 	}
 
-	normalized, err := normalizeLoaderCronSpecJSON(`{"expr":"@hourly"}`)
+	normalized, err := loaders.NormalizeLoaderCronSpecJSON(`{"expr":"@hourly"}`)
 	if err != nil {
 		t.Fatalf("normalizeLoaderCronSpecJSON returned error: %v", err)
 	}
 	if !strings.Contains(normalized, `"timezone":"UTC"`) {
 		t.Fatalf("normalized cron spec = %q", normalized)
 	}
-	if _, err := normalizeLoaderCronSpecJSON(`{"expr":""}`); err == nil {
+	if _, err := loaders.NormalizeLoaderCronSpecJSON(`{"expr":""}`); err == nil {
 		t.Fatalf("empty cron expression returned nil error")
 	}
-	if _, err := normalizeLoaderCronSpecJSON(`{"expr":"* * * * *","timezone":"No/SuchZone"}`); err == nil {
+	if _, err := loaders.NormalizeLoaderCronSpecJSON(`{"expr":"* * * * *","timezone":"No/SuchZone"}`); err == nil {
 		t.Fatalf("invalid cron timezone returned nil error")
 	}
-	if _, err := loaderTriggerNextFireAt(now, LoaderTrigger{Kind: LoaderTriggerKindCron, SpecJSON: `{"expr":"bad cron"}`}, false); err == nil {
+	if _, err := loaders.LoaderTriggerNextFireAt(now, LoaderTrigger{Kind: LoaderTriggerKindCron, SpecJSON: `{"expr":"bad cron"}`}, false); err == nil {
 		t.Fatalf("invalid cron trigger returned nil error")
 	}
 

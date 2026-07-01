@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	"agent-compose/pkg/agentcompose/execution"
+	"agent-compose/pkg/agentcompose/loaders"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
@@ -173,13 +174,13 @@ scheduler.on("agent-compose.session.created", "session-created", function(event)
 }
 
 func TestLoaderEngineMaxExecutionTimeHonorsLongDeadline(t *testing.T) {
-	if got, want := loaderEngineMaxExecutionTime(context.Background()), int((60*time.Minute)/time.Millisecond); got != want {
+	if got, want := loaders.EngineMaxExecutionTime(context.Background()), int((60*time.Minute)/time.Millisecond); got != want {
 		t.Fatalf("max execution time without deadline = %d, want %d", got, want)
 	}
 
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(90*time.Minute))
 	defer cancel()
-	got := loaderEngineMaxExecutionTime(ctx)
+	got := loaders.EngineMaxExecutionTime(ctx)
 	if got <= int((60*time.Minute)/time.Millisecond) {
 		t.Fatalf("max execution time with 90m deadline = %d, want above 60m", got)
 	}
@@ -426,7 +427,7 @@ func TestLoaderManagerCollectDueScheduledRunsReschedulesCron(t *testing.T) {
 	store := newTestConfigStore(t)
 	loader := createTestLoader(t, ctx, store)
 
-	specJSON, err := loaderCronSpecJSON("*/5 * * * *", "UTC")
+	specJSON, err := loaders.LoaderCronSpecJSON("*/5 * * * *", "UTC")
 	if err != nil {
 		t.Fatalf("loaderCronSpecJSON returned error: %v", err)
 	}
@@ -492,7 +493,7 @@ func TestConfigStoreSetLoaderTriggerEnabledRearmsCron(t *testing.T) {
 	store := newTestConfigStore(t)
 	loader := createTestLoader(t, ctx, store)
 
-	specJSON, err := loaderCronSpecJSON("0 9 * * 1-5", "UTC")
+	specJSON, err := loaders.LoaderCronSpecJSON("0 9 * * 1-5", "UTC")
 	if err != nil {
 		t.Fatalf("loaderCronSpecJSON returned error: %v", err)
 	}

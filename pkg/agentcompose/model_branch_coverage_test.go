@@ -187,7 +187,7 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 		}
 	}
 
-	bus, err := NewLoaderBus(do.New())
+	bus, err := loaders.NewBus(do.New())
 	if err != nil || bus.Events() == nil {
 		t.Fatalf("NewLoaderBus = %#v/%v", bus, err)
 	}

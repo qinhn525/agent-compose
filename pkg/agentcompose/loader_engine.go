@@ -1,11 +1,6 @@
 package agentcompose
 
-import (
-	"agent-compose/pkg/agentcompose/loaders"
-	"context"
-
-	"github.com/samber/do/v2"
-)
+import "agent-compose/pkg/agentcompose/loaders"
 
 type (
 	LoaderHost             = loaders.LoaderHost
@@ -15,11 +10,3 @@ type (
 	LoaderEngine           = loaders.LoaderEngine
 	QJSLoaderEngine        = loaders.QJSLoaderEngine
 )
-
-func NewLoaderEngine(di do.Injector) (LoaderEngine, error) {
-	return loaders.NewLoaderEngine(di)
-}
-
-func loaderEngineMaxExecutionTime(ctx context.Context) int {
-	return loaders.EngineMaxExecutionTime(ctx)
-}

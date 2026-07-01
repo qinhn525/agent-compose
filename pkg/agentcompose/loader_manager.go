@@ -422,14 +422,14 @@ func (m *LoaderManager) collectDueScheduledRuns(now time.Time) []scheduledLoader
 			if !trigger.Enabled || !domain.LoaderTriggerUsesSchedule(trigger.Kind) || trigger.NextFireAt.IsZero() || trigger.NextFireAt.After(now) {
 				continue
 			}
-			nextFireAt, err := loaderTriggerNextFireAt(now, *trigger, true)
+			nextFireAt, err := loaders.LoaderTriggerNextFireAt(now, *trigger, true)
 			if err != nil {
 				slog.Warn("failed to compute next loader schedule", "loader_id", loader.Summary.ID, "trigger_id", trigger.ID, "trigger_kind", trigger.Kind, "error", err)
 				continue
 			}
 			trigger.LastFiredAt = now
 			trigger.NextFireAt = nextFireAt
-			source := loaderTriggerSource(*trigger)
+			source := loaders.LoaderTriggerSource(*trigger)
 			jobs = append(jobs, scheduledLoaderRun{
 				loader:      cloneLoader(loader),
 				trigger:     *trigger,

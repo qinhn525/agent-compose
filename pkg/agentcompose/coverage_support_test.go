@@ -5,6 +5,7 @@ import (
 	"agent-compose/pkg/agentcompose/domain"
 	"agent-compose/pkg/agentcompose/execution"
 	"agent-compose/pkg/agentcompose/images"
+	"agent-compose/pkg/agentcompose/loaders"
 	"agent-compose/pkg/agentcompose/workspaces"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
@@ -255,10 +256,10 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	if _, err := NewLLMClient(di); err != nil {
 		t.Fatalf("NewLLMClient returned error: %v", err)
 	}
-	if createdBus, err := NewLoaderBus(di); err != nil || createdBus.Events() == nil {
+	if createdBus, err := loaders.NewBus(di); err != nil || createdBus.Events() == nil {
 		t.Fatalf("NewLoaderBus = %#v/%v", createdBus, err)
 	}
-	if engine, err := NewLoaderEngine(di); err != nil || engine == nil {
+	if engine, err := loaders.NewLoaderEngine(di); err != nil || engine == nil {
 		t.Fatalf("NewLoaderEngine = %#v/%v", engine, err)
 	}
 	if createdManager, err := NewLoaderManager(di); err != nil || createdManager.rootCtx == nil || createdManager.scheduleWake == nil {
