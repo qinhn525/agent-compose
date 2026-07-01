@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
 	"strings"
 	"time"
 )
@@ -746,106 +745,8 @@ func resolveLLMTargetForProviderFamily(ctx context.Context, config *appconfig.Co
 	return LLMResolvedTarget{Provider: provider, Model: model, WireAPI: wireAPI, Endpoint: endpoint, Headers: headers}, nil
 }
 
-func selectLLMModel(models []LLMModel, requested string) LLMModel {
-	requested = strings.TrimSpace(requested)
-	for _, model := range models {
-		if requested != "" && (model.ID == requested || model.Name == requested) {
-			return model
-		}
-	}
-	if requested != "" {
-		return LLMModel{}
-	}
-	for _, model := range models {
-		if model.DefaultModel {
-			return model
-		}
-	}
-	return models[0]
-}
-
 func selectLLMModelAndProvider(ctx context.Context, store *ConfigStore, models []LLMModel, providers []LLMProvider, requestedModel, providerFamily, providerID string) (LLMModel, LLMProvider, string, bool, error) {
-	if strings.TrimSpace(requestedModel) != "" {
-		requested := selectLLMModel(models, requestedModel)
-		if strings.TrimSpace(requested.ID) == "" {
-			return LLMModel{}, LLMProvider{}, "", false, nil
-		}
-		provider, wireAPI, ok, err := selectLLMProviderForModel(ctx, store, providers, requested.ID, providerFamily, providerID)
-		return requested, provider, wireAPI, ok, err
-	}
-	ordered := append([]LLMModel(nil), models...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		if ordered[i].DefaultModel != ordered[j].DefaultModel {
-			return ordered[i].DefaultModel
-		}
-		return ordered[i].ID < ordered[j].ID
-	})
-	for _, model := range ordered {
-		provider, wireAPI, ok, err := selectLLMProviderForModel(ctx, store, providers, model.ID, providerFamily, providerID)
-		if err != nil {
-			return LLMModel{}, LLMProvider{}, "", false, err
-		}
-		if ok {
-			return model, provider, wireAPI, true, nil
-		}
-	}
-	return LLMModel{}, LLMProvider{}, "", false, nil
-}
-
-func selectLLMProviderForModel(ctx context.Context, store *ConfigStore, providers []LLMProvider, modelID, providerFamily, providerID string) (LLMProvider, string, bool, error) {
-	type candidate struct {
-		provider LLMProvider
-		wireAPI  string
-		priority int
-	}
-	if strings.TrimSpace(providerFamily) != "" {
-		providerFamily = normalizeLLMProviderType(providerFamily)
-	}
-	providerID = strings.TrimSpace(providerID)
-	var candidates []candidate
-	for _, provider := range providers {
-		if providerID == "" && providerFamily != "" && normalizeLLMProviderType(provider.ProviderType) != providerFamily {
-			continue
-		}
-		if providerID != "" && provider.ID != providerID {
-			continue
-		}
-		if providerID == "" && strings.TrimSpace(provider.Scope) == llmProviderScopeSessionEnv {
-			continue
-		}
-		wireAPI, ok, err := store.LLMProviderModelWireAPI(ctx, provider.ID, modelID)
-		if err != nil {
-			return LLMProvider{}, "", false, err
-		}
-		if !ok {
-			continue
-		}
-		candidates = append(candidates, candidate{provider: provider, wireAPI: firstNonEmpty(wireAPI, normalizeLLMWireAPI(provider.DefaultWireAPI)), priority: llmProviderSelectionPriority(provider.Scope)})
-	}
-	if len(candidates) == 0 {
-		return LLMProvider{}, "", false, nil
-	}
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].priority != candidates[j].priority {
-			return candidates[i].priority < candidates[j].priority
-		}
-		if candidates[i].provider.Weight == candidates[j].provider.Weight {
-			return candidates[i].provider.ID < candidates[j].provider.ID
-		}
-		return candidates[i].provider.Weight < candidates[j].provider.Weight
-	})
-	return candidates[0].provider, candidates[0].wireAPI, true, nil
-}
-
-func llmProviderSelectionPriority(scope string) int {
-	switch strings.TrimSpace(scope) {
-	case llmProviderScopeSessionEnv:
-		return 2
-	case llmProviderScopeEnvDefault:
-		return 1
-	default:
-		return 0
-	}
+	return llms.SelectModelAndProvider(ctx, store, models, providers, requestedModel, providerFamily, providerID)
 }
 
 func providerForwardHeaders(provider LLMProvider) (http.Header, error) {
