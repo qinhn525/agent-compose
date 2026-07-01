@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/execution"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
@@ -122,110 +123,29 @@ func (r driverRuntimeAdapter) IsSessionAlive(ctx context.Context, session *Sessi
 }
 
 func toDriverSession(session *Session) *driverpkg.Session {
-	if session == nil {
-		return nil
-	}
-	envItems := make([]driverpkg.SessionEnvVar, 0, len(session.EnvItems))
-	for _, item := range session.EnvItems {
-		envItems = append(envItems, driverpkg.SessionEnvVar{Name: item.Name, Value: item.Value, Secret: item.Secret})
-	}
-	runtimeEnvItems := make([]driverpkg.SessionEnvVar, 0, len(session.RuntimeEnvItems))
-	for _, item := range session.RuntimeEnvItems {
-		runtimeEnvItems = append(runtimeEnvItems, driverpkg.SessionEnvVar{Name: item.Name, Value: item.Value, Secret: item.Secret})
-	}
-	return &driverpkg.Session{
-		Summary: driverpkg.SessionSummary{
-			ID:            session.Summary.ID,
-			Driver:        session.Summary.Driver,
-			GuestImage:    session.Summary.GuestImage,
-			RuntimeRef:    session.Summary.RuntimeRef,
-			WorkspacePath: session.Summary.WorkspacePath,
-			CreatedAt:     session.Summary.CreatedAt,
-			UpdatedAt:     session.Summary.UpdatedAt,
-		},
-		EnvItems:        envItems,
-		RuntimeEnvItems: runtimeEnvItems,
-	}
+	return execution.ToDriverSession(session)
 }
 
 func toDriverVMState(state VMState) driverpkg.VMState {
-	return driverpkg.VMState{
-		Driver:       state.Driver,
-		Mode:         state.Mode,
-		BoxName:      state.BoxName,
-		BoxID:        state.BoxID,
-		Image:        state.Image,
-		Registry:     state.Registry,
-		RuntimeHome:  state.RuntimeHome,
-		StartedAt:    state.StartedAt,
-		StoppedAt:    state.StoppedAt,
-		LastError:    state.LastError,
-		BootstrapRef: state.BootstrapRef,
-	}
+	return execution.ToDriverVMState(state)
 }
 
 func fromDriverVMState(state driverpkg.VMState) VMState {
-	return VMState{
-		Driver:       state.Driver,
-		Mode:         state.Mode,
-		BoxName:      state.BoxName,
-		BoxID:        state.BoxID,
-		Image:        state.Image,
-		Registry:     state.Registry,
-		RuntimeHome:  state.RuntimeHome,
-		StartedAt:    state.StartedAt,
-		StoppedAt:    state.StoppedAt,
-		LastError:    state.LastError,
-		BootstrapRef: state.BootstrapRef,
-	}
+	return execution.FromDriverVMState(state)
 }
 
 func toDriverProxyState(state ProxyState) driverpkg.ProxyState {
-	return driverpkg.ProxyState{
-		ProxyPath:  state.ProxyPath,
-		GuestHost:  state.GuestHost,
-		HostPort:   state.HostPort,
-		GuestPort:  state.GuestPort,
-		JupyterURL: state.JupyterURL,
-		Token:      state.Token,
-	}
+	return execution.ToDriverProxyState(state)
 }
 
 func toDriverExecSpec(spec ExecSpec) driverpkg.ExecSpec {
-	return driverpkg.ExecSpec{
-		Command: spec.Command,
-		Args:    append([]string(nil), spec.Args...),
-		Env:     spec.Env,
-		Cwd:     spec.Cwd,
-	}
+	return execution.ToDriverExecSpec(spec)
 }
 
 func fromDriverSessionVMInfo(info driverpkg.SessionVMInfo) SessionVMInfo {
-	result := SessionVMInfo{BoxID: info.BoxID, JupyterURL: info.JupyterURL}
-	if info.ProxyState != nil {
-		proxyState := fromDriverProxyState(*info.ProxyState)
-		result.ProxyState = &proxyState
-	}
-	return result
-}
-
-func fromDriverProxyState(state driverpkg.ProxyState) ProxyState {
-	return ProxyState{
-		ProxyPath:  state.ProxyPath,
-		GuestHost:  state.GuestHost,
-		HostPort:   state.HostPort,
-		GuestPort:  state.GuestPort,
-		JupyterURL: state.JupyterURL,
-		Token:      state.Token,
-	}
+	return execution.FromDriverSessionVMInfo(info)
 }
 
 func fromDriverExecResult(result driverpkg.ExecResult) ExecResult {
-	return ExecResult{
-		ExitCode: result.ExitCode,
-		Stdout:   result.Stdout,
-		Stderr:   result.Stderr,
-		Output:   result.Output,
-		Success:  result.Success,
-	}
+	return execution.FromDriverExecResult(result)
 }
