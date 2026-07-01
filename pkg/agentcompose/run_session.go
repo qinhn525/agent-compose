@@ -9,6 +9,7 @@ import (
 	"agent-compose/pkg/agentcompose/capabilities"
 	"agent-compose/pkg/agentcompose/domain"
 	"agent-compose/pkg/agentcompose/runs"
+	"agent-compose/pkg/agentcompose/workspaces"
 	driverpkg "agent-compose/pkg/driver"
 
 	"github.com/google/uuid"
@@ -93,7 +94,7 @@ func (s *Service) startProjectRunSession(ctx context.Context, session *Session, 
 	if session == nil {
 		return fmt.Errorf("session is required")
 	}
-	if err := prepareSessionWorkspace(ctx, s.config, s.configDB, session); err != nil {
+	if err := workspaces.PrepareSessionWorkspace(ctx, s.config, s.configDB, session); err != nil {
 		session.Summary.VMStatus = VMStatusFailed
 		_ = s.store.UpdateSession(ctx, session)
 		return err

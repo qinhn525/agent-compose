@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	"agent-compose/pkg/agentcompose/workspaces"
 	appconfig "agent-compose/pkg/config"
 	"archive/tar"
 	"bytes"
@@ -41,7 +42,7 @@ func TestNormalizeGitCloneTarget(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := normalizeGitCloneTarget("ws-1", tc.raw)
+			got, err := workspaces.NormalizeGitCloneTarget("ws-1", tc.raw)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got target %q", got)
@@ -67,7 +68,7 @@ func TestHostWorkspaceInitializedIgnoresInternalEntries(t *testing.T) {
 		t.Fatalf("mkdir temp dir: %v", err)
 	}
 
-	initialized, err := hostWorkspaceInitialized(workspaceRoot)
+	initialized, err := workspaces.HostWorkspaceInitialized(workspaceRoot)
 	if err != nil {
 		t.Fatalf("hostWorkspaceInitialized returned error: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestHostWorkspaceInitializedIgnoresInternalEntries(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspaceRoot, "README.md"), []byte("hello\n"), 0o644); err != nil {
 		t.Fatalf("write README.md: %v", err)
 	}
-	initialized, err = hostWorkspaceInitialized(workspaceRoot)
+	initialized, err = workspaces.HostWorkspaceInitialized(workspaceRoot)
 	if err != nil {
 		t.Fatalf("hostWorkspaceInitialized returned error after file write: %v", err)
 	}
@@ -88,7 +89,7 @@ func TestHostWorkspaceInitializedIgnoresInternalEntries(t *testing.T) {
 }
 
 func TestGitCloneArgsUsesDepthOne(t *testing.T) {
-	got := gitCloneArgs("https://example.test/repo.git", gitWorkspaceConfig{Branch: "main"}, "/tmp/workspace")
+	got := workspaces.GitCloneArgs("https://example.test/repo.git", gitWorkspaceConfig{Branch: "main"}, "/tmp/workspace")
 	want := []string{"clone", "--depth", "1", "--branch", "main", "https://example.test/repo.git", "/tmp/workspace"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("gitCloneArgs = %#v, want %#v", got, want)
@@ -96,7 +97,7 @@ func TestGitCloneArgsUsesDepthOne(t *testing.T) {
 }
 
 func TestGitCommitFetchArgs(t *testing.T) {
-	got := gitCommitFetchArgs("e413509")
+	got := workspaces.GitCommitFetchArgs("e413509")
 	want := []string{"fetch", "--depth", "1", "origin", "e413509"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("gitCommitFetchArgs = %#v, want %#v", got, want)
@@ -104,15 +105,15 @@ func TestGitCommitFetchArgs(t *testing.T) {
 }
 
 func TestGitDeepenFetchArgs(t *testing.T) {
-	gotUnshallow := gitDeepenFetchArgs(true)
+	gotUnshallow := workspaces.GitDeepenFetchArgs(true)
 	wantUnshallow := []string{"fetch", "--unshallow", "--tags", "origin", "+refs/heads/*:refs/remotes/origin/*"}
 	if strings.Join(gotUnshallow, "\x00") != strings.Join(wantUnshallow, "\x00") {
-		t.Fatalf("gitDeepenFetchArgs(true) = %#v, want %#v", gotUnshallow, wantUnshallow)
+		t.Fatalf("workspaces.GitDeepenFetchArgs(true) = %#v, want %#v", gotUnshallow, wantUnshallow)
 	}
-	gotFull := gitDeepenFetchArgs(false)
+	gotFull := workspaces.GitDeepenFetchArgs(false)
 	wantFull := []string{"fetch", "--tags", "origin", "+refs/heads/*:refs/remotes/origin/*"}
 	if strings.Join(gotFull, "\x00") != strings.Join(wantFull, "\x00") {
-		t.Fatalf("gitDeepenFetchArgs(false) = %#v, want %#v", gotFull, wantFull)
+		t.Fatalf("workspaces.GitDeepenFetchArgs(false) = %#v, want %#v", gotFull, wantFull)
 	}
 }
 
@@ -152,7 +153,7 @@ func runGitCommitWorkspace(t *testing.T, remote, commit string) string {
 		Type:       "git",
 		ConfigJSON: fmt.Sprintf(`{"url":%q,"commit":%q}`, remote, commit),
 	}
-	if err := prepareGitWorkspace(context.Background(), session, workspace); err != nil {
+	if err := workspaces.PrepareGitWorkspace(context.Background(), session, workspace); err != nil {
 		t.Fatalf("prepareGitWorkspace with commit %q returned error: %v", commit, err)
 	}
 	return session.Summary.WorkspacePath
@@ -185,7 +186,7 @@ func testPrepareFileWorkspaceCopiesContent(t *testing.T) {
 		Type:       "file",
 		ConfigJSON: encodeFileWorkspaceConfigForTest(t, contentRoot),
 	}
-	if err := prepareFileWorkspace(config, session, workspace); err != nil {
+	if err := workspaces.PrepareFileWorkspace(config, session, workspace); err != nil {
 		t.Fatalf("prepareFileWorkspace returned error: %v", err)
 	}
 	assertFileContent(t, filepath.Join(session.Summary.WorkspacePath, "README.md"), "workspace\n")
@@ -193,7 +194,7 @@ func testPrepareFileWorkspaceCopiesContent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(contentRoot, "README.md"), []byte("updated\n"), 0o644); err != nil {
 		t.Fatalf("overwrite README.md: %v", err)
 	}
-	if err := prepareFileWorkspace(config, session, workspace); err != nil {
+	if err := workspaces.PrepareFileWorkspace(config, session, workspace); err != nil {
 		t.Fatalf("prepareFileWorkspace on refresh returned error: %v", err)
 	}
 	assertFileContent(t, filepath.Join(session.Summary.WorkspacePath, "README.md"), "updated\n")
@@ -216,10 +217,10 @@ func TestPrepareSessionWorkspacePrefersSessionSnapshot(t *testing.T) {
 			ID:         workspaceID,
 			Name:       "Snapshot File Workspace",
 			Type:       "file",
-			ConfigJSON: defaultFileWorkspaceConfigJSON(config, workspaceID),
+			ConfigJSON: workspaces.DefaultFileConfigJSON(config, workspaceID),
 		},
 	}
-	if err := prepareSessionWorkspace(context.Background(), config, nil, session); err != nil {
+	if err := workspaces.PrepareSessionWorkspace(context.Background(), config, nil, session); err != nil {
 		t.Fatalf("prepareSessionWorkspace returned error: %v", err)
 	}
 	assertFileContent(t, filepath.Join(session.Summary.WorkspacePath, "snapshot.txt"), "snapshot\n")
@@ -233,7 +234,7 @@ func TestFileWorkspaceContentRootRejectsOutsideDataRoot(t *testing.T) {
 		Type:       "file",
 		ConfigJSON: encodeFileWorkspaceConfigForTest(t, t.TempDir()),
 	}
-	if _, err := fileWorkspaceContentRoot(config, workspace); err == nil {
+	if _, err := workspaces.FileWorkspaceContentRoot(config, workspace); err == nil {
 		t.Fatalf("expected outside data root to be rejected")
 	}
 }
@@ -261,7 +262,7 @@ func TestExtractWorkspaceTarArchiveRejectsSymlinkEscape(t *testing.T) {
 	if err := tw.Close(); err != nil {
 		t.Fatalf("close tar writer: %v", err)
 	}
-	if err := extractWorkspaceTarArchive(&archive, root); err == nil {
+	if err := workspaces.ExtractWorkspaceTarArchive(&archive, root); err == nil {
 		t.Fatalf("expected symlink tar entry to be rejected")
 	}
 	if _, err := os.Stat(filepath.Join(outsideRoot, "owned.txt")); !os.IsNotExist(err) {
@@ -291,7 +292,7 @@ func TestExtractWorkspaceTarArchiveDirectoryEntryAfterFileKeepsContent(t *testin
 	if err := tw.Close(); err != nil {
 		t.Fatalf("close tar writer: %v", err)
 	}
-	if err := extractWorkspaceTarArchive(&archive, root); err != nil {
+	if err := workspaces.ExtractWorkspaceTarArchive(&archive, root); err != nil {
 		t.Fatalf("extractWorkspaceTarArchive returned error: %v", err)
 	}
 	assertFileContent(t, filepath.Join(contentRoot, "dir", "file.txt"), body)
@@ -327,7 +328,7 @@ func TestPrepareFileWorkspaceRejectsSymlinkContent(t *testing.T) {
 		Type:       "file",
 		ConfigJSON: encodeFileWorkspaceConfigForTest(t, contentRoot),
 	}
-	if err := prepareFileWorkspace(config, session, workspace); err == nil {
+	if err := workspaces.PrepareFileWorkspace(config, session, workspace); err == nil {
 		t.Fatalf("expected file workspace symlink content to be rejected")
 	}
 }
@@ -345,7 +346,7 @@ func testRegisterWorkspaceRoutesUploadAndList(t *testing.T) {
 		ID:         workspaceID,
 		Name:       "File Workspace",
 		Type:       "file",
-		ConfigJSON: defaultFileWorkspaceConfigJSON(config, workspaceID),
+		ConfigJSON: workspaces.DefaultFileConfigJSON(config, workspaceID),
 	})
 	if err != nil {
 		t.Fatalf("CreateWorkspaceConfig returned error: %v", err)
@@ -898,7 +899,7 @@ func TestWorkspaceRoutesRejectSymlinkContentRoot(t *testing.T) {
 		ID:         workspaceID,
 		Name:       "File Workspace",
 		Type:       "file",
-		ConfigJSON: defaultFileWorkspaceConfigJSON(config, workspaceID),
+		ConfigJSON: workspaces.DefaultFileConfigJSON(config, workspaceID),
 	})
 	if err != nil {
 		t.Fatalf("CreateWorkspaceConfig returned error: %v", err)
@@ -928,7 +929,7 @@ func TestWorkspaceRoutesRejectSymlinkDataRoot(t *testing.T) {
 		ID:         workspaceID,
 		Name:       "File Workspace",
 		Type:       "file",
-		ConfigJSON: defaultFileWorkspaceConfigJSON(config, workspaceID),
+		ConfigJSON: workspaces.DefaultFileConfigJSON(config, workspaceID),
 	})
 	if err != nil {
 		t.Fatalf("CreateWorkspaceConfig returned error: %v", err)
@@ -959,7 +960,7 @@ func testPrepareGitWorkspaceClonesRootAndTarget(t *testing.T) {
 		Type:       "git",
 		ConfigJSON: fmt.Sprintf(`{"url":%q}`, remote),
 	}
-	if err := prepareGitWorkspace(ctx, rootSession, rootWorkspace); err != nil {
+	if err := workspaces.PrepareGitWorkspace(ctx, rootSession, rootWorkspace); err != nil {
 		t.Fatalf("prepareGitWorkspace root returned error: %v", err)
 	}
 	assertFileContent(t, filepath.Join(rootSession.Summary.WorkspacePath, "README.md"), "root\n")
@@ -970,7 +971,7 @@ func testPrepareGitWorkspaceClonesRootAndTarget(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(rootSession.Summary.WorkspacePath, "local.txt"), []byte("local\n"), 0o644); err != nil {
 		t.Fatalf("write local workspace file: %v", err)
 	}
-	if err := prepareGitWorkspace(ctx, rootSession, rootWorkspace); err != nil {
+	if err := workspaces.PrepareGitWorkspace(ctx, rootSession, rootWorkspace); err != nil {
 		t.Fatalf("prepareGitWorkspace initialized root returned error: %v", err)
 	}
 	assertFileContent(t, filepath.Join(rootSession.Summary.WorkspacePath, "local.txt"), "local\n")
@@ -982,18 +983,18 @@ func testPrepareGitWorkspaceClonesRootAndTarget(t *testing.T) {
 		Type:       "git",
 		ConfigJSON: fmt.Sprintf(`{"url":%q,"path":"vendor/repo"}`, remote),
 	}
-	if err := prepareGitWorkspace(ctx, targetSession, targetWorkspace); err != nil {
+	if err := workspaces.PrepareGitWorkspace(ctx, targetSession, targetWorkspace); err != nil {
 		t.Fatalf("prepareGitWorkspace target returned error: %v", err)
 	}
 	assertFileContent(t, filepath.Join(targetSession.Summary.WorkspacePath, "vendor", "repo", "README.md"), "root\n")
 
-	if got := applyGitCredentials("https://example.test/repo.git", gitWorkspaceConfig{Username: "user name", Password: "p@ss"}); got != "https://user+name:p%40ss@example.test/repo.git" {
+	if got := workspaces.ApplyGitCredentials("https://example.test/repo.git", gitWorkspaceConfig{Username: "user name", Password: "p@ss"}); got != "https://user+name:p%40ss@example.test/repo.git" {
 		t.Fatalf("applyGitCredentials username/password = %q", got)
 	}
-	if got := applyGitCredentials("https://example.test/repo.git", gitWorkspaceConfig{Credential: "token"}); got != "https://token@example.test/repo.git" {
+	if got := workspaces.ApplyGitCredentials("https://example.test/repo.git", gitWorkspaceConfig{Credential: "token"}); got != "https://token@example.test/repo.git" {
 		t.Fatalf("applyGitCredentials token = %q", got)
 	}
-	if got := applyGitCredentials("ssh://example.test/repo.git", gitWorkspaceConfig{Credential: "token"}); got != "ssh://example.test/repo.git" {
+	if got := workspaces.ApplyGitCredentials("ssh://example.test/repo.git", gitWorkspaceConfig{Credential: "token"}); got != "ssh://example.test/repo.git" {
 		t.Fatalf("applyGitCredentials ssh = %q", got)
 	}
 }
@@ -1122,7 +1123,7 @@ func encodeFileWorkspaceConfigForTest(t *testing.T, root string) string {
 
 func mustFileWorkspaceContentRoot(t *testing.T, config *appconfig.Config, workspace WorkspaceConfig) string {
 	t.Helper()
-	root, err := fileWorkspaceContentRoot(config, workspace)
+	root, err := workspaces.FileWorkspaceContentRoot(config, workspace)
 	if err != nil {
 		t.Fatalf("fileWorkspaceContentRoot: %v", err)
 	}
@@ -1131,7 +1132,7 @@ func mustFileWorkspaceContentRoot(t *testing.T, config *appconfig.Config, worksp
 
 func mustDefaultFileWorkspaceContentRoot(t *testing.T, config *appconfig.Config, workspaceID string) string {
 	t.Helper()
-	root, err := defaultFileWorkspaceContentRoot(config, workspaceID)
+	root, err := workspaces.DefaultFileWorkspaceContentRoot(config, workspaceID)
 	if err != nil {
 		t.Fatalf("defaultFileWorkspaceContentRoot: %v", err)
 	}
@@ -1162,7 +1163,7 @@ func writeUploadedWorkspaceFileForTest(contentRoot, targetPath, body string) err
 		return err
 	}
 	defer func() { _ = form.RemoveAll() }()
-	return storeUploadedWorkspaceFile(form.File["file"][0], root, targetPath)
+	return workspaces.StoreUploadedFile(form.File["file"][0], root, targetPath)
 }
 
 func writeTestTar(t *testing.T, dst io.Writer, files map[string]string) {

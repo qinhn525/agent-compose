@@ -3,6 +3,7 @@ package agentcompose
 import (
 	"agent-compose/pkg/agentcompose/capabilities"
 	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/workspaces"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
@@ -207,7 +208,7 @@ func (b *SessionRPCBridge) createSession(ctx context.Context, req *connect.Reque
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	session.ProviderEnvItems = providerEnvItems
-	if err := prepareSessionWorkspace(ctx, b.config, b.configDB, session); err != nil {
+	if err := workspaces.PrepareSessionWorkspace(ctx, b.config, b.configDB, session); err != nil {
 		session.Summary.VMStatus = VMStatusFailed
 		_ = b.store.UpdateSession(ctx, session)
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -251,7 +252,7 @@ func (b *SessionRPCBridge) resumeSession(ctx context.Context, req *connect.Reque
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
-	if err := prepareSessionWorkspace(ctx, b.config, b.configDB, session); err != nil {
+	if err := workspaces.PrepareSessionWorkspace(ctx, b.config, b.configDB, session); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	writeCapabilityGuide(ctx, b.cap, b.store, b.streams, session, capabilities.SessionCapsets(session))
@@ -430,7 +431,7 @@ func (b *SessionRPCBridge) ensureSessionProxyReady(ctx context.Context, sessionI
 	}
 	startCtx, cancel := context.WithTimeout(ctx, b.config.SessionStartTimeout)
 	defer cancel()
-	if err := prepareSessionWorkspace(startCtx, b.config, b.configDB, session); err != nil {
+	if err := workspaces.PrepareSessionWorkspace(startCtx, b.config, b.configDB, session); err != nil {
 		session.Summary.VMStatus = VMStatusFailed
 		_ = b.store.UpdateSession(ctx, session)
 		return nil, ProxyState{}, err

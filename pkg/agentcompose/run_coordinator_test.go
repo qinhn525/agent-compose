@@ -17,6 +17,7 @@ import (
 
 	"agent-compose/pkg/agentcompose/capabilities"
 	"agent-compose/pkg/agentcompose/runs"
+	"agent-compose/pkg/agentcompose/workspaces"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
@@ -1037,7 +1038,7 @@ func TestRunPreparationMaterializesLocalWorkspaceSnapshot(t *testing.T) {
 	if prepared.WorkspaceConfig == nil || prepared.WorkspaceConfig.Type != "file" || prepared.Workspace == nil || prepared.Workspace.Type != "file" {
 		t.Fatalf("prepared local workspace = %#v / %#v", prepared.WorkspaceConfig, prepared.Workspace)
 	}
-	contentRoot, err := fileWorkspaceContentRoot(service.config, *prepared.WorkspaceConfig)
+	contentRoot, err := workspaces.FileWorkspaceContentRoot(service.config, *prepared.WorkspaceConfig)
 	if err != nil {
 		t.Fatalf("fileWorkspaceContentRoot returned error: %v", err)
 	}

@@ -27,6 +27,7 @@ import (
 	"agent-compose/pkg/agentcompose/execution"
 	"agent-compose/pkg/agentcompose/images"
 	"agent-compose/pkg/agentcompose/loaders"
+	"agent-compose/pkg/agentcompose/workspaces"
 	"agent-compose/pkg/capproxy"
 	"agent-compose/pkg/imagecache"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
@@ -319,8 +320,8 @@ func (s *Service) CreateWorkspaceConfig(ctx context.Context, req *connect.Reques
 	workspaceID := ""
 	if workspaceType == "file" {
 		workspaceID = uuid.NewString()
-		configJSON = defaultFileWorkspaceConfigJSON(s.config, workspaceID)
-		if _, err := validateFileWorkspaceConfig(s.config, workspaceID, configJSON); err != nil {
+		configJSON = workspaces.DefaultFileConfigJSON(s.config, workspaceID)
+		if _, err := workspaces.ValidateFileWorkspaceConfig(s.config, workspaceID, configJSON); err != nil {
 			return nil, connect.NewError(connect.CodeInvalidArgument, err)
 		}
 		if err := s.checkFileWorkspaceContentCreatable(workspaceID); err != nil {
@@ -357,8 +358,8 @@ func (s *Service) UpdateWorkspaceConfig(ctx context.Context, req *connect.Reques
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	if workspaceType == "file" {
-		configJSON = defaultFileWorkspaceConfigJSON(s.config, req.Msg.GetWorkspaceId())
-		if _, err := validateFileWorkspaceConfig(s.config, req.Msg.GetWorkspaceId(), configJSON); err != nil {
+		configJSON = workspaces.DefaultFileConfigJSON(s.config, req.Msg.GetWorkspaceId())
+		if _, err := workspaces.ValidateFileWorkspaceConfig(s.config, req.Msg.GetWorkspaceId(), configJSON); err != nil {
 			return nil, connect.NewError(connect.CodeInvalidArgument, err)
 		}
 	}
@@ -431,7 +432,7 @@ func (s *Service) DeleteWorkspaceConfig(ctx context.Context, req *connect.Reques
 }
 
 func (s *Service) createFileWorkspaceContent(workspaceID, configJSON string) error {
-	content, err := openFileWorkspaceContent(s.config, WorkspaceConfig{
+	content, err := workspaces.OpenFileWorkspaceContent(s.config, WorkspaceConfig{
 		ID:         workspaceID,
 		Type:       "file",
 		ConfigJSON: configJSON,
@@ -443,11 +444,11 @@ func (s *Service) createFileWorkspaceContent(workspaceID, configJSON string) err
 }
 
 func (s *Service) checkFileWorkspaceContentCreatable(workspaceID string) error {
-	relRoot, err := fileWorkspaceContentRelRoot(workspaceID)
+	relRoot, err := workspaces.FileWorkspaceContentRelRoot(workspaceID)
 	if err != nil {
 		return err
 	}
-	dataRoot, err := openFileWorkspaceDataRoot(s.config)
+	dataRoot, err := workspaces.OpenFileWorkspaceDataRoot(s.config)
 	if err != nil {
 		return err
 	}
@@ -488,11 +489,11 @@ func (s *Service) removeFileWorkspaceContent(workspace WorkspaceConfig) error {
 }
 
 func (s *Service) fileWorkspaceContentRemovalTarget(workspace WorkspaceConfig) (*os.Root, string, error) {
-	dataRoot, err := openFileWorkspaceDataRoot(s.config)
+	dataRoot, err := workspaces.OpenFileWorkspaceDataRoot(s.config)
 	if err != nil {
 		return nil, "", err
 	}
-	relRoot, err := fileWorkspaceContentRelRoot(workspace.ID)
+	relRoot, err := workspaces.FileWorkspaceContentRelRoot(workspace.ID)
 	if err != nil {
 		_ = dataRoot.Close()
 		return nil, "", err
@@ -613,7 +614,7 @@ func (s *Service) ensureSessionProxyReady(ctx context.Context, sessionID string)
 	}
 	startCtx, cancel := context.WithTimeout(ctx, s.config.SessionStartTimeout)
 	defer cancel()
-	if err := prepareSessionWorkspace(startCtx, s.config, s.configDB, session); err != nil {
+	if err := workspaces.PrepareSessionWorkspace(startCtx, s.config, s.configDB, session); err != nil {
 		session.Summary.VMStatus = VMStatusFailed
 		_ = s.store.UpdateSession(ctx, session)
 		return nil, ProxyState{}, err

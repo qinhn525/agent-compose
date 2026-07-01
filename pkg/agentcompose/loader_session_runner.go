@@ -4,6 +4,7 @@ import (
 	"agent-compose/pkg/agentcompose/api"
 	"agent-compose/pkg/agentcompose/capabilities"
 	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/workspaces"
 	driverpkg "agent-compose/pkg/driver"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"context"
@@ -115,7 +116,7 @@ func (r *LoaderSessionRunner) Ensure(ctx context.Context, loader Loader, request
 		return nil, "", err
 	}
 	session.ProviderEnvItems = providerEnvItems
-	if err := prepareSessionWorkspace(ctx, m.config, m.configDB, session); err != nil {
+	if err := workspaces.PrepareSessionWorkspace(ctx, m.config, m.configDB, session); err != nil {
 		session.Summary.VMStatus = VMStatusFailed
 		_ = m.store.UpdateSession(ctx, session)
 		return nil, "", err
@@ -162,7 +163,7 @@ func (r *LoaderSessionRunner) LoadOrResume(ctx context.Context, sessionID string
 	if session.Summary.VMStatus == VMStatusRunning {
 		return session, "", nil
 	}
-	if err := prepareSessionWorkspace(ctx, m.config, m.configDB, session); err != nil {
+	if err := workspaces.PrepareSessionWorkspace(ctx, m.config, m.configDB, session); err != nil {
 		return nil, "", err
 	}
 	writeCapabilityGuide(ctx, m.cap, m.store, m.streams, session, capabilities.SessionCapsets(session))

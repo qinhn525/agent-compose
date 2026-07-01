@@ -9,6 +9,7 @@ import (
 
 	"agent-compose/pkg/agentcompose/capabilities"
 	"agent-compose/pkg/agentcompose/runs"
+	"agent-compose/pkg/agentcompose/workspaces"
 	"agent-compose/pkg/compose"
 	appconfig "agent-compose/pkg/config"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
@@ -104,8 +105,8 @@ func (s *Service) materializeLocalProjectRunWorkspace(run ProjectRunRecord, proj
 		return WorkspaceConfig{}, err
 	}
 	workspaceID := projectRunWorkspaceID(run, "local")
-	configJSON := defaultFileWorkspaceConfigJSON(s.config, workspaceID)
-	if _, err := validateFileWorkspaceConfig(s.config, workspaceID, configJSON); err != nil {
+	configJSON := workspaces.DefaultFileConfigJSON(s.config, workspaceID)
+	if _, err := workspaces.ValidateFileWorkspaceConfig(s.config, workspaceID, configJSON); err != nil {
 		return WorkspaceConfig{}, err
 	}
 	if err := resetFileWorkspaceSnapshotContent(s.config, workspaceID); err != nil {
@@ -118,7 +119,7 @@ func (s *Service) materializeLocalProjectRunWorkspace(run ProjectRunRecord, proj
 		ConfigJSON: configJSON,
 		Comment:    fmt.Sprintf("project run %s local workspace snapshot", run.RunID),
 	}
-	content, err := openFileWorkspaceContent(s.config, config)
+	content, err := workspaces.OpenFileWorkspaceContent(s.config, config)
 	if err != nil {
 		return WorkspaceConfig{}, err
 	}
@@ -128,7 +129,7 @@ func (s *Service) materializeLocalProjectRunWorkspace(run ProjectRunRecord, proj
 		return WorkspaceConfig{}, fmt.Errorf("open local workspace source %s: %w", sourceDir, err)
 	}
 	defer func() { _ = sourceRoot.Close() }()
-	if err := copyRootDirectoryContents(sourceRoot, content.AbsRoot); err != nil {
+	if err := workspaces.CopyRootDirectoryContents(sourceRoot, content.AbsRoot); err != nil {
 		return WorkspaceConfig{}, fmt.Errorf("materialize local workspace snapshot: %w", err)
 	}
 	return config, nil
@@ -139,7 +140,7 @@ func projectRunGitWorkspaceConfig(run ProjectRunRecord, workspace *compose.Works
 	if strings.TrimSpace(workspace.URL) == "" {
 		return WorkspaceConfig{}, fmt.Errorf("git workspace url is required")
 	}
-	if _, err := normalizeGitCloneTarget(workspaceID, workspace.Path); err != nil {
+	if _, err := workspaces.NormalizeGitCloneTarget(workspaceID, workspace.Path); err != nil {
 		return WorkspaceConfig{}, err
 	}
 	payload, err := json.Marshal(gitWorkspaceConfig{
@@ -168,12 +169,12 @@ func projectRunWorkspaceName(run ProjectRunRecord, provider string) string {
 }
 
 func resetFileWorkspaceSnapshotContent(config *appconfig.Config, workspaceID string) error {
-	dataRoot, err := openFileWorkspaceDataRoot(config)
+	dataRoot, err := workspaces.OpenFileWorkspaceDataRoot(config)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = dataRoot.Close() }()
-	relRoot, err := fileWorkspaceContentRelRoot(workspaceID)
+	relRoot, err := workspaces.FileWorkspaceContentRelRoot(workspaceID)
 	if err != nil {
 		return err
 	}

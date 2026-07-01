@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	"agent-compose/pkg/agentcompose/workspaces"
 	appconfig "agent-compose/pkg/config"
 	"context"
 	"errors"
@@ -26,7 +27,7 @@ func registerWorkspaceRoutes(app *echo.Echo, service *Service) {
 			return toWorkspaceHTTPError(err)
 		}
 		defer func() { _ = content.Root.Close() }()
-		files, err := listWorkspaceFiles(content.Root)
+		files, err := workspaces.ListFiles(content.Root)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 		}
@@ -57,17 +58,17 @@ func registerWorkspaceRoutes(app *echo.Echo, service *Service) {
 		targetPath := strings.TrimSpace(c.FormValue("path"))
 		switch uploadType {
 		case "", "file":
-			if err := storeUploadedWorkspaceFile(fileHeader, content.Root, targetPath); err != nil {
+			if err := workspaces.StoreUploadedFile(fileHeader, content.Root, targetPath); err != nil {
 				return toWorkspaceUploadHTTPError(err)
 			}
 		case "archive":
-			if err := extractUploadedWorkspaceArchive(fileHeader, content.Root); err != nil {
+			if err := workspaces.ExtractUploadedArchive(fileHeader, content.Root); err != nil {
 				return toWorkspaceUploadHTTPError(err)
 			}
 		default:
 			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("unsupported upload_type %q", uploadType))
 		}
-		files, err := listWorkspaceFiles(content.Root)
+		files, err := workspaces.ListFiles(content.Root)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 		}
@@ -79,7 +80,7 @@ func registerWorkspaceRoutes(app *echo.Echo, service *Service) {
 			return toWorkspaceHTTPError(err)
 		}
 		defer func() { _ = content.Root.Close() }()
-		relPath, err := cleanWorkspaceRelativePath(c.QueryParam("path"), false)
+		relPath, err := workspaces.CleanRelativePath(c.QueryParam("path"), false)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
@@ -143,7 +144,7 @@ func (s *Service) loadFileWorkspaceConfig(ctx context.Context, workspaceID strin
 	if strings.ToLower(strings.TrimSpace(workspace.Type)) != "file" {
 		return WorkspaceConfig{}, fileWorkspaceContent{}, classifyError(ErrInvalidArgument, fmt.Sprintf("workspace config %s is not a file workspace", workspace.ID), nil)
 	}
-	content, err := openFileWorkspaceContent(s.config, workspace)
+	content, err := workspaces.OpenFileWorkspaceContent(s.config, workspace)
 	if err != nil {
 		return WorkspaceConfig{}, fileWorkspaceContent{}, err
 	}

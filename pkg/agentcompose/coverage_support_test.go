@@ -3,6 +3,7 @@ package agentcompose
 import (
 	"agent-compose/pkg/agentcompose/domain"
 	"agent-compose/pkg/agentcompose/images"
+	"agent-compose/pkg/agentcompose/workspaces"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
@@ -397,7 +398,7 @@ func testSupportWorkspaceMoveMerge(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dst, "nested", "from-dst.txt"), []byte("dst\n"), 0o644); err != nil {
 		t.Fatalf("write dst file: %v", err)
 	}
-	if err := moveWorkspaceEntry(src, dst); err != nil {
+	if err := workspaces.MoveWorkspaceEntry(src, dst); err != nil {
 		t.Fatalf("moveWorkspaceEntry returned error: %v", err)
 	}
 	assertFileContent(t, filepath.Join(dst, "nested", "from-src.txt"), "src\n")
@@ -414,7 +415,7 @@ func testSupportWorkspaceMoveMerge(t *testing.T) {
 	if err := os.WriteFile(dstFile, []byte("dst\n"), 0o644); err != nil {
 		t.Fatalf("write destination file: %v", err)
 	}
-	if err := moveWorkspaceEntry(srcFile, dstFile); err == nil {
+	if err := workspaces.MoveWorkspaceEntry(srcFile, dstFile); err == nil {
 		t.Fatalf("moveWorkspaceEntry file collision returned nil error")
 	}
 }
