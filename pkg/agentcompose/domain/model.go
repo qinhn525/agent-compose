@@ -77,6 +77,29 @@ func NormalizeEnvItems(items []SessionEnvVar) []SessionEnvVar {
 	return result
 }
 
+func MergeEnvItems(globalItems, sessionItems []SessionEnvVar) []SessionEnvVar {
+	merged := make(map[string]SessionEnvVar, len(globalItems)+len(sessionItems))
+	for _, item := range NormalizeEnvItems(globalItems) {
+		merged[item.Name] = item
+	}
+	for _, item := range NormalizeEnvItems(sessionItems) {
+		merged[item.Name] = item
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(merged))
+	for key := range merged {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]SessionEnvVar, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, merged[key])
+	}
+	return result
+}
+
 type SessionSummary struct {
 	ID            string       `json:"id"`
 	Title         string       `json:"title"`
