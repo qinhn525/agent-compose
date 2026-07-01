@@ -5,10 +5,7 @@ import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -930,33 +927,11 @@ func lookupEnvItemValue(items []SessionEnvVar, key string) string {
 }
 
 func newLLMFacadeToken(sessionID, model, providerID, wireAPI, source, runID string) (string, LLMFacadeToken, error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", LLMFacadeToken{}, err
-	}
-	tokenValue := "ac_llm_" + hex.EncodeToString(raw)
-	hash, fingerprint := hashLLMFacadeToken(tokenValue)
-	now := time.Now().UTC()
-	return tokenValue, LLMFacadeToken{
-		SessionID:        strings.TrimSpace(sessionID),
-		TokenHash:        hash,
-		TokenFingerprint: fingerprint,
-		Model:            strings.TrimSpace(model),
-		ProviderID:       strings.TrimSpace(providerID),
-		WireAPI:          normalizeLLMWireAPI(wireAPI),
-		Source:           strings.TrimSpace(source),
-		RunID:            strings.TrimSpace(runID),
-		IssuedAt:         now,
-	}, nil
+	return llms.NewFacadeToken(sessionID, model, providerID, wireAPI, source, runID)
 }
 
 func hashLLMFacadeToken(value string) (string, string) {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(value)))
-	hash := hex.EncodeToString(sum[:])
-	if len(hash) < 12 {
-		return hash, hash
-	}
-	return hash, hash[:12]
+	return llms.HashFacadeToken(value)
 }
 
 func llmProviderKeyName(name string) bool {
