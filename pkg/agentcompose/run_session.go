@@ -150,28 +150,11 @@ func (s *Service) publishProjectRunSessionStarted(ctx context.Context, session *
 }
 
 func projectRunSessionTitle(run ProjectRunRecord) string {
-	project := strings.TrimSpace(run.ProjectName)
-	if project == "" {
-		project = strings.TrimSpace(run.ProjectID)
-	}
-	agent := strings.TrimSpace(run.AgentName)
-	if agent == "" {
-		agent = "agent"
-	}
-	return strings.TrimSpace(fmt.Sprintf("%s/%s run", project, agent))
+	return runs.SessionTitle(run)
 }
 
 func projectRunSessionTags(run ProjectRunRecord) []SessionTag {
-	tags := []SessionTag{
-		{Name: "project", Value: strings.TrimSpace(run.ProjectID)},
-		{Name: "agent", Value: strings.TrimSpace(run.AgentName)},
-		{Name: "run_id", Value: strings.TrimSpace(run.RunID)},
-		{Name: "source", Value: normalizeProjectRunSource(run.Source)},
-	}
-	if schedulerID := strings.TrimSpace(run.SchedulerID); schedulerID != "" {
-		tags = append(tags, SessionTag{Name: "scheduler_id", Value: schedulerID})
-	}
-	return tags
+	return runs.SessionTags(run)
 }
 
 func mergeSessionTags(existing, additions []SessionTag) []SessionTag {

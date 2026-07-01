@@ -271,19 +271,11 @@ func projectRunGitWorkspaceConfig(run ProjectRunRecord, workspace *compose.Works
 }
 
 func projectRunWorkspaceID(run ProjectRunRecord, provider string) string {
-	return stableReadableID("workspace", run.AgentName+"-"+provider, run.RunID+"|workspace|"+provider)
+	return runs.WorkspaceID(run, provider)
 }
 
 func projectRunWorkspaceName(run ProjectRunRecord, provider string) string {
-	name := strings.TrimSpace(run.ProjectName)
-	if name == "" {
-		name = strings.TrimSpace(run.ProjectID)
-	}
-	agent := strings.TrimSpace(run.AgentName)
-	if agent == "" {
-		agent = "agent"
-	}
-	return strings.TrimSpace(fmt.Sprintf("%s %s %s run workspace", name, agent, provider))
+	return runs.WorkspaceName(run, provider)
 }
 
 func resetFileWorkspaceSnapshotContent(config *appconfig.Config, workspaceID string) error {
