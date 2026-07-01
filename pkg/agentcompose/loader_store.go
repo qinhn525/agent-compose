@@ -371,32 +371,7 @@ func (s *ConfigStore) DisableLoadersByDefaultAgent(ctx context.Context, agentID 
 }
 
 func (s *ConfigStore) ListLoaderSummaries(ctx context.Context) ([]LoaderSummary, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT
-        l.id,
-        l.name,
-        l.description,
-        l.runtime,
-        l.workspace_id,
-        l.agent_id,
-        l.driver,
-        l.guest_image,
-        l.default_agent,
-        l.session_policy,
-        l.concurrency_policy,
-        l.capset_ids,
-        l.managed_project_id,
-        l.managed_project_revision,
-        l.managed_agent_name,
-        l.managed_scheduler_id,
-        l.enabled,
-        l.last_error,
-        l.created_at,
-        l.updated_at,
-        (SELECT COUNT(*) FROM loader_trigger t WHERE t.loader_id = l.id),
-        (SELECT COUNT(*) FROM loader_run r WHERE r.loader_id = l.id),
-        (SELECT COUNT(*) FROM loader_event e WHERE e.loader_id = l.id),
-        (SELECT MAX(r.started_at) FROM loader_run r WHERE r.loader_id = l.id)
-        FROM loader l
+	rows, err := s.db.QueryContext(ctx, loaders.SelectLoaderSummarySQL()+`
         ORDER BY l.updated_at DESC, l.created_at DESC, l.id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query loaders: %w", err)
@@ -422,10 +397,7 @@ func (s *ConfigStore) GetLoader(ctx context.Context, loaderID string) (Loader, e
 	if loaderID == "" {
 		return Loader{}, fmt.Errorf("loader id is required")
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT
-        id, name, description, runtime, script, workspace_id, agent_id, driver, guest_image, default_agent, session_policy, concurrency_policy, capset_ids, env_json,
-        managed_project_id, managed_project_revision, managed_agent_name, managed_scheduler_id, enabled, last_error, created_at, updated_at
-        FROM loader WHERE id = ?`, loaderID)
+	row := s.db.QueryRowContext(ctx, loaders.SelectLoaderSQL()+` WHERE id = ?`, loaderID)
 	item, err := scanLoader(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -618,8 +590,7 @@ func (s *ConfigStore) ReplaceLoaderTriggers(ctx context.Context, loaderID string
 }
 
 func (s *ConfigStore) listLoaderTriggers(ctx context.Context, loaderID string) ([]LoaderTrigger, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT loader_id, trigger_id, kind, topic, interval_ms, enabled, auto_id, spec_json, next_fire_at, last_fired_at
-        FROM loader_trigger WHERE loader_id = ? ORDER BY kind ASC, trigger_id ASC`, loaderID)
+	rows, err := s.db.QueryContext(ctx, loaders.SelectLoaderTriggerSQL()+` WHERE loader_id = ? ORDER BY kind ASC, trigger_id ASC`, loaderID)
 	if err != nil {
 		return nil, fmt.Errorf("query loader triggers: %w", err)
 	}
@@ -698,8 +669,7 @@ func (s *ConfigStore) SetLoaderTriggerEnabled(ctx context.Context, loaderID, tri
 	if loaderID == "" || triggerID == "" {
 		return fmt.Errorf("loader trigger id is required")
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT loader_id, trigger_id, kind, topic, interval_ms, enabled, auto_id, spec_json, next_fire_at, last_fired_at
-        FROM loader_trigger WHERE loader_id = ? AND trigger_id = ?`, loaderID, triggerID)
+	row := s.db.QueryRowContext(ctx, loaders.SelectLoaderTriggerSQL()+` WHERE loader_id = ? AND trigger_id = ?`, loaderID, triggerID)
 	trigger, err := scanLoaderTrigger(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -803,8 +773,7 @@ func (s *ConfigStore) UpdateLoaderRun(ctx context.Context, run LoaderRunSummary)
 }
 
 func (s *ConfigStore) GetLoaderRun(ctx context.Context, loaderID, runID string) (LoaderRunSummary, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT loader_id, run_id, trigger_id, trigger_kind, trigger_source, status, started_at, completed_at, duration_ms, error, result_json, payload_json, source_script_sha256, artifacts_dir
-        FROM loader_run WHERE loader_id = ? AND run_id = ?`, strings.TrimSpace(loaderID), strings.TrimSpace(runID))
+	row := s.db.QueryRowContext(ctx, loaders.SelectLoaderRunSQL()+` WHERE loader_id = ? AND run_id = ?`, strings.TrimSpace(loaderID), strings.TrimSpace(runID))
 	item, err := scanLoaderRun(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -820,8 +789,7 @@ func (s *ConfigStore) ListLoaderRuns(ctx context.Context, loaderID string, limit
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT loader_id, run_id, trigger_id, trigger_kind, trigger_source, status, started_at, completed_at, duration_ms, error, result_json, payload_json, source_script_sha256, artifacts_dir
-        FROM loader_run WHERE loader_id = ? ORDER BY started_at DESC, run_id DESC LIMIT ?`, strings.TrimSpace(loaderID), limit)
+	rows, err := s.db.QueryContext(ctx, loaders.SelectLoaderRunSQL()+` WHERE loader_id = ? ORDER BY started_at DESC, run_id DESC LIMIT ?`, strings.TrimSpace(loaderID), limit)
 	if err != nil {
 		return nil, fmt.Errorf("query loader runs: %w", err)
 	}
@@ -845,8 +813,7 @@ func (s *ConfigStore) ListRecentLoaderRuns(ctx context.Context, limit int) ([]Lo
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT loader_id, run_id, trigger_id, trigger_kind, trigger_source, status, started_at, completed_at, duration_ms, error, result_json, payload_json, source_script_sha256, artifacts_dir
-        FROM loader_run ORDER BY started_at DESC, loader_id DESC, run_id DESC LIMIT ?`, limit)
+	rows, err := s.db.QueryContext(ctx, loaders.SelectLoaderRunSQL()+` ORDER BY started_at DESC, loader_id DESC, run_id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query recent loader runs: %w", err)
 	}
@@ -893,8 +860,7 @@ func (s *ConfigStore) ListLoaderEvents(ctx context.Context, loaderID string, lim
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT loader_id, event_id, run_id, trigger_id, type, level, message, payload_json, linked_session_id, linked_cell_id, linked_agent_session_id, created_at
-        FROM loader_event WHERE loader_id = ? ORDER BY created_at DESC, event_id DESC LIMIT ?`, strings.TrimSpace(loaderID), limit)
+	rows, err := s.db.QueryContext(ctx, loaders.SelectLoaderEventSQL()+` WHERE loader_id = ? ORDER BY created_at DESC, event_id DESC LIMIT ?`, strings.TrimSpace(loaderID), limit)
 	if err != nil {
 		return nil, fmt.Errorf("query loader events: %w", err)
 	}
@@ -949,7 +915,7 @@ func (s *ConfigStore) DeleteLoaderState(ctx context.Context, loaderID, key strin
 }
 
 func (s *ConfigStore) GetLoaderBinding(ctx context.Context, loaderID string) (LoaderBinding, bool, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT loader_id, session_id, created_at, updated_at FROM loader_binding WHERE loader_id = ?`, strings.TrimSpace(loaderID))
+	row := s.db.QueryRowContext(ctx, loaders.SelectLoaderBindingSQL()+` WHERE loader_id = ?`, strings.TrimSpace(loaderID))
 	item, err := scanLoaderBinding(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

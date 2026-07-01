@@ -152,3 +152,58 @@ func ScanLoaderBinding(scan func(dest ...any) error) (domain.LoaderBinding, erro
 	item.UpdatedAt = configstore.ParseStoredTime(updatedAtRaw)
 	return item, nil
 }
+
+func SelectLoaderSummarySQL() string {
+	return `SELECT
+        l.id,
+        l.name,
+        l.description,
+        l.runtime,
+        l.workspace_id,
+        l.agent_id,
+        l.driver,
+        l.guest_image,
+        l.default_agent,
+        l.session_policy,
+        l.concurrency_policy,
+        l.capset_ids,
+        l.managed_project_id,
+        l.managed_project_revision,
+        l.managed_agent_name,
+        l.managed_scheduler_id,
+        l.enabled,
+        l.last_error,
+        l.created_at,
+        l.updated_at,
+        (SELECT COUNT(*) FROM loader_trigger t WHERE t.loader_id = l.id),
+        (SELECT COUNT(*) FROM loader_run r WHERE r.loader_id = l.id),
+        (SELECT COUNT(*) FROM loader_event e WHERE e.loader_id = l.id),
+        (SELECT MAX(r.started_at) FROM loader_run r WHERE r.loader_id = l.id)
+        FROM loader l`
+}
+
+func SelectLoaderSQL() string {
+	return `SELECT
+        id, name, description, runtime, script, workspace_id, agent_id, driver, guest_image, default_agent, session_policy, concurrency_policy, capset_ids, env_json,
+        managed_project_id, managed_project_revision, managed_agent_name, managed_scheduler_id, enabled, last_error, created_at, updated_at
+        FROM loader`
+}
+
+func SelectLoaderTriggerSQL() string {
+	return `SELECT loader_id, trigger_id, kind, topic, interval_ms, enabled, auto_id, spec_json, next_fire_at, last_fired_at
+        FROM loader_trigger`
+}
+
+func SelectLoaderRunSQL() string {
+	return `SELECT loader_id, run_id, trigger_id, trigger_kind, trigger_source, status, started_at, completed_at, duration_ms, error, result_json, payload_json, source_script_sha256, artifacts_dir
+        FROM loader_run`
+}
+
+func SelectLoaderEventSQL() string {
+	return `SELECT loader_id, event_id, run_id, trigger_id, type, level, message, payload_json, linked_session_id, linked_cell_id, linked_agent_session_id, created_at
+        FROM loader_event`
+}
+
+func SelectLoaderBindingSQL() string {
+	return `SELECT loader_id, session_id, created_at, updated_at FROM loader_binding`
+}
