@@ -16,6 +16,7 @@ import (
 	"connectrpc.com/connect"
 
 	"agent-compose/pkg/agentcompose/capabilities"
+	"agent-compose/pkg/agentcompose/runs"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 	"agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
@@ -953,7 +954,7 @@ func TestProjectRunSessionTagsIncludeSchedulerAndMergeAdditively(t *testing.T) {
 		Source:      ProjectRunSourceScheduler,
 		SchedulerID: "scheduler-1",
 	}
-	tags := projectRunSessionTags(run)
+	tags := runs.SessionTags(run)
 	for name, value := range map[string]string{
 		"project":      "project-1",
 		"agent":        "reviewer",
@@ -962,10 +963,10 @@ func TestProjectRunSessionTagsIncludeSchedulerAndMergeAdditively(t *testing.T) {
 		"scheduler_id": "scheduler-1",
 	} {
 		if !sessionTagsContain(tags, name, value) {
-			t.Fatalf("projectRunSessionTags missing %s=%s: %#v", name, value, tags)
+			t.Fatalf("runs.SessionTags missing %s=%s: %#v", name, value, tags)
 		}
 	}
-	merged := mergeSessionTags([]SessionTag{{Name: "source", Value: "agent"}, {Name: "legacy", Value: "true"}}, tags)
+	merged := runs.MergeSessionTags([]SessionTag{{Name: "source", Value: "agent"}, {Name: "legacy", Value: "true"}}, tags)
 	for _, want := range []SessionTag{
 		{Name: "source", Value: "agent"},
 		{Name: "source", Value: ProjectRunSourceScheduler},

@@ -19,7 +19,7 @@ func (s *Service) ensureProjectRunSession(ctx context.Context, run ProjectRunRec
 	if s == nil || s.config == nil || s.store == nil || s.driver == nil {
 		return ProjectRunSessionResult{}, fmt.Errorf("session runtime dependencies are required")
 	}
-	tags := projectRunSessionTags(run)
+	tags := runs.SessionTags(run)
 	capabilityVars, capabilityTags := capabilities.BuildGatewaySessionVars(capabilities.ProxyTarget(s.cap), prepared.CapsetIDs)
 	tags = append(tags, capabilityTags...)
 	if sessionID := strings.TrimSpace(requestedSessionID); sessionID != "" {
@@ -43,7 +43,7 @@ func (s *Service) ensureProjectRunSession(ctx context.Context, run ProjectRunRec
 			}
 		}
 		session.EnvItems = mergeEnvItems(session.EnvItems, capabilityVars)
-		session.Summary.Tags = mergeSessionTags(session.Summary.Tags, tags)
+		session.Summary.Tags = runs.MergeSessionTags(session.Summary.Tags, tags)
 		if err := s.startProjectRunSession(ctx, session, "session.resumed", "session resumed for project run"); err != nil {
 			return ProjectRunSessionResult{Session: session}, err
 		}
@@ -68,7 +68,7 @@ func (s *Service) ensureProjectRunSession(ctx context.Context, run ProjectRunRec
 		return ProjectRunSessionResult{}, err
 	}
 	session, err := s.store.CreateSession(ctx,
-		projectRunSessionTitle(run),
+		runs.SessionTitle(run),
 		"",
 		driver,
 		guestImage,
@@ -148,16 +148,4 @@ func (s *Service) publishProjectRunSessionStarted(ctx context.Context, session *
 			CreatedAt: time.Now().UTC(),
 		})
 	}
-}
-
-func projectRunSessionTitle(run ProjectRunRecord) string {
-	return runs.SessionTitle(run)
-}
-
-func projectRunSessionTags(run ProjectRunRecord) []SessionTag {
-	return runs.SessionTags(run)
-}
-
-func mergeSessionTags(existing, additions []SessionTag) []SessionTag {
-	return runs.MergeSessionTags(existing, additions)
 }
