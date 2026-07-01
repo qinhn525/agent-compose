@@ -1,24 +1,16 @@
 package agentcompose
 
 import (
+	"agent-compose/pkg/agentcompose/domain"
 	"context"
 	"fmt"
 	"strings"
 )
 
-type ProjectSessionRelationFilter struct {
-	ProjectID string
-	AgentName string
-	SessionID string
-	Statuses  []string
-	Limit     int
-}
-
-type ProjectSessionStatus struct {
-	Run            ProjectRunRecord `json:"run"`
-	Session        *Session         `json:"session,omitempty"`
-	SessionMissing bool             `json:"session_missing,omitempty"`
-}
+type (
+	ProjectSessionRelationFilter = domain.ProjectSessionRelationFilter
+	ProjectSessionStatus         = domain.ProjectSessionStatus
+)
 
 func (s *ConfigStore) ListProjectSessionRuns(ctx context.Context, filter ProjectSessionRelationFilter) ([]ProjectRunRecord, error) {
 	query := selectProjectRunSQL() + ` WHERE session_id != ''`

@@ -115,3 +115,17 @@ type ProjectListResult struct {
 	HasMore    bool
 	NextOffset int
 }
+
+type ProjectSessionRelationFilter struct {
+	ProjectID string
+	AgentName string
+	SessionID string
+	Statuses  []string
+	Limit     int
+}
+
+type ProjectSessionStatus struct {
+	Run            ProjectRunRecord `json:"run"`
+	Session        *Session         `json:"session,omitempty"`
+	SessionMissing bool             `json:"session_missing,omitempty"`
+}
