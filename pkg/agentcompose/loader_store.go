@@ -6,7 +6,6 @@ import (
 	"agent-compose/pkg/agentcompose/loaders"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -190,27 +189,11 @@ func normalizeLoaderTrigger(loaderID string, trigger LoaderTrigger) (LoaderTrigg
 }
 
 func encodeLoaderEnvItems(items []SessionEnvVar) (string, error) {
-	normalized := normalizeEnvItems(items)
-	if normalized == nil {
-		normalized = []SessionEnvVar{}
-	}
-	data, err := json.Marshal(normalized)
-	if err != nil {
-		return "", fmt.Errorf("encode loader env items: %w", err)
-	}
-	return string(data), nil
+	return loaders.EncodeEnvItems(items)
 }
 
 func decodeLoaderEnvItems(raw string) ([]SessionEnvVar, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, nil
-	}
-	var items []SessionEnvVar
-	if err := json.Unmarshal([]byte(raw), &items); err != nil {
-		return nil, fmt.Errorf("decode loader env items: %w", err)
-	}
-	return normalizeEnvItems(items), nil
+	return loaders.DecodeEnvItems(raw)
 }
 
 // encodeCapsetIDs marshals the capset id set to the JSON stored in the

@@ -1,6 +1,7 @@
 package loaders
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -71,6 +72,30 @@ func NormalizeLoader(item domain.Loader, assignID bool) (domain.Loader, error) {
 	item.EnvItems = domain.NormalizeEnvItems(item.EnvItems)
 	item.Triggers = append([]domain.LoaderTrigger(nil), item.Triggers...)
 	return item, nil
+}
+
+func EncodeEnvItems(items []domain.SessionEnvVar) (string, error) {
+	normalized := domain.NormalizeEnvItems(items)
+	if normalized == nil {
+		normalized = []domain.SessionEnvVar{}
+	}
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return "", fmt.Errorf("encode loader env items: %w", err)
+	}
+	return string(data), nil
+}
+
+func DecodeEnvItems(raw string) ([]domain.SessionEnvVar, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var items []domain.SessionEnvVar
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return nil, fmt.Errorf("decode loader env items: %w", err)
+	}
+	return domain.NormalizeEnvItems(items), nil
 }
 
 func NormalizeLoaderTrigger(loaderID string, trigger domain.LoaderTrigger) (domain.LoaderTrigger, error) {
