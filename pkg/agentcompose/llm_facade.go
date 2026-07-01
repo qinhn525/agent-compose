@@ -232,10 +232,7 @@ func rewriteRuntimeLLMRequestForUpstream(body []byte, target LLMResolvedTarget, 
 }
 
 func runtimeLLMUseGenericResponsesTextParts(target LLMResolvedTarget, upstreamProtocol protocolbridge.Protocol) bool {
-	if upstreamProtocol != protocolbridge.ProtocolOpenAIResponses {
-		return false
-	}
-	return target.Provider.UseGenericResponsesTextParts
+	return llms.UseGenericResponsesTextParts(target, upstreamProtocol)
 }
 
 func normalizeRuntimeLLMRawRequestForUpstream(payload map[string]json.RawMessage, upstreamProtocol protocolbridge.Protocol, genericResponsesTextParts bool) bool {
@@ -346,34 +343,11 @@ func normalizeRuntimeLLMRawRoleItems(payload map[string]json.RawMessage, field s
 }
 
 func llmProtocolAdapter(protocol protocolbridge.Protocol) (protocolbridge.Adapter, error) {
-	switch protocol {
-	case protocolbridge.ProtocolOpenAIResponses:
-		return protocolbridge.NewOpenAIResponsesAdapter(), nil
-	case protocolbridge.ProtocolOpenAIChat:
-		return protocolbridge.NewOpenAIChatAdapter(), nil
-	case protocolbridge.ProtocolAnthropicMessages:
-		return protocolbridge.NewAnthropicMessagesAdapter(), nil
-	default:
-		return nil, fmt.Errorf("unsupported llm protocol %q", protocol)
-	}
+	return llms.ProtocolAdapter(protocol)
 }
 
 func llmUpstreamProtocolAndEndpoint(target LLMResolvedTarget) (protocolbridge.Protocol, string, error) {
-	switch normalizeLLMProviderType(target.Provider.ProviderType) {
-	case llmProviderFamilyAnthropic:
-		return protocolbridge.ProtocolAnthropicMessages, llmEndpointForProvider(target.Provider, llmAPIProtocolMessages), nil
-	case llmProviderFamilyOpenAI:
-		switch normalizeLLMWireAPI(target.WireAPI) {
-		case llmAPIProtocolChatCompletions:
-			return protocolbridge.ProtocolOpenAIChat, llmEndpointForProvider(target.Provider, llmAPIProtocolChatCompletions), nil
-		case llmAPIProtocolResponses:
-			return protocolbridge.ProtocolOpenAIResponses, llmEndpointForProvider(target.Provider, llmAPIProtocolResponses), nil
-		default:
-			return "", "", fmt.Errorf("unsupported openai wire api %q", target.WireAPI)
-		}
-	default:
-		return "", "", fmt.Errorf("unsupported llm provider family %q", target.Provider.ProviderType)
-	}
+	return llms.UpstreamProtocolAndEndpoint(target)
 }
 
 func encodeRuntimeLLMUpstreamRequest(inboundProtocol, upstreamProtocol protocolbridge.Protocol, target LLMResolvedTarget, req *protocolbridge.LLMRequest) ([]byte, error) {
@@ -459,18 +433,7 @@ func encodeRuntimeLLMClientResponse(inboundProtocol, upstreamProtocol protocolbr
 }
 
 func runtimeLLMProtocolsShareFamily(left, right protocolbridge.Protocol) bool {
-	return runtimeLLMProtocolFamily(left) != "" && runtimeLLMProtocolFamily(left) == runtimeLLMProtocolFamily(right)
-}
-
-func runtimeLLMProtocolFamily(protocol protocolbridge.Protocol) string {
-	switch protocol {
-	case protocolbridge.ProtocolOpenAIResponses, protocolbridge.ProtocolOpenAIChat:
-		return llmProviderFamilyOpenAI
-	case protocolbridge.ProtocolAnthropicMessages:
-		return llmProviderFamilyAnthropic
-	default:
-		return ""
-	}
+	return llms.ProtocolsShareFamily(left, right)
 }
 
 func writeRuntimeLLMEncodedError(c echo.Context, raw []byte, status int) error {
