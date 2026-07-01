@@ -17,114 +17,24 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+
+	"agent-compose/pkg/agentcompose/webhooks"
 )
 
-type webhookAcceptedResponse struct {
-	Accepted      bool   `json:"accepted"`
-	Topic         string `json:"topic"`
-	EventID       string `json:"event_id"`
-	Sequence      int64  `json:"sequence"`
-	CorrelationID string `json:"correlation_id"`
-}
-
-type topicEventResponse struct {
-	Event topicEventJSON `json:"event"`
-}
-
-type topicEventListResponse struct {
-	Items             []topicEventJSON `json:"items"`
-	NextAfterSequence int64            `json:"next_after_sequence"`
-}
-
-type eventSessionsResponse struct {
-	EventID       string             `json:"event_id"`
-	CorrelationID string             `json:"correlation_id"`
-	Sessions      []eventSessionJSON `json:"sessions"`
-}
-
-type eventRunsResponse struct {
-	EventID       string         `json:"event_id"`
-	CorrelationID string         `json:"correlation_id"`
-	Runs          []eventRunJSON `json:"runs"`
-}
-
-type eventRunJSON struct {
-	EventID   string `json:"event_id"`
-	LoaderID  string `json:"loader_id"`
-	RunID     string `json:"run_id,omitempty"`
-	TriggerID string `json:"trigger_id"`
-	Status    string `json:"status"`
-	Error     string `json:"error,omitempty"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-}
-
-type eventSessionJSON struct {
-	SessionID     string `json:"session_id"`
-	Relation      string `json:"relation"`
-	LoaderID      string `json:"loader_id,omitempty"`
-	RunID         string `json:"run_id,omitempty"`
-	TriggerID     string `json:"trigger_id,omitempty"`
-	LoaderEventID string `json:"loader_event_id,omitempty"`
-	EventID       string `json:"event_id"`
-	CreatedAt     string `json:"created_at"`
-}
-
-type webhookSourceRequest struct {
-	Name            string `json:"name"`
-	Enabled         *bool  `json:"enabled,omitempty"`
-	Provider        string `json:"provider"`
-	TopicPrefix     string `json:"topic_prefix"`
-	Token           string `json:"token"`
-	TokenHash       string `json:"token_hash"`
-	ClearToken      bool   `json:"clear_token"`
-	SignatureType   string `json:"signature_type"`
-	SignatureSecret string `json:"signature_secret"`
-	ClearSignature  bool   `json:"clear_signature"`
-	BodyLimitBytes  int64  `json:"body_limit_bytes"`
-}
-
-type webhookSourceJSON struct {
-	ID                 string `json:"id"`
-	Name               string `json:"name"`
-	Enabled            bool   `json:"enabled"`
-	Provider           string `json:"provider"`
-	TopicPrefix        string `json:"topic_prefix"`
-	HasToken           bool   `json:"has_token"`
-	SignatureType      string `json:"signature_type,omitempty"`
-	HasSignatureSecret bool   `json:"has_signature_secret"`
-	BodyLimitBytes     int64  `json:"body_limit_bytes,omitempty"`
-	CreatedAt          string `json:"created_at"`
-	UpdatedAt          string `json:"updated_at"`
-}
-
-type webhookSourceListResponse struct {
-	Items []webhookSourceJSON `json:"items"`
-}
-
-type webhookSourceResponse struct {
-	Source webhookSourceJSON `json:"source"`
-}
-
-type topicEventJSON struct {
-	EventID        string         `json:"event_id"`
-	Sequence       int64          `json:"sequence"`
-	Topic          string         `json:"topic"`
-	Source         string         `json:"source"`
-	Provider       string         `json:"provider,omitempty"`
-	Intent         string         `json:"intent,omitempty"`
-	CorrelationID  string         `json:"correlation_id"`
-	IdempotencyKey string         `json:"idempotency_key,omitempty"`
-	DeliveryID     string         `json:"delivery_id,omitempty"`
-	DispatchStatus string         `json:"dispatch_status"`
-	ParentEventID  string         `json:"parent_event_id,omitempty"`
-	PublisherType  string         `json:"publisher_type,omitempty"`
-	PublisherID    string         `json:"publisher_id,omitempty"`
-	PublisherRunID string         `json:"publisher_run_id,omitempty"`
-	CreatedAt      string         `json:"created_at"`
-	DispatchedAt   string         `json:"dispatched_at,omitempty"`
-	Payload        map[string]any `json:"payload"`
-}
+type (
+	webhookAcceptedResponse   = webhooks.AcceptedResponse
+	topicEventResponse        = webhooks.TopicEventResponse
+	topicEventListResponse    = webhooks.TopicEventListResponse
+	eventSessionsResponse     = webhooks.EventSessionsResponse
+	eventRunsResponse         = webhooks.EventRunsResponse
+	eventRunJSON              = webhooks.EventRunJSON
+	eventSessionJSON          = webhooks.EventSessionJSON
+	webhookSourceRequest      = webhooks.SourceRequest
+	webhookSourceJSON         = webhooks.SourceJSON
+	webhookSourceListResponse = webhooks.SourceListResponse
+	webhookSourceResponse     = webhooks.SourceResponse
+	topicEventJSON            = webhooks.TopicEventJSON
+)
 
 func registerWebhookRoutes(app *echo.Echo, service *Service) {
 	app.POST("/api/webhooks/:topic", service.handleWebhook)
