@@ -231,6 +231,12 @@ type ProxyState struct {
 	Token      string `json:"token,omitempty"`
 }
 
+type SessionVMInfo struct {
+	BoxID      string
+	JupyterURL string
+	ProxyState *ProxyState
+}
+
 type ExecSpec struct {
 	Command string            `json:"command"`
 	Args    []string          `json:"args,omitempty"`
