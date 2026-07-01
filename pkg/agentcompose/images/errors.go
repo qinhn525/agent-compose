@@ -69,3 +69,14 @@ func ClassifyBackendError(err error) (OpError, ErrorKind, bool) {
 	}
 	return backendErr, kind, true
 }
+
+func IsNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	var backendErr OpError
+	if errors.As(err, &backendErr) {
+		return cerrdefs.IsNotFound(backendErr.Err)
+	}
+	return cerrdefs.IsNotFound(err)
+}
