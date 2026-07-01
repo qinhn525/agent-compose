@@ -53,21 +53,7 @@ func normalizeLoaderCronSpec(spec loaderCronSpec) (loaderCronSpec, error) {
 }
 
 func normalizeAgentKind(agent string) string {
-	agent = strings.ToLower(strings.TrimSpace(agent))
-	switch agent {
-	case "":
-		return ""
-	case "codex":
-		return "codex"
-	case "claude", "claude-code", "claude_code":
-		return "claude"
-	case "gemini", "gemini-cli", "gemini_cli":
-		return "gemini"
-	case "opencode", "open-code", "open_code":
-		return "opencode"
-	default:
-		return agent
-	}
+	return domain.NormalizeAgentKind(agent)
 }
 
 func normalizeLoaderSessionPolicy(policy string) string {

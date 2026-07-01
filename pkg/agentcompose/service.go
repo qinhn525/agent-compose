@@ -22,6 +22,7 @@ import (
 	"github.com/samber/do/v2"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"agent-compose/pkg/agentcompose/domain"
 	"agent-compose/pkg/capproxy"
 	"agent-compose/pkg/imagecache"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
@@ -921,21 +922,7 @@ func llmJSONResponseText(text, outputSchemaJSON string) string {
 }
 
 func normalizeAgentKind(agent string) string {
-	agent = strings.ToLower(strings.TrimSpace(agent))
-	switch agent {
-	case "":
-		return ""
-	case "codex":
-		return "codex"
-	case "claude", "claude-code", "claude_code":
-		return "claude"
-	case "gemini", "gemini-cli", "gemini_cli":
-		return "gemini"
-	case "opencode", "open-code", "open_code":
-		return "opencode"
-	default:
-		return agent
-	}
+	return domain.NormalizeAgentKind(agent)
 }
 
 type agentExecResponse struct {

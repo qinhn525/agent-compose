@@ -11,12 +11,12 @@ import (
 )
 
 const (
-	defaultAgentProvider = "codex"
+	defaultAgentProvider = domain.DefaultAgentProvider
 
-	agentSessionTagSource    = "source"
-	agentSessionTagSourceVal = "agent"
-	agentSessionTagID        = "agent_id"
-	agentSessionTagName      = "agent_name"
+	agentSessionTagSource    = domain.AgentSessionTagSource
+	agentSessionTagSourceVal = domain.AgentSessionTagSourceVal
+	agentSessionTagID        = domain.AgentSessionTagID
+	agentSessionTagName      = domain.AgentSessionTagName
 )
 
 type (
@@ -101,26 +101,7 @@ func agentDefinitionTags(agent AgentDefinition) []*agentcomposev1.SessionTag {
 }
 
 func sessionHasAgentTag(session *Session, agentID string) bool {
-	if session == nil {
-		return false
-	}
-	agentID = strings.TrimSpace(agentID)
-	if agentID == "" {
-		return false
-	}
-	hasSource := false
-	hasAgentID := false
-	for _, tag := range session.Summary.Tags {
-		name := strings.TrimSpace(tag.Name)
-		value := strings.TrimSpace(tag.Value)
-		if name == agentSessionTagSource && value == agentSessionTagSourceVal {
-			hasSource = true
-		}
-		if name == agentSessionTagID && value == agentID {
-			hasAgentID = true
-		}
-	}
-	return hasSource && hasAgentID
+	return domain.SessionHasAgentTag(session, agentID)
 }
 
 func toProtoAgentDefinition(item AgentDefinition, workspace *WorkspaceConfig, validation AgentValidationResult, current AgentCurrentRunSummary, latest *AgentLatestRunSummary) *agentcomposev1.AgentDefinition {

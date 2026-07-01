@@ -1,6 +1,18 @@
 package domain
 
-import "time"
+import (
+	"strings"
+	"time"
+)
+
+const (
+	DefaultAgentProvider = "codex"
+
+	AgentSessionTagSource    = "source"
+	AgentSessionTagSourceVal = "agent"
+	AgentSessionTagID        = "agent_id"
+	AgentSessionTagName      = "agent_name"
+)
 
 type AgentDefinition struct {
 	ID                     string          `json:"id"`
@@ -48,4 +60,45 @@ type AgentLatestRunSummary struct {
 	RunID   string
 	Title   string
 	At      time.Time
+}
+
+func NormalizeAgentKind(agent string) string {
+	agent = strings.ToLower(strings.TrimSpace(agent))
+	switch agent {
+	case "":
+		return ""
+	case "codex":
+		return "codex"
+	case "claude", "claude-code", "claude_code":
+		return "claude"
+	case "gemini", "gemini-cli", "gemini_cli":
+		return "gemini"
+	case "opencode", "open-code", "open_code":
+		return "opencode"
+	default:
+		return agent
+	}
+}
+
+func SessionHasAgentTag(session *Session, agentID string) bool {
+	if session == nil {
+		return false
+	}
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return false
+	}
+	hasSource := false
+	hasAgentID := false
+	for _, tag := range session.Summary.Tags {
+		name := strings.TrimSpace(tag.Name)
+		value := strings.TrimSpace(tag.Value)
+		if name == AgentSessionTagSource && value == AgentSessionTagSourceVal {
+			hasSource = true
+		}
+		if name == AgentSessionTagID && value == agentID {
+			hasAgentID = true
+		}
+	}
+	return hasSource && hasAgentID
 }
