@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	"agent-compose/pkg/agentcompose/loaders"
+	"agent-compose/pkg/agentcompose/sessions"
 	"os"
 	"testing"
 )
@@ -27,4 +28,8 @@ func TestMain(m *testing.M) {
 
 func newTestLoaderBus(buffer int) *LoaderBus {
 	return loaders.NewBusWithBuffer(buffer)
+}
+
+func newTestSessionStreamBroker() *SessionStreamBroker {
+	return sessions.NewStreamBrokerForTest()
 }

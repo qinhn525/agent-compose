@@ -1127,7 +1127,7 @@ func setupRunPreparationProject(t *testing.T, spec *agentcomposev2.ProjectSpec, 
 	service.driver = &fakeSessionDriver{}
 	runtime := &fakeLoaderAgentRuntime{}
 	runtimes := fixedRuntimeProvider{runtime: runtime}
-	streams := &SessionStreamBroker{subscribers: map[string]map[int]chan sessionWatchEvent{}}
+	streams := newTestSessionStreamBroker()
 	service.runtimes = runtimes
 	service.streams = streams
 	service.executor = &Executor{config: service.config, store: service.store, configDB: store, runtimes: runtimes, streams: streams}

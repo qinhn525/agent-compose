@@ -240,7 +240,7 @@ func testSupportConstructorsAndHelpers(t *testing.T) {
 	do.ProvideValue(di, &LLMClient{config: config, configDB: configDB})
 	do.ProvideValue[capabilityIntegration](di, capProvider)
 	do.ProvideValue(di, bus)
-	do.ProvideValue(di, &SessionStreamBroker{subscribers: map[string]map[int]chan sessionWatchEvent{}})
+	do.ProvideValue(di, newTestSessionStreamBroker())
 	do.ProvideValue[LoaderEngine](di, &recordingLoaderEngine{})
 	do.ProvideValue(di, sessions)
 

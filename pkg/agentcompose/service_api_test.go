@@ -774,7 +774,7 @@ func newTestServiceAPIHarness(t *testing.T) (*Service, *fakeLoaderAgentRuntime, 
 	runtime := &fakeLoaderAgentRuntime{}
 	runtimes := fixedRuntimeProvider{runtime: runtime}
 	driver := &fakeSessionDriver{}
-	streams := &SessionStreamBroker{subscribers: map[string]map[int]chan sessionWatchEvent{}}
+	streams := newTestSessionStreamBroker()
 	executor := &Executor{config: config, store: store, configDB: configDB, runtimes: runtimes, streams: streams}
 	bus := newTestLoaderBus(256)
 	aggregator := &DashboardOverviewAggregator{
