@@ -29,23 +29,3 @@ type (
 	EventSessionLink      = domain.EventSessionLink
 	EventSessionTraceItem = domain.EventSessionTraceItem
 )
-
-func validateTopicEventName(topic string) error {
-	return domain.ValidateTopicEventName(topic)
-}
-
-func normalizeTopicEventSource(source string) string {
-	return domain.NormalizeTopicEventSource(source)
-}
-
-func normalizeTopicEventDispatchStatus(status string) string {
-	return domain.NormalizeTopicEventDispatchStatus(status)
-}
-
-func normalizeEventDeliveryStatus(status string) string {
-	return domain.NormalizeEventDeliveryStatus(status)
-}
-
-func topicEventPayloadSHA256(payloadJSON string) string {
-	return domain.TopicEventPayloadSHA256(payloadJSON)
-}

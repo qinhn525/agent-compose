@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"agent-compose/pkg/agentcompose/domain"
 	"agent-compose/pkg/agentcompose/webhooks"
 )
 
@@ -65,7 +66,7 @@ func (s *Service) handleWebhook(c echo.Context) error {
 	if existing, ok, err := s.configDB.FindEventByIdempotencyKey(c.Request().Context(), topic, idempotencyKey); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load webhook event"})
 	} else if ok {
-		if existingWebhookBodyHash(existing.PayloadJSON) != topicEventPayloadSHA256(compactBody) {
+		if existingWebhookBodyHash(existing.PayloadJSON) != domain.TopicEventPayloadSHA256(compactBody) {
 			return c.JSON(http.StatusConflict, map[string]string{"error": "idempotency key conflicts with existing payload"})
 		}
 		return c.JSON(http.StatusAccepted, webhookAcceptedResponse{
@@ -87,7 +88,7 @@ func (s *Service) handleWebhook(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to encode webhook payload"})
 	}
-	payloadHash := topicEventPayloadSHA256(payloadJSON)
+	payloadHash := domain.TopicEventPayloadSHA256(payloadJSON)
 	created, err := s.configDB.CreateEvent(c.Request().Context(), TopicEventRecord{
 		ID:             eventID,
 		Topic:          topic,
@@ -151,7 +152,7 @@ func (s *Service) handleGetEvent(c echo.Context) error {
 func (s *Service) handleListEvents(c echo.Context) error {
 	topic := strings.TrimSpace(c.QueryParam("topic"))
 	if topic != "" {
-		if err := validateTopicEventName(topic); err != nil {
+		if err := domain.ValidateTopicEventName(topic); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
 	}

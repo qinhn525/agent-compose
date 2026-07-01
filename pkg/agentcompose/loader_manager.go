@@ -634,7 +634,7 @@ func (h *loaderRunHost) PublishEvent(ctx context.Context, topic string, payloadJ
 		Source:         TopicEventSourceLoader,
 		Provider:       stringFromMap(payload, "provider"),
 		CorrelationID:  correlationID,
-		PayloadHash:    topicEventPayloadSHA256(envelopeJSON),
+		PayloadHash:    domain.TopicEventPayloadSHA256(envelopeJSON),
 		PayloadJSON:    envelopeJSON,
 		DispatchStatus: TopicEventDispatchPending,
 		ParentEventID:  parentEventID,
@@ -1122,7 +1122,7 @@ func parseLoaderTriggerEventMetadata(payloadJSON string) loaderTriggerEventMetad
 }
 
 func validateLoaderPublishTopic(topic string) error {
-	if err := validateTopicEventName(topic); err != nil {
+	if err := domain.ValidateTopicEventName(topic); err != nil {
 		return err
 	}
 	if strings.HasPrefix(topic, "runtime.") || strings.HasPrefix(topic, "workflow.") || strings.HasPrefix(topic, "external.") {

@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	"agent-compose/pkg/agentcompose/domain"
 	appconfig "agent-compose/pkg/config"
 	"bytes"
 	"context"
@@ -77,7 +78,7 @@ func testWebhookHandlerStoresEvent(t *testing.T) {
 	if event.Provider != "test" || event.Intent != "command" || event.IdempotencyKey != "delivery-1" {
 		t.Fatalf("stored event metadata = %#v", event)
 	}
-	if event.PayloadHash != topicEventPayloadSHA256(event.PayloadJSON) {
+	if event.PayloadHash != domain.TopicEventPayloadSHA256(event.PayloadJSON) {
 		t.Fatalf("payload hash = %q, want hash of stored payload", event.PayloadHash)
 	}
 	var payload map[string]any
@@ -361,7 +362,7 @@ func TestWebhookSourceManagementHandlers(t *testing.T) {
 
 func TestWebhookPayloadHelpers(t *testing.T) {
 	payloadJSON := `{"body":{"value":1}}`
-	want := topicEventPayloadSHA256(`{"value":1}`)
+	want := domain.TopicEventPayloadSHA256(`{"value":1}`)
 	if got := existingWebhookBodyHash(payloadJSON); got != want {
 		t.Fatalf("existingWebhookBodyHash = %q, want %q", got, want)
 	}

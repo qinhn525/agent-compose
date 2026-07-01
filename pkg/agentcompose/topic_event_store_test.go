@@ -1,6 +1,8 @@
 package agentcompose
 
 import (
+	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/events"
 	appconfig "agent-compose/pkg/config"
 	"context"
 	"database/sql"
@@ -51,7 +53,7 @@ func TestConfigStoreCreateAndListTopicEvents(t *testing.T) {
 	if created.DispatchStatus != TopicEventDispatchPending {
 		t.Fatalf("dispatch status = %q, want pending", created.DispatchStatus)
 	}
-	if created.PayloadHash != topicEventPayloadSHA256(`{"value":1}`) {
+	if created.PayloadHash != domain.TopicEventPayloadSHA256(`{"value":1}`) {
 		t.Fatalf("payload hash = %q", created.PayloadHash)
 	}
 	if !created.CreatedAt.Equal(createdAt) {
@@ -385,26 +387,26 @@ func TestTopicEventModelAndStoreErrorBranches(t *testing.T) {
 	store := newTopicEventTestConfigStore(t)
 
 	for _, topic := range []string{"", strings.Repeat("a", 129), "bad topic"} {
-		if err := validateTopicEventName(topic); err == nil {
-			t.Fatalf("validateTopicEventName(%q) returned nil error", topic)
+		if err := domain.ValidateTopicEventName(topic); err == nil {
+			t.Fatalf("domain.ValidateTopicEventName(%q) returned nil error", topic)
 		}
 	}
-	if err := validateTopicEventName("runtime.good-topic_1"); err != nil {
+	if err := domain.ValidateTopicEventName("runtime.good-topic_1"); err != nil {
 		t.Fatalf("validateTopicEventName valid returned error: %v", err)
 	}
-	if normalizeTopicEventSource(" WEBHOOK ") != TopicEventSourceWebhook ||
-		normalizeTopicEventSource("LOADER") != TopicEventSourceLoader ||
-		normalizeTopicEventSource("system") != TopicEventSourceSystem ||
-		normalizeTopicEventSource("bad") != "" {
+	if domain.NormalizeTopicEventSource(" WEBHOOK ") != TopicEventSourceWebhook ||
+		domain.NormalizeTopicEventSource("LOADER") != TopicEventSourceLoader ||
+		domain.NormalizeTopicEventSource("system") != TopicEventSourceSystem ||
+		domain.NormalizeTopicEventSource("bad") != "" {
 		t.Fatalf("normalizeTopicEventSource returned unexpected values")
 	}
-	if normalizeTopicEventDispatchStatus("") != TopicEventDispatchPending ||
-		normalizeTopicEventDispatchStatus("PUBLISHED_TO_BUS") != TopicEventDispatchPublishedToBus ||
-		normalizeTopicEventDispatchStatus("bad") != "" {
+	if domain.NormalizeTopicEventDispatchStatus("") != TopicEventDispatchPending ||
+		domain.NormalizeTopicEventDispatchStatus("PUBLISHED_TO_BUS") != TopicEventDispatchPublishedToBus ||
+		domain.NormalizeTopicEventDispatchStatus("bad") != "" {
 		t.Fatalf("normalizeTopicEventDispatchStatus returned unexpected values")
 	}
 
-	normalized, err := normalizeTopicEventRecord(TopicEventRecord{
+	normalized, err := events.NormalizeTopicEventRecord(TopicEventRecord{
 		ID:             " evt-custom ",
 		Topic:          " runtime.custom ",
 		Source:         " system ",
@@ -433,8 +435,8 @@ func TestTopicEventModelAndStoreErrorBranches(t *testing.T) {
 		{ID: "evt", Topic: "runtime.bad.status", Source: TopicEventSourceSystem, DispatchStatus: "bad"},
 		{ID: "evt", Topic: "runtime.bad.payload", Source: TopicEventSourceSystem, PayloadJSON: `[`},
 	} {
-		if _, err := normalizeTopicEventRecord(item, false); err == nil {
-			t.Fatalf("normalizeTopicEventRecord(%#v) returned nil error", item)
+		if _, err := events.NormalizeTopicEventRecord(item, false); err == nil {
+			t.Fatalf("events.NormalizeTopicEventRecord(%#v) returned nil error", item)
 		}
 	}
 
@@ -515,7 +517,7 @@ func TestTopicEventModelAndStoreErrorBranches(t *testing.T) {
 	if updated.PayloadJSON != `{"updated":true}` {
 		t.Fatalf("updated payload = %q", updated.PayloadJSON)
 	}
-	if updated.PayloadHash != topicEventPayloadSHA256(updated.PayloadJSON) {
+	if updated.PayloadHash != domain.TopicEventPayloadSHA256(updated.PayloadJSON) {
 		t.Fatalf("updated payload hash = %q, want hash of %s", updated.PayloadHash, updated.PayloadJSON)
 	}
 }

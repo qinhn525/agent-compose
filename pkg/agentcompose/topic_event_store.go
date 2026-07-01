@@ -117,12 +117,8 @@ func (s *ConfigStore) ensureEventSchema(ctx context.Context) error {
 	return nil
 }
 
-func normalizeTopicEventRecord(item TopicEventRecord, assignID bool) (TopicEventRecord, error) {
-	return events.NormalizeTopicEventRecord(item, assignID)
-}
-
 func (s *ConfigStore) CreateEvent(ctx context.Context, item TopicEventRecord) (TopicEventRecord, error) {
-	normalized, err := normalizeTopicEventRecord(item, true)
+	normalized, err := events.NormalizeTopicEventRecord(item, true)
 	if err != nil {
 		return TopicEventRecord{}, err
 	}
@@ -182,8 +178,8 @@ func (s *ConfigStore) GetEvent(ctx context.Context, eventID string) (TopicEventR
 	if eventID == "" {
 		return TopicEventRecord{}, fmt.Errorf("event id is required")
 	}
-	row := s.db.QueryRowContext(ctx, selectTopicEventSQL()+` WHERE id = ?`, eventID)
-	item, err := scanTopicEvent(row.Scan)
+	row := s.db.QueryRowContext(ctx, events.SelectTopicEventSQL()+` WHERE id = ?`, eventID)
+	item, err := events.ScanTopicEvent(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return TopicEventRecord{}, resourceError(ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), err)
@@ -199,8 +195,8 @@ func (s *ConfigStore) FindEventByIdempotencyKey(ctx context.Context, topic, key 
 	if topic == "" || key == "" {
 		return TopicEventRecord{}, false, nil
 	}
-	row := s.db.QueryRowContext(ctx, selectTopicEventSQL()+` WHERE topic = ? AND idempotency_key = ?`, topic, key)
-	item, err := scanTopicEvent(row.Scan)
+	row := s.db.QueryRowContext(ctx, events.SelectTopicEventSQL()+` WHERE topic = ? AND idempotency_key = ?`, topic, key)
+	item, err := events.ScanTopicEvent(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return TopicEventRecord{}, false, nil
@@ -214,12 +210,12 @@ func (s *ConfigStore) ListPendingEvents(ctx context.Context, limit int) ([]Topic
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, selectTopicEventSQL()+` WHERE dispatch_status = ? ORDER BY sequence ASC LIMIT ?`, TopicEventDispatchPending, limit)
+	rows, err := s.db.QueryContext(ctx, events.SelectTopicEventSQL()+` WHERE dispatch_status = ? ORDER BY sequence ASC LIMIT ?`, TopicEventDispatchPending, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query pending events: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	return scanTopicEvents(rows)
+	return events.ScanTopicEvents(rows)
 }
 
 func (s *ConfigStore) ListEvents(ctx context.Context, filter TopicEventFilter) ([]TopicEventRecord, error) {
@@ -236,7 +232,7 @@ func (s *ConfigStore) ListEvents(ctx context.Context, filter TopicEventFilter) (
 	clauses := make([]string, 0, 4)
 	args := make([]any, 0, 5)
 	if topic := strings.TrimSpace(filter.Topic); topic != "" {
-		if err := validateTopicEventName(topic); err != nil {
+		if err := domain.ValidateTopicEventName(topic); err != nil {
 			return nil, err
 		}
 		clauses = append(clauses, "topic = ?")
@@ -250,18 +246,18 @@ func (s *ConfigStore) ListEvents(ctx context.Context, filter TopicEventFilter) (
 		clauses = append(clauses, "sequence > ?")
 		args = append(args, filter.AfterSequence)
 	}
-	if status := normalizeTopicEventDispatchStatus(filter.DispatchStatus); status != "" && strings.TrimSpace(filter.DispatchStatus) != "" {
+	if status := domain.NormalizeTopicEventDispatchStatus(filter.DispatchStatus); status != "" && strings.TrimSpace(filter.DispatchStatus) != "" {
 		clauses = append(clauses, "dispatch_status = ?")
 		args = append(args, status)
 	}
 	args = append(args, limit)
-	query := selectTopicEventSQL() + ` WHERE ` + strings.Join(clauses, " AND ") + ` ORDER BY sequence ASC LIMIT ?`
+	query := events.SelectTopicEventSQL() + ` WHERE ` + strings.Join(clauses, " AND ") + ` ORDER BY sequence ASC LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query events: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	return scanTopicEvents(rows)
+	return events.ScanTopicEvents(rows)
 }
 
 func (s *ConfigStore) MarkEventPublished(ctx context.Context, eventID, claimID string, dispatchedAt time.Time) error {
@@ -291,10 +287,6 @@ func (s *ConfigStore) MarkEventPublished(ctx context.Context, eventID, claimID s
 	return nil
 }
 
-func selectTopicEventSQL() string {
-	return events.SelectTopicEventSQL()
-}
-
 func (s *ConfigStore) UpdateEventPayload(ctx context.Context, eventID, payloadJSON string) error {
 	eventID = strings.TrimSpace(eventID)
 	if eventID == "" {
@@ -307,7 +299,7 @@ func (s *ConfigStore) UpdateEventPayload(ctx context.Context, eventID, payloadJS
 	if _, err := normalizeJSONDocument(payloadJSON); err != nil {
 		return err
 	}
-	payloadHash := topicEventPayloadSHA256(payloadJSON)
+	payloadHash := domain.TopicEventPayloadSHA256(payloadJSON)
 	result, err := s.db.ExecContext(ctx, `UPDATE event SET payload_hash = ?, payload_json = ? WHERE id = ?`, payloadHash, payloadJSON, eventID)
 	if err != nil {
 		return fmt.Errorf("update event payload: %w", err)
@@ -322,20 +314,12 @@ func (s *ConfigStore) UpdateEventPayload(ctx context.Context, eventID, payloadJS
 	return nil
 }
 
-func scanTopicEvents(rows *sql.Rows) ([]TopicEventRecord, error) {
-	return events.ScanTopicEvents(rows)
-}
-
-func scanTopicEvent(scan func(dest ...any) error) (TopicEventRecord, error) {
-	return events.ScanTopicEvent(scan)
-}
-
 func (s *ConfigStore) ListDispatchableEvents(ctx context.Context, now time.Time, limit int) ([]TopicEventRecord, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	nowMillis := now.UTC().UnixMilli()
-	rows, err := s.db.QueryContext(ctx, selectTopicEventSQL()+` WHERE dispatch_status IN (?, ?, ?) AND (next_attempt_at = 0 OR next_attempt_at <= ?) AND (claim_until = 0 OR claim_until <= ?) ORDER BY sequence ASC LIMIT ?`,
+	rows, err := s.db.QueryContext(ctx, events.SelectTopicEventSQL()+` WHERE dispatch_status IN (?, ?, ?) AND (next_attempt_at = 0 OR next_attempt_at <= ?) AND (claim_until = 0 OR claim_until <= ?) ORDER BY sequence ASC LIMIT ?`,
 		TopicEventDispatchPending,
 		TopicEventDispatchRetrying,
 		TopicEventDispatchPublishing,
@@ -347,7 +331,7 @@ func (s *ConfigStore) ListDispatchableEvents(ctx context.Context, now time.Time,
 		return nil, fmt.Errorf("query dispatchable events: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	return scanTopicEvents(rows)
+	return events.ScanTopicEvents(rows)
 }
 
 func (s *ConfigStore) ClaimEvent(ctx context.Context, eventID, claimID string, now, until time.Time) (bool, error) {
@@ -386,7 +370,7 @@ func (s *ConfigStore) ClaimEvent(ctx context.Context, eventID, claimID string, n
 func (s *ConfigStore) ReleaseEventClaim(ctx context.Context, eventID, claimID, status, lastError string, nextAttemptAt time.Time) error {
 	eventID = strings.TrimSpace(eventID)
 	claimID = strings.TrimSpace(claimID)
-	status = normalizeTopicEventDispatchStatus(status)
+	status = domain.NormalizeTopicEventDispatchStatus(status)
 	if eventID == "" || claimID == "" || status == "" {
 		return fmt.Errorf("event claim release requires event, claim, and status")
 	}
@@ -439,7 +423,7 @@ func (s *ConfigStore) UpsertEventDelivery(ctx context.Context, delivery EventDel
 	delivery.LoaderID = strings.TrimSpace(delivery.LoaderID)
 	delivery.TriggerID = strings.TrimSpace(delivery.TriggerID)
 	delivery.RunID = strings.TrimSpace(delivery.RunID)
-	delivery.Status = normalizeEventDeliveryStatus(delivery.Status)
+	delivery.Status = domain.NormalizeEventDeliveryStatus(delivery.Status)
 	delivery.Error = strings.TrimSpace(delivery.Error)
 	if delivery.EventID == "" || delivery.LoaderID == "" || delivery.TriggerID == "" || delivery.Status == "" {
 		return fmt.Errorf("event delivery requires event, loader, trigger, and status")
@@ -760,7 +744,7 @@ func (s *ConfigStore) UpsertWebhookSource(ctx context.Context, source WebhookSou
 	if !strings.HasSuffix(source.TopicPrefix, ".") {
 		return WebhookSource{}, fmt.Errorf("webhook source topic prefix must end with dot")
 	}
-	if err := validateTopicEventName(strings.TrimSuffix(source.TopicPrefix, ".")); err != nil {
+	if err := domain.ValidateTopicEventName(strings.TrimSuffix(source.TopicPrefix, ".")); err != nil {
 		return WebhookSource{}, fmt.Errorf("webhook source topic prefix is invalid: %w", err)
 	}
 	if source.Name == "" {
