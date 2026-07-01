@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	"agent-compose/pkg/agentcompose/configstore"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
@@ -47,7 +48,7 @@ func testConfigStoreMigrationAndTimeParsingWorkflows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tableColumnTypes returned error: %v", err)
 	}
-	if !isIntegerColumnType(columns["updated_at"]) {
+	if !configstore.IsIntegerColumnType(columns["updated_at"]) {
 		t.Fatalf("updated_at column type = %q, want integer", columns["updated_at"])
 	}
 	items, err := store.ListGlobalEnv(ctx)
@@ -84,25 +85,25 @@ func testConfigStoreMigrationAndTimeParsingWorkflows(t *testing.T) {
 		t.Fatalf("workspace = %#v", workspace)
 	}
 
-	if !parseStoredLoaderTriggerTime(int(1000)).Equal(time.Unix(1000, 0).UTC()) {
+	if !configstore.ParseStoredLoaderTriggerTime(int(1000)).Equal(time.Unix(1000, 0).UTC()) {
 		t.Fatalf("parseStoredLoaderTriggerTime int failed")
 	}
-	if !parseStoredLoaderTriggerTime(float64(1000)).Equal(time.Unix(1000, 0).UTC()) {
+	if !configstore.ParseStoredLoaderTriggerTime(float64(1000)).Equal(time.Unix(1000, 0).UTC()) {
 		t.Fatalf("parseStoredLoaderTriggerTime float failed")
 	}
-	if !parseStoredLoaderTriggerTime([]byte("1000")).Equal(time.Unix(1000, 0).UTC()) {
+	if !configstore.ParseStoredLoaderTriggerTime([]byte("1000")).Equal(time.Unix(1000, 0).UTC()) {
 		t.Fatalf("parseStoredLoaderTriggerTime bytes failed")
 	}
-	if parseStoredLoaderTriggerTime(" ").IsZero() == false || parseStoredLoaderTriggerTime(struct{}{}).IsZero() == false {
+	if configstore.ParseStoredLoaderTriggerTime(" ").IsZero() == false || configstore.ParseStoredLoaderTriggerTime(struct{}{}).IsZero() == false {
 		t.Fatalf("parseStoredLoaderTriggerTime empty/default failed")
 	}
-	if !parseStoredTime("2026-06-02T09:00:00.000Z").Equal(time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)) {
+	if !configstore.ParseStoredTime("2026-06-02T09:00:00.000Z").Equal(time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)) {
 		t.Fatalf("parseStoredTime custom layout failed")
 	}
-	if !strings.Contains(normalizeSQLiteTimestampExpr("updated_at"), "updated_at") {
+	if !strings.Contains(configstore.NormalizeSQLiteTimestampExpr("updated_at"), "updated_at") {
 		t.Fatalf("normalizeSQLiteTimestampExpr missing column name")
 	}
-	if boolToInt(true) != 1 || boolToInt(false) != 0 {
+	if configstore.BoolToInt(true) != 1 || configstore.BoolToInt(false) != 0 {
 		t.Fatalf("boolToInt returned unexpected values")
 	}
 }

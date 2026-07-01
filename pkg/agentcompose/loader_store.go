@@ -236,7 +236,7 @@ func (s *ConfigStore) CreateLoader(ctx context.Context, item Loader) (Loader, er
 		normalized.Summary.ManagedRevision,
 		normalized.Summary.ManagedAgentName,
 		normalized.Summary.ManagedSchedulerID,
-		boolToInt(normalized.Summary.Enabled),
+		configstore.BoolToInt(normalized.Summary.Enabled),
 		normalized.Summary.LastError,
 		normalized.Summary.CreatedAt.Unix(),
 		normalized.Summary.UpdatedAt.Unix(),
@@ -294,7 +294,7 @@ func (s *ConfigStore) UpdateLoader(ctx context.Context, item Loader) (Loader, er
 		normalized.Summary.ManagedRevision,
 		normalized.Summary.ManagedAgentName,
 		normalized.Summary.ManagedSchedulerID,
-		boolToInt(normalized.Summary.Enabled),
+		configstore.BoolToInt(normalized.Summary.Enabled),
 		normalized.Summary.LastError,
 		normalized.Summary.UpdatedAt.Unix(),
 		normalized.Summary.ID,
@@ -483,7 +483,7 @@ func (s *ConfigStore) hydrateLoaderSummaryCounts(ctx context.Context, summary *L
 	summary.TriggerCount = triggerCount
 	summary.RunCount = runCount
 	summary.EventCount = eventCount
-	summary.LatestRunAt = parseStoredTime(latestRunAtRaw)
+	summary.LatestRunAt = configstore.ParseStoredTime(latestRunAtRaw)
 	return nil
 }
 
@@ -565,8 +565,8 @@ func (s *ConfigStore) ReplaceLoaderTriggers(ctx context.Context, loaderID string
 			trigger.Kind,
 			trigger.Topic,
 			trigger.IntervalMs,
-			boolToInt(trigger.Enabled),
-			boolToInt(trigger.AutoID),
+			configstore.BoolToInt(trigger.Enabled),
+			configstore.BoolToInt(trigger.AutoID),
 			trigger.SpecJSON,
 			nonZeroTimeUnixMilli(trigger.NextFireAt),
 			nonZeroTimeUnixMilli(trigger.LastFiredAt),
@@ -632,7 +632,7 @@ func (s *ConfigStore) SetLoaderEnabled(ctx context.Context, loaderID string, ena
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	result, err := tx.ExecContext(ctx, `UPDATE loader SET enabled = ?, updated_at = ? WHERE id = ?`, boolToInt(enabled), now.Unix(), loaderID)
+	result, err := tx.ExecContext(ctx, `UPDATE loader SET enabled = ?, updated_at = ? WHERE id = ?`, configstore.BoolToInt(enabled), now.Unix(), loaderID)
 	if err != nil {
 		return fmt.Errorf("update loader enabled state: %w", err)
 	}
@@ -686,7 +686,7 @@ func (s *ConfigStore) SetLoaderTriggerEnabled(ctx context.Context, loaderID, tri
 		}
 		nextFireAt = nonZeroTimeUnixMilli(scheduledAt)
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE loader_trigger SET enabled = ?, next_fire_at = ? WHERE loader_id = ? AND trigger_id = ?`, boolToInt(enabled), nextFireAt, loaderID, triggerID)
+	result, err := s.db.ExecContext(ctx, `UPDATE loader_trigger SET enabled = ?, next_fire_at = ? WHERE loader_id = ? AND trigger_id = ?`, configstore.BoolToInt(enabled), nextFireAt, loaderID, triggerID)
 	if err != nil {
 		return fmt.Errorf("update loader trigger enabled state: %w", err)
 	}

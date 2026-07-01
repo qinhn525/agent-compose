@@ -95,7 +95,7 @@ func (s *ConfigStore) ensureGlobalEnvSchema(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if isIntegerColumnType(columnTypes["updated_at"]) {
+	if configstore.IsIntegerColumnType(columnTypes["updated_at"]) {
 		return nil
 	}
 	return s.rebuildGlobalEnvTable(ctx)
@@ -118,7 +118,7 @@ func (s *ConfigStore) ensureWorkspaceConfigSchema(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if isIntegerColumnType(columnTypes["created_at"]) && isIntegerColumnType(columnTypes["updated_at"]) {
+	if configstore.IsIntegerColumnType(columnTypes["created_at"]) && configstore.IsIntegerColumnType(columnTypes["updated_at"]) {
 		return nil
 	}
 	return s.rebuildWorkspaceConfigTable(ctx)
@@ -185,7 +185,7 @@ func (s *ConfigStore) rebuildGlobalEnvTable(ctx context.Context) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	updatedAtExpr := normalizeSQLiteTimestampExpr("updated_at")
+	updatedAtExpr := configstore.NormalizeSQLiteTimestampExpr("updated_at")
 	statements := []string{
 		`DROP TABLE IF EXISTS global_env_legacy;`,
 		`ALTER TABLE global_env RENAME TO global_env_legacy;`,
@@ -217,8 +217,8 @@ func (s *ConfigStore) rebuildWorkspaceConfigTable(ctx context.Context) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	createdAtExpr := normalizeSQLiteTimestampExpr("created_at")
-	updatedAtExpr := normalizeSQLiteTimestampExpr("updated_at")
+	createdAtExpr := configstore.NormalizeSQLiteTimestampExpr("created_at")
+	updatedAtExpr := configstore.NormalizeSQLiteTimestampExpr("updated_at")
 	statements := []string{
 		`DROP TABLE IF EXISTS workspace_config_legacy;`,
 		`ALTER TABLE workspace_config RENAME TO workspace_config_legacy;`,
@@ -270,7 +270,7 @@ func (s *ConfigStore) ListGlobalEnv(ctx context.Context) ([]SessionEnvVar, error
 }
 
 func (s *ConfigStore) ReplaceGlobalEnv(ctx context.Context, items []SessionEnvVar) ([]SessionEnvVar, error) {
-	normalized := normalizeEnvItems(items)
+	normalized := domain.NormalizeEnvItems(items)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin global env tx: %w", err)
@@ -281,7 +281,7 @@ func (s *ConfigStore) ReplaceGlobalEnv(ctx context.Context, items []SessionEnvVa
 		return nil, fmt.Errorf("reset global env: %w", err)
 	}
 	for _, item := range normalized {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO global_env(name, value, secret, updated_at) VALUES(?, ?, ?, ?)`, item.Name, item.Value, boolToInt(item.Secret), time.Now().UTC().Unix()); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO global_env(name, value, secret, updated_at) VALUES(?, ?, ?, ?)`, item.Name, item.Value, configstore.BoolToInt(item.Secret), time.Now().UTC().Unix()); err != nil {
 			return nil, fmt.Errorf("insert global env %s: %w", item.Name, err)
 		}
 	}
@@ -300,7 +300,7 @@ func (s *ConfigStore) ListWorkspaceConfigs(ctx context.Context) ([]WorkspaceConf
 
 	items := make([]WorkspaceConfig, 0)
 	for rows.Next() {
-		item, err := scanWorkspaceConfig(rows.Scan)
+		item, err := configstore.ScanWorkspaceConfig(rows.Scan)
 		if err != nil {
 			return nil, err
 		}
@@ -314,7 +314,7 @@ func (s *ConfigStore) ListWorkspaceConfigs(ctx context.Context) ([]WorkspaceConf
 
 func (s *ConfigStore) GetWorkspaceConfig(ctx context.Context, id string) (WorkspaceConfig, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id, name, type, config_json, comment, created_at, updated_at FROM workspace_config WHERE id = ?`, strings.TrimSpace(id))
-	item, err := scanWorkspaceConfig(row.Scan)
+	item, err := configstore.ScanWorkspaceConfig(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			message := fmt.Sprintf("workspace config %s not found", strings.TrimSpace(id))
@@ -326,7 +326,7 @@ func (s *ConfigStore) GetWorkspaceConfig(ctx context.Context, id string) (Worksp
 }
 
 func (s *ConfigStore) CreateWorkspaceConfig(ctx context.Context, item WorkspaceConfig) (WorkspaceConfig, error) {
-	normalized, err := normalizeWorkspaceConfig(item, true)
+	normalized, err := configstore.NormalizeWorkspaceConfig(item, true)
 	if err != nil {
 		return WorkspaceConfig{}, err
 	}
@@ -340,7 +340,7 @@ func (s *ConfigStore) CreateWorkspaceConfig(ctx context.Context, item WorkspaceC
 }
 
 func (s *ConfigStore) UpdateWorkspaceConfig(ctx context.Context, item WorkspaceConfig) (WorkspaceConfig, error) {
-	normalized, err := normalizeWorkspaceConfig(item, false)
+	normalized, err := configstore.NormalizeWorkspaceConfig(item, false)
 	if err != nil {
 		return WorkspaceConfig{}, err
 	}
@@ -387,7 +387,7 @@ func (s *ConfigStore) CreateAgentDefinition(ctx context.Context, item AgentDefin
 	normalized.CreatedAt = now
 	normalized.UpdatedAt = now
 	normalized.DeletedAt = time.Time{}
-	envJSON, err := encodeAgentEnvJSON(normalized.EnvItems)
+	envJSON, err := configstore.EncodeAgentEnvJSON(normalized.EnvItems)
 	if err != nil {
 		return AgentDefinition{}, err
 	}
@@ -399,7 +399,7 @@ func (s *ConfigStore) CreateAgentDefinition(ctx context.Context, item AgentDefin
 		id, name, description, enabled, deleted_at, provider, model, system_prompt, driver, guest_image, workspace_id, env_json, config_json, capset_ids,
 		managed_project_id, managed_project_revision, managed_agent_name, created_at, updated_at
 	) VALUES(?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		normalized.ID, normalized.Name, normalized.Description, boolToInt(normalized.Enabled), normalized.Provider, normalized.Model, normalized.SystemPrompt,
+		normalized.ID, normalized.Name, normalized.Description, configstore.BoolToInt(normalized.Enabled), normalized.Provider, normalized.Model, normalized.SystemPrompt,
 		normalized.Driver, normalized.GuestImage, normalized.WorkspaceID, envJSON, normalized.ConfigJSON, capsetIDsJSON,
 		normalized.ManagedProjectID, normalized.ManagedProjectRevision, normalized.ManagedAgentName, normalized.CreatedAt.Unix(), normalized.UpdatedAt.Unix()); err != nil {
 		return AgentDefinition{}, fmt.Errorf("insert agent definition %s: %w", normalized.ID, err)
@@ -424,7 +424,7 @@ func (s *ConfigStore) UpdateAgentDefinition(ctx context.Context, item AgentDefin
 	normalized.CreatedAt = existing.CreatedAt
 	normalized.UpdatedAt = time.Now().UTC()
 	normalized.DeletedAt = time.Time{}
-	envJSON, err := encodeAgentEnvJSON(normalized.EnvItems)
+	envJSON, err := configstore.EncodeAgentEnvJSON(normalized.EnvItems)
 	if err != nil {
 		return AgentDefinition{}, err
 	}
@@ -436,7 +436,7 @@ func (s *ConfigStore) UpdateAgentDefinition(ctx context.Context, item AgentDefin
 		name = ?, description = ?, enabled = ?, provider = ?, model = ?, system_prompt = ?, driver = ?, guest_image = ?, workspace_id = ?, env_json = ?,
 		config_json = ?, capset_ids = ?, managed_project_id = ?, managed_project_revision = ?, managed_agent_name = ?, updated_at = ?
 		WHERE id = ? AND deleted_at = 0`,
-		normalized.Name, normalized.Description, boolToInt(normalized.Enabled), normalized.Provider, normalized.Model, normalized.SystemPrompt,
+		normalized.Name, normalized.Description, configstore.BoolToInt(normalized.Enabled), normalized.Provider, normalized.Model, normalized.SystemPrompt,
 		normalized.Driver, normalized.GuestImage, normalized.WorkspaceID, envJSON, normalized.ConfigJSON, capsetIDsJSON,
 		normalized.ManagedProjectID, normalized.ManagedProjectRevision, normalized.ManagedAgentName, normalized.UpdatedAt.Unix(), normalized.ID)
 	if err != nil {
@@ -456,7 +456,7 @@ func (s *ConfigStore) UpsertManagedAgentDefinition(ctx context.Context, item Age
 	if normalized.ManagedProjectID == "" || normalized.ManagedAgentName == "" {
 		return AgentDefinition{}, fmt.Errorf("managed project id and managed agent name are required")
 	}
-	envJSON, err := encodeAgentEnvJSON(normalized.EnvItems)
+	envJSON, err := configstore.EncodeAgentEnvJSON(normalized.EnvItems)
 	if err != nil {
 		return AgentDefinition{}, err
 	}
@@ -477,7 +477,7 @@ func (s *ConfigStore) UpsertManagedAgentDefinition(ctx context.Context, item Age
 			name = ?, description = ?, enabled = ?, deleted_at = 0, provider = ?, model = ?, system_prompt = ?, driver = ?, guest_image = ?, workspace_id = ?,
 			env_json = ?, config_json = ?, capset_ids = ?, managed_project_id = ?, managed_project_revision = ?, managed_agent_name = ?, updated_at = ?
 			WHERE id = ?`,
-			normalized.Name, normalized.Description, boolToInt(normalized.Enabled), normalized.Provider, normalized.Model, normalized.SystemPrompt,
+			normalized.Name, normalized.Description, configstore.BoolToInt(normalized.Enabled), normalized.Provider, normalized.Model, normalized.SystemPrompt,
 			normalized.Driver, normalized.GuestImage, normalized.WorkspaceID, envJSON, normalized.ConfigJSON, capsetIDsJSON,
 			normalized.ManagedProjectID, normalized.ManagedProjectRevision, normalized.ManagedAgentName, normalized.UpdatedAt.Unix(), normalized.ID)
 		if err != nil {
@@ -496,7 +496,7 @@ func (s *ConfigStore) UpsertManagedAgentDefinition(ctx context.Context, item Age
 		id, name, description, enabled, deleted_at, provider, model, system_prompt, driver, guest_image, workspace_id, env_json, config_json, capset_ids,
 		managed_project_id, managed_project_revision, managed_agent_name, created_at, updated_at
 	) VALUES(?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		normalized.ID, normalized.Name, normalized.Description, boolToInt(normalized.Enabled), normalized.Provider, normalized.Model, normalized.SystemPrompt,
+		normalized.ID, normalized.Name, normalized.Description, configstore.BoolToInt(normalized.Enabled), normalized.Provider, normalized.Model, normalized.SystemPrompt,
 		normalized.Driver, normalized.GuestImage, normalized.WorkspaceID, envJSON, normalized.ConfigJSON, capsetIDsJSON,
 		normalized.ManagedProjectID, normalized.ManagedProjectRevision, normalized.ManagedAgentName, normalized.CreatedAt.Unix(), normalized.UpdatedAt.Unix()); err != nil {
 		return AgentDefinition{}, fmt.Errorf("insert managed agent definition %s: %w", normalized.ID, err)
@@ -532,7 +532,7 @@ func (s *ConfigStore) getAgentDefinitionIfExists(ctx context.Context, id string,
 	row := s.db.QueryRowContext(ctx, `SELECT id, name, description, enabled, deleted_at, provider, model, system_prompt, driver, guest_image, workspace_id, env_json, config_json, capset_ids,
 		managed_project_id, managed_project_revision, managed_agent_name, created_at, updated_at
 		FROM agent_definition WHERE `+where, strings.TrimSpace(id))
-	item, err := scanAgentDefinition(row.Scan)
+	item, err := configstore.ScanAgentDefinition(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return AgentDefinition{}, false, nil
@@ -566,14 +566,14 @@ func (s *ConfigStore) ListAgentDefinitions(ctx context.Context, options AgentDef
 
 	matched := make([]AgentDefinition, 0)
 	for rows.Next() {
-		item, err := scanAgentDefinition(rows.Scan)
+		item, err := configstore.ScanAgentDefinition(rows.Scan)
 		if err != nil {
 			return AgentDefinitionListResult{}, err
 		}
 		if !options.IncludeDisabled && (!item.Enabled || !item.DeletedAt.IsZero()) {
 			continue
 		}
-		if query != "" && !agentMatchesQuery(item, query) {
+		if query != "" && !configstore.AgentMatchesQuery(item, query) {
 			continue
 		}
 		matched = append(matched, item)
@@ -616,7 +616,7 @@ func (s *ConfigStore) ListManagedAgentDefinitions(ctx context.Context, projectID
 	defer func() { _ = rows.Close() }()
 	var items []AgentDefinition
 	for rows.Next() {
-		item, err := scanAgentDefinition(rows.Scan)
+		item, err := configstore.ScanAgentDefinition(rows.Scan)
 		if err != nil {
 			return nil, err
 		}
@@ -650,7 +650,7 @@ func (s *ConfigStore) SetAgentDefinitionEnabled(ctx context.Context, id string, 
 		return AgentDefinition{}, fmt.Errorf("agent definition id is required")
 	}
 	now := time.Now().UTC().Unix()
-	result, err := s.db.ExecContext(ctx, `UPDATE agent_definition SET enabled = ?, updated_at = ? WHERE id = ? AND deleted_at = 0`, boolToInt(enabled), now, trimmedID)
+	result, err := s.db.ExecContext(ctx, `UPDATE agent_definition SET enabled = ?, updated_at = ? WHERE id = ? AND deleted_at = 0`, configstore.BoolToInt(enabled), now, trimmedID)
 	if err != nil {
 		return AgentDefinition{}, fmt.Errorf("set agent definition enabled %s: %w", trimmedID, err)
 	}
@@ -679,50 +679,6 @@ func normalizeEnvItems(items []SessionEnvVar) []SessionEnvVar {
 	return domain.NormalizeEnvItems(items)
 }
 
-func encodeAgentEnvJSON(items []SessionEnvVar) (string, error) {
-	return configstore.EncodeAgentEnvJSON(items)
-}
-
-func scanAgentDefinition(scan func(dest ...any) error) (AgentDefinition, error) {
-	return configstore.ScanAgentDefinition(scan)
-}
-
-func agentMatchesQuery(item AgentDefinition, query string) bool {
-	return configstore.AgentMatchesQuery(item, query)
-}
-
 func mergeEnvItems(globalItems, sessionItems []SessionEnvVar) []SessionEnvVar {
 	return domain.MergeEnvItems(globalItems, sessionItems)
-}
-
-func normalizeWorkspaceConfig(item WorkspaceConfig, assignID bool) (WorkspaceConfig, error) {
-	return configstore.NormalizeWorkspaceConfig(item, assignID)
-}
-
-func scanWorkspaceConfig(scan func(dest ...any) error) (WorkspaceConfig, error) {
-	return configstore.ScanWorkspaceConfig(scan)
-}
-
-func parseStoredUnixTimeAuto(value int64) time.Time {
-	return configstore.ParseStoredUnixTimeAuto(value)
-}
-
-func parseStoredLoaderTriggerTime(value any) time.Time {
-	return configstore.ParseStoredLoaderTriggerTime(value)
-}
-
-func parseStoredTime(value any) time.Time {
-	return configstore.ParseStoredTime(value)
-}
-
-func normalizeSQLiteTimestampExpr(columnName string) string {
-	return configstore.NormalizeSQLiteTimestampExpr(columnName)
-}
-
-func isIntegerColumnType(columnType string) bool {
-	return configstore.IsIntegerColumnType(columnType)
-}
-
-func boolToInt(value bool) int {
-	return configstore.BoolToInt(value)
 }

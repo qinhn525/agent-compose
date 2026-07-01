@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	"agent-compose/pkg/agentcompose/configstore"
 	driverpkg "agent-compose/pkg/driver"
 	"context"
 	"strings"
@@ -169,7 +170,7 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 	if mergeEnvItems(nil, nil) != nil {
 		t.Fatalf("mergeEnvItems nil did not return nil")
 	}
-	workspace, err := normalizeWorkspaceConfig(WorkspaceConfig{Name: " Workspace ", Type: "FILE", ConfigJSON: "", Comment: " note "}, true)
+	workspace, err := configstore.NormalizeWorkspaceConfig(WorkspaceConfig{Name: " Workspace ", Type: "FILE", ConfigJSON: "", Comment: " note "}, true)
 	if err != nil || workspace.ID == "" || workspace.Type != "file" || workspace.ConfigJSON != "{}" || workspace.Comment != "note" {
 		t.Fatalf("normalizeWorkspaceConfig assign = %#v/%v", workspace, err)
 	}
@@ -179,7 +180,7 @@ func TestModelSessionConfigAndBusBranchCoverage(t *testing.T) {
 		{ID: "id", Name: "name"},
 		{ID: "id", Name: "name", Type: "bad"},
 	} {
-		if _, err := normalizeWorkspaceConfig(item, false); err == nil {
+		if _, err := configstore.NormalizeWorkspaceConfig(item, false); err == nil {
 			t.Fatalf("normalizeWorkspaceConfig(%#v) returned nil error", item)
 		}
 	}

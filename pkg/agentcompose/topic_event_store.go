@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"agent-compose/pkg/agentcompose/configstore"
 	"agent-compose/pkg/agentcompose/events"
 )
 
@@ -547,8 +548,8 @@ func (s *ConfigStore) ListEventDeliveries(ctx context.Context, eventIDs []string
 		if err := rows.Scan(&item.EventID, &item.LoaderID, &item.TriggerID, &item.RunID, &item.Status, &item.Error, &createdAtRaw, &updatedAtRaw); err != nil {
 			return nil, fmt.Errorf("scan event delivery: %w", err)
 		}
-		item.CreatedAt = parseStoredUnixTimeAuto(createdAtRaw)
-		item.UpdatedAt = parseStoredUnixTimeAuto(updatedAtRaw)
+		item.CreatedAt = configstore.ParseStoredUnixTimeAuto(createdAtRaw)
+		item.UpdatedAt = configstore.ParseStoredUnixTimeAuto(updatedAtRaw)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -593,7 +594,7 @@ func (s *ConfigStore) ListEventSessionLinks(ctx context.Context, eventIDs []stri
 		if err := rows.Scan(&item.EventID, &item.SessionID, &item.Relation, &item.LoaderID, &item.RunID, &item.TriggerID, &item.LoaderEventID, &createdAtRaw); err != nil {
 			return nil, fmt.Errorf("scan event session link: %w", err)
 		}
-		item.CreatedAt = parseStoredUnixTimeAuto(createdAtRaw)
+		item.CreatedAt = configstore.ParseStoredUnixTimeAuto(createdAtRaw)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -667,8 +668,8 @@ func (s *ConfigStore) ListEnabledWebhookSourcesForTopic(ctx context.Context, top
 			return nil, fmt.Errorf("scan webhook source: %w", err)
 		}
 		item.Enabled = enabled != 0
-		item.CreatedAt = parseStoredUnixTimeAuto(createdAtRaw)
-		item.UpdatedAt = parseStoredUnixTimeAuto(updatedAtRaw)
+		item.CreatedAt = configstore.ParseStoredUnixTimeAuto(createdAtRaw)
+		item.UpdatedAt = configstore.ParseStoredUnixTimeAuto(updatedAtRaw)
 		if webhookSourceTopicMatches(topic, item.TopicPrefix) {
 			items = append(items, item)
 		}
@@ -708,8 +709,8 @@ func (s *ConfigStore) ListWebhookSources(ctx context.Context) ([]WebhookSource, 
 			return nil, fmt.Errorf("scan webhook source: %w", err)
 		}
 		item.Enabled = enabled != 0
-		item.CreatedAt = parseStoredUnixTimeAuto(createdAtRaw)
-		item.UpdatedAt = parseStoredUnixTimeAuto(updatedAtRaw)
+		item.CreatedAt = configstore.ParseStoredUnixTimeAuto(createdAtRaw)
+		item.UpdatedAt = configstore.ParseStoredUnixTimeAuto(updatedAtRaw)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -736,8 +737,8 @@ func (s *ConfigStore) GetWebhookSource(ctx context.Context, sourceID string) (We
 		return WebhookSource{}, false, fmt.Errorf("get webhook source: %w", err)
 	}
 	item.Enabled = enabled != 0
-	item.CreatedAt = parseStoredUnixTimeAuto(createdAtRaw)
-	item.UpdatedAt = parseStoredUnixTimeAuto(updatedAtRaw)
+	item.CreatedAt = configstore.ParseStoredUnixTimeAuto(createdAtRaw)
+	item.UpdatedAt = configstore.ParseStoredUnixTimeAuto(updatedAtRaw)
 	return item, true, nil
 }
 

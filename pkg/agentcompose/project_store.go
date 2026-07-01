@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"agent-compose/pkg/agentcompose/configstore"
 	"agent-compose/pkg/agentcompose/domain"
 	"agent-compose/pkg/agentcompose/projects"
 	"agent-compose/pkg/compose"
@@ -255,7 +256,7 @@ func (s *ConfigStore) UpsertProjectAgent(ctx context.Context, agent ProjectAgent
 	result, err := s.db.ExecContext(ctx, `UPDATE project_agent SET
 		managed_agent_id = ?, revision = ?, provider = ?, model = ?, image = ?, driver = ?, scheduler_enabled = ?, spec_json = ?, updated_at = ?
 		WHERE project_id = ? AND agent_name = ?`,
-		agent.ManagedAgentID, agent.Revision, agent.Provider, agent.Model, agent.Image, agent.Driver, boolToInt(agent.SchedulerEnabled), agent.SpecJSON, now.Unix(),
+		agent.ManagedAgentID, agent.Revision, agent.Provider, agent.Model, agent.Image, agent.Driver, configstore.BoolToInt(agent.SchedulerEnabled), agent.SpecJSON, now.Unix(),
 		agent.ProjectID, agent.AgentName)
 	if err != nil {
 		return ProjectAgentRecord{}, fmt.Errorf("update project agent %s/%s: %w", agent.ProjectID, agent.AgentName, err)
@@ -268,7 +269,7 @@ func (s *ConfigStore) UpsertProjectAgent(ctx context.Context, agent ProjectAgent
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO project_agent(
 		project_id, agent_name, managed_agent_id, revision, provider, model, image, driver, scheduler_enabled, spec_json, created_at, updated_at
 	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		agent.ProjectID, agent.AgentName, agent.ManagedAgentID, agent.Revision, agent.Provider, agent.Model, agent.Image, agent.Driver, boolToInt(agent.SchedulerEnabled), agent.SpecJSON,
+		agent.ProjectID, agent.AgentName, agent.ManagedAgentID, agent.Revision, agent.Provider, agent.Model, agent.Image, agent.Driver, configstore.BoolToInt(agent.SchedulerEnabled), agent.SpecJSON,
 		agent.CreatedAt.Unix(), agent.UpdatedAt.Unix()); err != nil {
 		return ProjectAgentRecord{}, fmt.Errorf("insert project agent %s/%s: %w", agent.ProjectID, agent.AgentName, err)
 	}
@@ -319,7 +320,7 @@ func (s *ConfigStore) UpsertProjectScheduler(ctx context.Context, scheduler Proj
 	result, err := s.db.ExecContext(ctx, `UPDATE project_scheduler SET
 		agent_name = ?, managed_loader_id = ?, revision = ?, enabled = ?, trigger_count = ?, spec_json = ?, updated_at = ?
 		WHERE project_id = ? AND scheduler_id = ?`,
-		scheduler.AgentName, scheduler.ManagedLoaderID, scheduler.Revision, boolToInt(scheduler.Enabled), scheduler.TriggerCount, scheduler.SpecJSON, now.Unix(),
+		scheduler.AgentName, scheduler.ManagedLoaderID, scheduler.Revision, configstore.BoolToInt(scheduler.Enabled), scheduler.TriggerCount, scheduler.SpecJSON, now.Unix(),
 		scheduler.ProjectID, scheduler.SchedulerID)
 	if err != nil {
 		return ProjectSchedulerRecord{}, fmt.Errorf("update project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
@@ -332,7 +333,7 @@ func (s *ConfigStore) UpsertProjectScheduler(ctx context.Context, scheduler Proj
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO project_scheduler(
 		project_id, scheduler_id, agent_name, managed_loader_id, revision, enabled, trigger_count, spec_json, created_at, updated_at
 	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		scheduler.ProjectID, scheduler.SchedulerID, scheduler.AgentName, scheduler.ManagedLoaderID, scheduler.Revision, boolToInt(scheduler.Enabled), scheduler.TriggerCount, scheduler.SpecJSON,
+		scheduler.ProjectID, scheduler.SchedulerID, scheduler.AgentName, scheduler.ManagedLoaderID, scheduler.Revision, configstore.BoolToInt(scheduler.Enabled), scheduler.TriggerCount, scheduler.SpecJSON,
 		scheduler.CreatedAt.Unix(), scheduler.UpdatedAt.Unix()); err != nil {
 		return ProjectSchedulerRecord{}, fmt.Errorf("insert project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
 	}
@@ -360,7 +361,7 @@ func (s *ConfigStore) SetProjectSchedulerEnabled(ctx context.Context, projectID,
 		return ProjectSchedulerRecord{}, fmt.Errorf("project scheduler id is required")
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE project_scheduler SET enabled = ?, updated_at = ? WHERE project_id = ? AND scheduler_id = ?`,
-		boolToInt(enabled), time.Now().UTC().Unix(), projectID, schedulerID)
+		configstore.BoolToInt(enabled), time.Now().UTC().Unix(), projectID, schedulerID)
 	if err != nil {
 		return ProjectSchedulerRecord{}, fmt.Errorf("update project scheduler %s/%s enabled state: %w", projectID, schedulerID, err)
 	}

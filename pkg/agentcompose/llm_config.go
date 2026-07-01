@@ -1,6 +1,7 @@
 package agentcompose
 
 import (
+	"agent-compose/pkg/agentcompose/configstore"
 	"agent-compose/pkg/agentcompose/llms"
 	appconfig "agent-compose/pkg/config"
 	"context"
@@ -113,7 +114,7 @@ func (s *ConfigStore) UpsertDefaultLLMConfig(ctx context.Context, provider LLMPr
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_provider(id, name, provider_type, default_wire_api, base_url, api_key, auth_header, auth_scheme, headers_json, use_generic_responses_text_parts, weight, enabled, scope, created_at, updated_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET name = excluded.name, provider_type = excluded.provider_type, default_wire_api = excluded.default_wire_api, base_url = excluded.base_url, api_key = excluded.api_key, auth_header = excluded.auth_header, auth_scheme = excluded.auth_scheme, headers_json = excluded.headers_json, use_generic_responses_text_parts = excluded.use_generic_responses_text_parts, weight = excluded.weight, enabled = excluded.enabled, scope = excluded.scope, updated_at = excluded.updated_at`, provider.ID, provider.Name, provider.ProviderType, provider.DefaultWireAPI, provider.BaseURL, provider.APIKey, provider.AuthHeader, provider.AuthScheme, provider.HeadersJSON, boolToInt(provider.UseGenericResponsesTextParts), provider.Weight, provider.Scope, now, now); err != nil {
+		ON CONFLICT(id) DO UPDATE SET name = excluded.name, provider_type = excluded.provider_type, default_wire_api = excluded.default_wire_api, base_url = excluded.base_url, api_key = excluded.api_key, auth_header = excluded.auth_header, auth_scheme = excluded.auth_scheme, headers_json = excluded.headers_json, use_generic_responses_text_parts = excluded.use_generic_responses_text_parts, weight = excluded.weight, enabled = excluded.enabled, scope = excluded.scope, updated_at = excluded.updated_at`, provider.ID, provider.Name, provider.ProviderType, provider.DefaultWireAPI, provider.BaseURL, provider.APIKey, provider.AuthHeader, provider.AuthScheme, provider.HeadersJSON, configstore.BoolToInt(provider.UseGenericResponsesTextParts), provider.Weight, provider.Scope, now, now); err != nil {
 		return fmt.Errorf("insert default llm provider: %w", err)
 	}
 	if model.DefaultModel {
@@ -123,7 +124,7 @@ func (s *ConfigStore) UpsertDefaultLLMConfig(ctx context.Context, provider LLMPr
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_model(id, name, description, default_model, enabled, scope, created_at, updated_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, default_model = excluded.default_model, enabled = excluded.enabled, scope = excluded.scope, updated_at = excluded.updated_at`, model.ID, model.Name, model.Description, boolToInt(model.DefaultModel), boolToInt(model.Enabled), model.Scope, now, now); err != nil {
+		ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, default_model = excluded.default_model, enabled = excluded.enabled, scope = excluded.scope, updated_at = excluded.updated_at`, model.ID, model.Name, model.Description, configstore.BoolToInt(model.DefaultModel), configstore.BoolToInt(model.Enabled), model.Scope, now, now); err != nil {
 		return fmt.Errorf("insert default llm model: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_provider_model(provider_id, model_id, wire_api, weight)
