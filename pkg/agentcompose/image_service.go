@@ -17,60 +17,22 @@ import (
 	typesimage "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 
+	"agent-compose/pkg/agentcompose/images"
 	"agent-compose/pkg/imagecache"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
 )
 
-type ImageBackend interface {
-	ListImages(context.Context, ImageListRequest) (ImageListResult, error)
-	PullImage(context.Context, ImagePullRequest) (ImagePullResult, error)
-	InspectImage(context.Context, ImageInspectRequest) (ImageInspectResult, error)
-	RemoveImage(context.Context, ImageRemoveRequest) (ImageRemoveResult, error)
-}
-
-type ImageListRequest struct {
-	Query string
-	All   bool
-}
-
-type ImageListResult struct {
-	Images      []*agentcomposev2.Image
-	StoreStatus *agentcomposev2.ImageStoreStatus
-}
-
-type ImagePullRequest struct {
-	ImageRef string
-	Platform *agentcomposev2.ImagePlatform
-}
-
-type ImagePullResult struct {
-	Image       *agentcomposev2.Image
-	ResolvedRef string
-	Progress    []*agentcomposev2.ImagePullProgress
-	Warnings    []string
-}
-
-type ImageInspectRequest struct {
-	ImageRef string
-}
-
-type ImageInspectResult struct {
-	Image       *agentcomposev2.Image
-	StoreStatus *agentcomposev2.ImageStoreStatus
-}
-
-type ImageRemoveRequest struct {
-	ImageRef      string
-	Force         bool
-	PruneChildren bool
-}
-
-type ImageRemoveResult struct {
-	ImageRef     string
-	UntaggedRefs []string
-	DeletedIDs   []string
-	Warnings     []string
-}
+type (
+	ImageBackend        = images.Backend
+	ImageListRequest    = images.ListRequest
+	ImageListResult     = images.ListResult
+	ImagePullRequest    = images.PullRequest
+	ImagePullResult     = images.PullResult
+	ImageInspectRequest = images.InspectRequest
+	ImageInspectResult  = images.InspectResult
+	ImageRemoveRequest  = images.RemoveRequest
+	ImageRemoveResult   = images.RemoveResult
+)
 
 func (s *Service) ListImages(ctx context.Context, req *connect.Request[agentcomposev2.ListImagesRequest]) (*connect.Response[agentcomposev2.ListImagesResponse], error) {
 	backend, err := s.imageBackendForStore(req.Msg.GetStore())
