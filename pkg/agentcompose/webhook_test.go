@@ -2,6 +2,7 @@ package agentcompose
 
 import (
 	"agent-compose/pkg/agentcompose/domain"
+	"agent-compose/pkg/agentcompose/webhooks"
 	appconfig "agent-compose/pkg/config"
 	"bytes"
 	"context"
@@ -32,9 +33,9 @@ func addTestWebhookSource(t *testing.T, store *ConfigStore, prefix, token string
 		ID:          strings.TrimSuffix(strings.TrimPrefix(prefix, "webhook."), ".") + "-source",
 		Name:        prefix,
 		Enabled:     true,
-		Provider:    providerFromWebhookTopic(strings.TrimSuffix(prefix, ".")),
+		Provider:    webhooks.ProviderFromTopic(strings.TrimSuffix(prefix, ".")),
 		TopicPrefix: prefix,
-		TokenHash:   webhookTokenHash(token),
+		TokenHash:   webhooks.TokenHash(token),
 	})
 	if err != nil {
 		t.Fatalf("UpsertWebhookSource returned error: %v", err)
@@ -254,7 +255,7 @@ func TestWebhookHandlerUsesWebhookSourceToken(t *testing.T) {
 		Enabled:     true,
 		Provider:    "github",
 		TopicPrefix: "webhook.github.",
-		TokenHash:   webhookTokenHash("source-secret"),
+		TokenHash:   webhooks.TokenHash("source-secret"),
 	})
 	if err != nil {
 		t.Fatalf("UpsertWebhookSource returned error: %v", err)
@@ -363,15 +364,15 @@ func TestWebhookSourceManagementHandlers(t *testing.T) {
 func TestWebhookPayloadHelpers(t *testing.T) {
 	payloadJSON := `{"body":{"value":1}}`
 	want := domain.TopicEventPayloadSHA256(`{"value":1}`)
-	if got := existingWebhookBodyHash(payloadJSON); got != want {
+	if got := webhooks.ExistingBodyHash(payloadJSON); got != want {
 		t.Fatalf("existingWebhookBodyHash = %q, want %q", got, want)
 	}
 	for _, raw := range []string{`{`, `{}`, `{"body":func}`} {
-		if got := existingWebhookBodyHash(raw); got != "" {
-			t.Fatalf("existingWebhookBodyHash(%q) = %q, want empty", raw, got)
+		if got := webhooks.ExistingBodyHash(raw); got != "" {
+			t.Fatalf("webhooks.ExistingBodyHash(%q) = %q, want empty", raw, got)
 		}
 	}
-	if providerFromWebhookTopic("webhook.gitlab.push") != "gitlab" || providerFromWebhookTopic("runtime.gitlab.push") != "" {
+	if webhooks.ProviderFromTopic("webhook.gitlab.push") != "gitlab" || webhooks.ProviderFromTopic("runtime.gitlab.push") != "" {
 		t.Fatalf("providerFromWebhookTopic returned unexpected values")
 	}
 }

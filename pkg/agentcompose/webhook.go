@@ -41,32 +41,32 @@ func registerWebhookRoutes(app *echo.Echo, service *Service) {
 
 func (s *Service) handleWebhook(c echo.Context) error {
 	topic := strings.TrimSpace(c.Param("topic"))
-	if err := validateExternalWebhookTopic(topic); err != nil {
+	if err := webhooks.ValidateExternalTopic(topic); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 	source, bodyLimit, handled, err := s.authorizeWebhookRequest(c, topic)
 	if handled {
 		return err
 	}
-	if !requestContentTypeIsJSON(c.Request()) {
+	if !webhooks.RequestContentTypeIsJSON(c.Request()) {
 		return c.JSON(http.StatusUnsupportedMediaType, map[string]string{"error": "content-type must be application/json"})
 	}
-	rawBody, err := readWebhookBody(c.Request(), bodyLimit)
+	rawBody, err := webhooks.ReadBody(c.Request(), bodyLimit)
 	if err != nil {
 		if errors.Is(err, ErrBodyTooLarge) {
 			return c.JSON(http.StatusRequestEntityTooLarge, map[string]string{"error": "request body is too large"})
 		}
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "failed to read request body"})
 	}
-	body, compactBody, err := decodeWebhookJSONObject(rawBody)
+	body, compactBody, err := webhooks.DecodeJSONObject(rawBody)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
-	idempotencyKey := extractIdempotencyKey(c.Request())
+	idempotencyKey := webhooks.ExtractIdempotencyKey(c.Request())
 	if existing, ok, err := s.configDB.FindEventByIdempotencyKey(c.Request().Context(), topic, idempotencyKey); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load webhook event"})
 	} else if ok {
-		if existingWebhookBodyHash(existing.PayloadJSON) != domain.TopicEventPayloadSHA256(compactBody) {
+		if webhooks.ExistingBodyHash(existing.PayloadJSON) != domain.TopicEventPayloadSHA256(compactBody) {
 			return c.JSON(http.StatusConflict, map[string]string{"error": "idempotency key conflicts with existing payload"})
 		}
 		return c.JSON(http.StatusAccepted, webhookAcceptedResponse{
@@ -79,11 +79,11 @@ func (s *Service) handleWebhook(c echo.Context) error {
 	}
 
 	eventID := "evt_" + newUUIDString()
-	correlationID := extractCorrelationID(c.Request(), body)
+	correlationID := webhooks.ExtractCorrelationID(c.Request(), body)
 	if correlationID == "" {
 		correlationID = eventID
 	}
-	payload := buildWebhookPayload(c, eventID, 0, topic, correlationID, idempotencyKey, source, body)
+	payload := webhooks.BuildPayload(c.Request(), eventID, 0, topic, correlationID, idempotencyKey, source, body)
 	payloadJSON, err := marshalJSONCompact(payload)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to encode webhook payload"})
@@ -93,11 +93,11 @@ func (s *Service) handleWebhook(c echo.Context) error {
 		ID:             eventID,
 		Topic:          topic,
 		Source:         TopicEventSourceWebhook,
-		Provider:       firstNonEmpty(source.Provider, providerFromWebhookTopic(topic)),
-		Intent:         intentFromWebhookBody(body),
+		Provider:       firstNonEmpty(source.Provider, webhooks.ProviderFromTopic(topic)),
+		Intent:         webhooks.IntentFromBody(body),
 		CorrelationID:  correlationID,
 		IdempotencyKey: idempotencyKey,
-		DeliveryID:     extractDeliveryID(c.Request()),
+		DeliveryID:     webhooks.ExtractDeliveryID(c.Request()),
 		PayloadHash:    payloadHash,
 		PayloadJSON:    payloadJSON,
 		DispatchStatus: TopicEventDispatchPending,
@@ -119,7 +119,7 @@ func (s *Service) handleWebhook(c echo.Context) error {
 		})
 	}
 	if created.Sequence != 0 {
-		payload = buildWebhookPayload(c, created.ID, created.Sequence, topic, created.CorrelationID, created.IdempotencyKey, source, body)
+		payload = webhooks.BuildPayload(c.Request(), created.ID, created.Sequence, topic, created.CorrelationID, created.IdempotencyKey, source, body)
 		payloadJSON, err = marshalJSONCompact(payload)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to encode webhook payload"})
@@ -146,7 +146,7 @@ func (s *Service) handleGetEvent(c echo.Context) error {
 		}
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load event"})
 	}
-	return c.JSON(http.StatusOK, topicEventResponse{Event: toTopicEventJSON(item)})
+	return c.JSON(http.StatusOK, topicEventResponse{Event: webhooks.TopicEventToJSON(item)})
 }
 
 func (s *Service) handleListEvents(c echo.Context) error {
@@ -179,7 +179,7 @@ func (s *Service) handleListEvents(c echo.Context) error {
 	}
 	resp := topicEventListResponse{Items: make([]topicEventJSON, 0, len(items))}
 	for _, item := range items {
-		resp.Items = append(resp.Items, toTopicEventJSON(item))
+		resp.Items = append(resp.Items, webhooks.TopicEventToJSON(item))
 		if item.Sequence > resp.NextAfterSequence {
 			resp.NextAfterSequence = item.Sequence
 		}
@@ -234,7 +234,7 @@ func (s *Service) handleListWebhookSources(c echo.Context) error {
 	}
 	resp := webhookSourceListResponse{Items: make([]webhookSourceJSON, 0, len(items))}
 	for _, item := range items {
-		resp.Items = append(resp.Items, toWebhookSourceJSON(item))
+		resp.Items = append(resp.Items, webhooks.SourceToJSON(item))
 	}
 	return c.JSON(http.StatusOK, resp)
 }
@@ -268,7 +268,7 @@ func (s *Service) handlePutWebhookSource(c echo.Context) error {
 		tokenHash = ""
 	}
 	if strings.TrimSpace(req.Token) != "" {
-		tokenHash = webhookTokenHash(req.Token)
+		tokenHash = webhooks.TokenHash(req.Token)
 	}
 	if req.ClearSignature {
 		req.SignatureSecret = ""
@@ -287,7 +287,7 @@ func (s *Service) handlePutWebhookSource(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
-	return c.JSON(http.StatusOK, webhookSourceResponse{Source: toWebhookSourceJSON(source)})
+	return c.JSON(http.StatusOK, webhookSourceResponse{Source: webhooks.SourceToJSON(source)})
 }
 
 func (s *Service) handleDeleteWebhookSource(c echo.Context) error {
@@ -304,18 +304,6 @@ func (s *Service) handleDeleteWebhookSource(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-func toWebhookSourceJSON(source WebhookSource) webhookSourceJSON {
-	return webhooks.SourceToJSON(source)
-}
-
-func webhookTokenHash(token string) string {
-	return webhooks.TokenHash(token)
-}
-
-func validWebhookTokenHash(r *http.Request, hash string) bool {
-	return webhooks.ValidTokenHash(r, hash)
-}
-
 func (s *Service) authorizeWebhookRequest(c echo.Context, topic string) (WebhookSource, int64, bool, error) {
 	defaultLimit := s.config.WebhookBodyLimitBytes
 	sources, err := s.configDB.ListEnabledWebhookSourcesForTopic(c.Request().Context(), topic)
@@ -327,7 +315,7 @@ func (s *Service) authorizeWebhookRequest(c echo.Context, topic string) (Webhook
 	}
 	matches := make([]WebhookSource, 0, 1)
 	for _, source := range sources {
-		if source.TokenHash != "" && validWebhookTokenHash(c.Request(), source.TokenHash) {
+		if source.TokenHash != "" && webhooks.ValidTokenHash(c.Request(), source.TokenHash) {
 			matches = append(matches, source)
 		}
 	}
@@ -342,50 +330,6 @@ func (s *Service) authorizeWebhookRequest(c echo.Context, topic string) (Webhook
 		limit = defaultLimit
 	}
 	return matches[0], limit, false, nil
-}
-
-func readWebhookBody(r *http.Request, limit int64) ([]byte, error) {
-	return webhooks.ReadBody(r, limit)
-}
-
-func requestContentTypeIsJSON(r *http.Request) bool {
-	return webhooks.RequestContentTypeIsJSON(r)
-}
-
-func decodeWebhookJSONObject(raw []byte) (map[string]any, string, error) {
-	return webhooks.DecodeJSONObject(raw)
-}
-
-func existingWebhookBodyHash(payloadJSON string) string {
-	return webhooks.ExistingBodyHash(payloadJSON)
-}
-
-func validateExternalWebhookTopic(topic string) error {
-	return webhooks.ValidateExternalTopic(topic)
-}
-
-func providerFromWebhookTopic(topic string) string {
-	return webhooks.ProviderFromTopic(topic)
-}
-
-func intentFromWebhookBody(body map[string]any) string {
-	return webhooks.IntentFromBody(body)
-}
-
-func extractCorrelationID(r *http.Request, body map[string]any) string {
-	return webhooks.ExtractCorrelationID(r, body)
-}
-
-func extractIdempotencyKey(r *http.Request) string {
-	return webhooks.ExtractIdempotencyKey(r)
-}
-
-func extractDeliveryID(r *http.Request) string {
-	return webhooks.ExtractDeliveryID(r)
-}
-
-func buildWebhookPayload(c echo.Context, eventID string, sequence int64, topic, correlationID, idempotencyKey string, source WebhookSource, body map[string]any) map[string]any {
-	return webhooks.BuildPayload(c.Request(), eventID, sequence, topic, correlationID, idempotencyKey, source, body)
 }
 
 func parseOptionalInt64Query(c echo.Context, name string) (int64, error) {
@@ -410,10 +354,6 @@ func parseLimitQuery(c echo.Context, defaultValue, maxValue int) (int, error) {
 		return 0, fmt.Errorf("limit is invalid")
 	}
 	return value, nil
-}
-
-func toTopicEventJSON(item TopicEventRecord) topicEventJSON {
-	return webhooks.TopicEventToJSON(item)
 }
 
 func newUUIDString() string {
