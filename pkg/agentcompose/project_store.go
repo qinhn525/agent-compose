@@ -532,148 +532,23 @@ func (s *ConfigStore) getProject(ctx context.Context, projectID string, includeR
 }
 
 func normalizeProjectRecord(project ProjectRecord) (ProjectRecord, error) {
-	project.ID = strings.TrimSpace(project.ID)
-	project.Name = strings.TrimSpace(project.Name)
-	project.SourcePath = normalizeProjectSourcePath(project.SourcePath)
-	project.SourceJSON = strings.TrimSpace(project.SourceJSON)
-	project.SpecHash = strings.TrimSpace(project.SpecHash)
-	if project.ID == "" {
-		return ProjectRecord{}, fmt.Errorf("project id is required")
-	}
-	if project.Name == "" {
-		return ProjectRecord{}, fmt.Errorf("project name is required")
-	}
-	if project.SourceJSON == "" {
-		sourceJSON, err := encodeProjectSourceJSON(project.SourcePath)
-		if err != nil {
-			return ProjectRecord{}, err
-		}
-		project.SourceJSON = sourceJSON
-	}
-	if !json.Valid([]byte(project.SourceJSON)) {
-		return ProjectRecord{}, fmt.Errorf("project source_json must be valid JSON")
-	}
-	if project.CurrentRevision < 0 {
-		return ProjectRecord{}, fmt.Errorf("project current revision cannot be negative")
-	}
-	return project, nil
+	return projects.NormalizeRecord(project)
 }
 
 func normalizeProjectAgentRecord(agent ProjectAgentRecord) (ProjectAgentRecord, error) {
-	agent.ProjectID = strings.TrimSpace(agent.ProjectID)
-	agent.AgentName = strings.TrimSpace(agent.AgentName)
-	agent.ManagedAgentID = strings.TrimSpace(agent.ManagedAgentID)
-	agent.Provider = strings.TrimSpace(agent.Provider)
-	agent.Model = strings.TrimSpace(agent.Model)
-	agent.Image = strings.TrimSpace(agent.Image)
-	agent.Driver = strings.TrimSpace(agent.Driver)
-	agent.SpecJSON = strings.TrimSpace(agent.SpecJSON)
-	if agent.ProjectID == "" || agent.AgentName == "" {
-		return ProjectAgentRecord{}, fmt.Errorf("project id and agent name are required")
-	}
-	if agent.ManagedAgentID == "" {
-		managedAgentID, err := StableManagedAgentID(agent.ProjectID, agent.AgentName)
-		if err != nil {
-			return ProjectAgentRecord{}, err
-		}
-		agent.ManagedAgentID = managedAgentID
-	}
-	if agent.Revision < 0 {
-		return ProjectAgentRecord{}, fmt.Errorf("project agent revision cannot be negative")
-	}
-	if agent.SpecJSON == "" {
-		agent.SpecJSON = "{}"
-	}
-	if !json.Valid([]byte(agent.SpecJSON)) {
-		return ProjectAgentRecord{}, fmt.Errorf("project agent spec_json must be valid JSON")
-	}
-	return agent, nil
+	return projects.NormalizeAgentRecord(agent)
 }
 
 func normalizeProjectSchedulerRecord(scheduler ProjectSchedulerRecord) (ProjectSchedulerRecord, error) {
-	scheduler.ProjectID = strings.TrimSpace(scheduler.ProjectID)
-	scheduler.SchedulerID = strings.TrimSpace(scheduler.SchedulerID)
-	scheduler.AgentName = strings.TrimSpace(scheduler.AgentName)
-	scheduler.ManagedLoaderID = strings.TrimSpace(scheduler.ManagedLoaderID)
-	scheduler.SpecJSON = strings.TrimSpace(scheduler.SpecJSON)
-	if scheduler.ProjectID == "" || scheduler.AgentName == "" {
-		return ProjectSchedulerRecord{}, fmt.Errorf("project id and agent name are required")
-	}
-	if scheduler.SchedulerID == "" {
-		schedulerID, err := StableProjectSchedulerID(scheduler.ProjectID, scheduler.AgentName, "")
-		if err != nil {
-			return ProjectSchedulerRecord{}, err
-		}
-		scheduler.SchedulerID = schedulerID
-	}
-	if scheduler.ManagedLoaderID == "" {
-		loaderID, err := StableManagedLoaderID(scheduler.ProjectID, scheduler.AgentName, "")
-		if err != nil {
-			return ProjectSchedulerRecord{}, err
-		}
-		scheduler.ManagedLoaderID = loaderID
-	}
-	if scheduler.Revision < 0 {
-		return ProjectSchedulerRecord{}, fmt.Errorf("project scheduler revision cannot be negative")
-	}
-	if scheduler.TriggerCount < 0 {
-		return ProjectSchedulerRecord{}, fmt.Errorf("project scheduler trigger count cannot be negative")
-	}
-	if scheduler.SpecJSON == "" {
-		scheduler.SpecJSON = "{}"
-	}
-	if !json.Valid([]byte(scheduler.SpecJSON)) {
-		return ProjectSchedulerRecord{}, fmt.Errorf("project scheduler spec_json must be valid JSON")
-	}
-	return scheduler, nil
+	return projects.NormalizeSchedulerRecord(scheduler)
 }
 
 func normalizeProjectRunRecord(run ProjectRunRecord) (ProjectRunRecord, error) {
-	run.RunID = strings.TrimSpace(run.RunID)
-	run.ProjectID = strings.TrimSpace(run.ProjectID)
-	run.ProjectName = strings.TrimSpace(run.ProjectName)
-	run.AgentName = strings.TrimSpace(run.AgentName)
-	run.ManagedAgentID = strings.TrimSpace(run.ManagedAgentID)
-	run.Source = strings.TrimSpace(run.Source)
-	run.SchedulerID = strings.TrimSpace(run.SchedulerID)
-	run.TriggerID = strings.TrimSpace(run.TriggerID)
-	run.Status = normalizeProjectRunStatus(run.Status)
-	run.SessionID = strings.TrimSpace(run.SessionID)
-	run.ResultJSON = strings.TrimSpace(run.ResultJSON)
-	run.LogsPath = strings.TrimSpace(run.LogsPath)
-	run.ArtifactsDir = strings.TrimSpace(run.ArtifactsDir)
-	run.Driver = strings.TrimSpace(run.Driver)
-	run.ImageRef = strings.TrimSpace(run.ImageRef)
-	if run.RunID == "" || run.ProjectID == "" {
-		return ProjectRunRecord{}, fmt.Errorf("project run id and project id are required")
-	}
-	if run.ProjectRevision < 0 {
-		return ProjectRunRecord{}, fmt.Errorf("project run revision cannot be negative")
-	}
-	if run.ResultJSON == "" {
-		run.ResultJSON = "{}"
-	}
-	if !json.Valid([]byte(run.ResultJSON)) {
-		return ProjectRunRecord{}, fmt.Errorf("project run result_json must be valid JSON")
-	}
-	return run, nil
+	return projects.NormalizeRunRecord(run)
 }
 
 func normalizeProjectRunStatus(status string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case ProjectRunStatusPending:
-		return ProjectRunStatusPending
-	case ProjectRunStatusRunning:
-		return ProjectRunStatusRunning
-	case ProjectRunStatusSucceeded:
-		return ProjectRunStatusSucceeded
-	case ProjectRunStatusFailed:
-		return ProjectRunStatusFailed
-	case ProjectRunStatusCanceled:
-		return ProjectRunStatusCanceled
-	default:
-		return ProjectRunStatusPending
-	}
+	return projects.NormalizeRunStatus(status)
 }
 
 func scanProject(scan func(dest ...any) error) (ProjectRecord, error) {
@@ -755,9 +630,7 @@ func selectProjectRunSQL() string {
 }
 
 func projectMatchesQuery(item ProjectRecord, query string) bool {
-	return strings.Contains(strings.ToLower(item.ID), query) ||
-		strings.Contains(strings.ToLower(item.Name), query) ||
-		strings.Contains(strings.ToLower(item.SourcePath), query)
+	return projects.RecordMatchesQuery(item, query)
 }
 
 func normalizeProjectSourcePath(sourcePath string) string {
