@@ -493,20 +493,7 @@ func ensureSessionAnthropicEnvProvider(ctx context.Context, store *ConfigStore, 
 }
 
 func hasEnabledLLMProviderID(ctx context.Context, store *ConfigStore, providerID string) bool {
-	providerID = strings.TrimSpace(providerID)
-	if store == nil || providerID == "" {
-		return false
-	}
-	providers, err := store.ListEnabledLLMProviders(ctx)
-	if err != nil {
-		return false
-	}
-	for _, provider := range providers {
-		if provider.ID == providerID {
-			return true
-		}
-	}
-	return false
+	return llms.HasEnabledProviderID(ctx, store, providerID)
 }
 
 // envHasProviderKeyForFamily reports whether the given env carries a usable
@@ -519,31 +506,7 @@ func envHasProviderKeyForFamily(envItems []SessionEnvVar, providerFamily string)
 }
 
 func hasConfiguredLLMProviderForFamily(ctx context.Context, store *ConfigStore, providerFamily string) bool {
-	if store == nil {
-		return false
-	}
-	providers, err := store.ListEnabledLLMProviders(ctx)
-	if err != nil {
-		return false
-	}
-	for _, provider := range providers {
-		if normalizeLLMProviderType(provider.ProviderType) != normalizeLLMProviderType(providerFamily) {
-			continue
-		}
-		if llmProviderScopeIsConfigured(provider.Scope) {
-			return true
-		}
-	}
-	return false
-}
-
-func llmProviderScopeIsConfigured(scope string) bool {
-	switch strings.TrimSpace(scope) {
-	case llmProviderScopeEnvDefault, llmProviderScopeSessionEnv:
-		return false
-	default:
-		return true
-	}
+	return llms.HasConfiguredProviderForFamily(ctx, store, providerFamily)
 }
 
 func hasOpenAIEnvProviderInput(envItems []SessionEnvVar) bool {

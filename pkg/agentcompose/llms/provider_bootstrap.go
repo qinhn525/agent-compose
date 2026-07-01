@@ -11,6 +11,46 @@ type DefaultConfigStore interface {
 	UpsertDefaultLLMConfig(ctx context.Context, provider Provider, model Model) error
 }
 
+type ProviderListStore interface {
+	ListEnabledLLMProviders(ctx context.Context) ([]Provider, error)
+}
+
+func HasEnabledProviderID(ctx context.Context, store ProviderListStore, providerID string) bool {
+	providerID = strings.TrimSpace(providerID)
+	if store == nil || providerID == "" {
+		return false
+	}
+	providers, err := store.ListEnabledLLMProviders(ctx)
+	if err != nil {
+		return false
+	}
+	for _, provider := range providers {
+		if provider.ID == providerID {
+			return true
+		}
+	}
+	return false
+}
+
+func HasConfiguredProviderForFamily(ctx context.Context, store ProviderListStore, providerFamily string) bool {
+	if store == nil {
+		return false
+	}
+	providers, err := store.ListEnabledLLMProviders(ctx)
+	if err != nil {
+		return false
+	}
+	for _, provider := range providers {
+		if NormalizeProviderType(provider.ProviderType) != NormalizeProviderType(providerFamily) {
+			continue
+		}
+		if ProviderScopeIsConfigured(provider.Scope) {
+			return true
+		}
+	}
+	return false
+}
+
 func EnsureOpenAIEnvProvider(ctx context.Context, store DefaultConfigStore, lookup EnvProviderLookup, providerID, name, scope, requestedModel string, defaultModel bool) (string, error) {
 	endpoint := firstNonEmpty(lookup("LLM_API_ENDPOINT"), "https://api.openai.com")
 	if LooksLikeAnthropicMessagesEndpoint(endpoint) {
