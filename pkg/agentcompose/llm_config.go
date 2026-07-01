@@ -286,7 +286,7 @@ func bootstrapDefaultLLMConfig(ctx context.Context, config *appconfig.Config, st
 // sources in priority order (source-major): an earlier source wins across all
 // candidate keys before a later source is consulted. This preserves the exact
 // precedence the bootstrap paths relied on when they used nested firstNonEmpty.
-type llmEnvProviderLookup func(keys ...string) string
+type llmEnvProviderLookup = llms.EnvProviderLookup
 
 // defaultLLMEnvProviderLookup reads from global env, then the process env, then
 // daemon config. Used by the env_default bootstrap providers.
@@ -345,70 +345,13 @@ func configLLMEnvValue(config *appconfig.Config, key string) string {
 // ensureOpenAIEnvProvider upserts an OpenAI-family provider from a resolved env
 // lookup. It returns the provider id (empty when nothing was configured).
 func ensureOpenAIEnvProvider(ctx context.Context, store *ConfigStore, lookup llmEnvProviderLookup, providerID, name, scope, requestedModel string, defaultModel bool) (string, error) {
-	endpoint := firstNonEmpty(lookup("LLM_API_ENDPOINT"), "https://api.openai.com")
-	if looksLikeAnthropicMessagesEndpoint(endpoint) {
-		return "", nil
-	}
-	protocol := normalizeLLMWireAPI(lookup("LLM_API_PROTOCOL"))
-	apiKey := lookup("LLM_API_KEY", "OPENAI_API_KEY")
-	model := strings.TrimSpace(firstNonEmpty(requestedModel, lookup("LLM_MODEL")))
-	if providerID == "" || model == "" {
-		return "", nil
-	}
-	return providerID, store.UpsertDefaultLLMConfig(ctx, LLMProvider{
-		ID:             providerID,
-		Name:           name,
-		ProviderType:   llmProviderFamilyOpenAI,
-		DefaultWireAPI: protocol,
-		BaseURL:        endpoint,
-		APIKey:         apiKey,
-		AuthHeader:     "Authorization",
-		AuthScheme:     "Bearer",
-		HeadersJSON:    "{}",
-		Weight:         10,
-		Enabled:        true,
-		Scope:          scope,
-	}, LLMModel{ID: model, Name: model, DefaultModel: defaultModel, Enabled: true, Scope: scope})
+	return llms.EnsureOpenAIEnvProvider(ctx, store, lookup, providerID, name, scope, requestedModel, defaultModel)
 }
 
 // ensureAnthropicEnvProvider upserts an Anthropic-family provider from a resolved
 // env lookup. It returns the provider id (empty when nothing was configured).
 func ensureAnthropicEnvProvider(ctx context.Context, store *ConfigStore, lookup llmEnvProviderLookup, authHeader, authScheme, providerID, name, scope, requestedModel string, defaultModel bool) (string, error) {
-	anthropicEndpoint := lookup("ANTHROPIC_BASE_URL", "ANTHROPIC_API_ENDPOINT")
-	genericEndpoint := lookup("LLM_API_ENDPOINT")
-	anthropicKey := lookup("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
-	anthropicModel := lookup("ANTHROPIC_MODEL", "CLAUDE_MODEL")
-	genericModel := lookup("LLM_MODEL")
-	useGenericEndpoint := anthropicEndpoint == "" && looksLikeAnthropicMessagesEndpoint(genericEndpoint)
-	if useGenericEndpoint {
-		anthropicEndpoint = genericEndpoint
-	}
-	if genericModel != "" && (useGenericEndpoint || anthropicEndpoint != "" || anthropicKey != "" || anthropicModel != "") {
-		anthropicModel = firstNonEmpty(anthropicModel, genericModel)
-	}
-	if anthropicEndpoint == "" && strings.TrimSpace(anthropicKey) == "" && strings.TrimSpace(anthropicModel) == "" {
-		return "", nil
-	}
-	endpoint := firstNonEmpty(anthropicEndpoint, "https://api.anthropic.com")
-	apiKey := firstNonEmpty(anthropicKey, lookup("LLM_API_KEY"))
-	model := strings.TrimSpace(firstNonEmpty(requestedModel, anthropicModel))
-	if providerID == "" || model == "" {
-		return "", nil
-	}
-	return providerID, store.UpsertDefaultLLMConfig(ctx, LLMProvider{
-		ID:             providerID,
-		Name:           name,
-		ProviderType:   llmProviderFamilyAnthropic,
-		DefaultWireAPI: llmAPIProtocolMessages,
-		BaseURL:        endpoint,
-		APIKey:         apiKey,
-		AuthHeader:     authHeader,
-		AuthScheme:     authScheme,
-		HeadersJSON:    `{"anthropic-version":"2023-06-01"}`,
-		Weight:         10,
-		Enabled:        true,
-		Scope:          scope,
-	}, LLMModel{ID: model, Name: model, DefaultModel: defaultModel, Enabled: true, Scope: scope})
+	return llms.EnsureAnthropicEnvProvider(ctx, store, lookup, authHeader, authScheme, providerID, name, scope, requestedModel, defaultModel)
 }
 
 func ensureDefaultOpenAIEnvProvider(ctx context.Context, config *appconfig.Config, store *ConfigStore, requestedModel string) error {
@@ -530,21 +473,11 @@ func ensureDefaultAnthropicEnvProvider(ctx context.Context, config *appconfig.Co
 	return err
 }
 
-func looksLikeAnthropicMessagesEndpoint(endpoint string) bool {
-	return llms.LooksLikeAnthropicMessagesEndpoint(endpoint)
-}
-
 // anthropicProviderAuthFromLookup chooses the Anthropic auth header from the same
 // env source(s) the provider's API key is resolved from, so a provider never
 // mixes a key from one scope with a header decided by another scope.
 func anthropicProviderAuthFromLookup(lookup llmEnvProviderLookup) (string, string) {
-	if strings.TrimSpace(lookup("ANTHROPIC_API_KEY")) != "" {
-		return "x-api-key", ""
-	}
-	if strings.TrimSpace(lookup("ANTHROPIC_AUTH_TOKEN")) != "" {
-		return "Authorization", "Bearer"
-	}
-	return "x-api-key", ""
+	return llms.AnthropicProviderAuthFromLookup(lookup)
 }
 
 func ensureSessionOpenAIEnvProvider(ctx context.Context, store *ConfigStore, sessionID, requestedModel string, envItems []SessionEnvVar) (string, error) {
