@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -590,31 +589,11 @@ func (s *Service) ListSessions(ctx context.Context, req *connect.Request[agentco
 }
 
 func jupyterTargetReachable(proxyState ProxyState, timeout time.Duration) bool {
-	_, ok := jupyterReachableAddress(proxyState, timeout)
-	return ok
-}
-
-func jupyterReachableAddress(proxyState ProxyState, timeout time.Duration) (string, bool) {
-	if proxyState.HostPort > 0 {
-		hostAddress := net.JoinHostPort("127.0.0.1", strconv.Itoa(proxyState.HostPort))
-		if tcpAddressReachable(hostAddress, timeout) {
-			return hostAddress, true
-		}
-	}
-
 	_, port := driverpkg.JupyterConnectTarget(execution.ToDriverProxyState(proxyState))
 	if port <= 0 {
-		return "", false
+		return false
 	}
-	driverAddress := driverpkg.JupyterConnectAddress(execution.ToDriverProxyState(proxyState))
-	if tcpAddressReachable(driverAddress, timeout) {
-		return driverAddress, true
-	}
-	return "", false
-}
-
-func tcpAddressReachable(address string, timeout time.Duration) bool {
-	conn, err := net.DialTimeout("tcp", address, timeout)
+	conn, err := net.DialTimeout("tcp", driverpkg.JupyterConnectAddress(execution.ToDriverProxyState(proxyState)), timeout)
 	if err != nil {
 		return false
 	}

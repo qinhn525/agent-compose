@@ -636,34 +636,9 @@ func (s *Store) writeJSONFile(path string, value any) error {
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", path, err)
 	}
-
-	dir := filepath.Dir(path)
-	tmpFile, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("create temporary %s: %w", path, err)
-	}
-	tmpPath := tmpFile.Name()
-	removeTmp := true
-	defer func() {
-		if removeTmp {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-	if _, err := tmpFile.Write(append(data, '\n')); err != nil {
-		_ = tmpFile.Close()
-		return fmt.Errorf("write temporary %s: %w", path, err)
-	}
-	if err := tmpFile.Chmod(0o644); err != nil {
-		_ = tmpFile.Close()
-		return fmt.Errorf("chmod temporary %s: %w", path, err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("close temporary %s: %w", path, err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
-	removeTmp = false
 	return nil
 }
 
