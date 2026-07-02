@@ -33,7 +33,7 @@ import (
 	"agent-compose/pkg/fxgo/restful"
 	"agent-compose/pkg/fxgo/utils"
 
-	"agent-compose/pkg/agentcompose"
+	agentcompose "agent-compose/pkg/agentcompose/service"
 	"agent-compose/pkg/auth"
 	"agent-compose/pkg/compose"
 	"agent-compose/pkg/config"
