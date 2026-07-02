@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"agent-compose/pkg/agentcompose/projects"
 	"agent-compose/pkg/compose"
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
@@ -598,18 +599,18 @@ func testProjectServiceManagedSchedulerCompileCoversTriggerKinds(t *testing.T) {
 			{Name: "push", Kind: "event", Event: &compose.EventTriggerSpec{Topic: "git.push"}, Prompt: "review push"},
 		},
 	}
-	triggers, script, err := projectManagedLoaderTriggersAndScript("project-demo", "reviewer", "", scheduler)
+	triggers, script, err := projects.ManagedLoaderTriggersAndScript("project-demo", "reviewer", "", scheduler)
 	if err != nil {
 		t.Fatalf("projectManagedLoaderTriggersAndScript returned error: %v", err)
 	}
 	if len(triggers) != 4 {
 		t.Fatalf("trigger count = %d, want 4: %#v", len(triggers), triggers)
 	}
-	again, againScript, err := projectManagedLoaderTriggersAndScript("project-demo", "reviewer", "", scheduler)
+	again, againScript, err := projects.ManagedLoaderTriggersAndScript("project-demo", "reviewer", "", scheduler)
 	if err != nil {
 		t.Fatalf("repeat compile returned error: %v", err)
 	}
-	if !sameLoaderTriggerSpecs(triggers, again) || script != againScript {
+	if !projects.SameLoaderTriggerSpecs(triggers, again) || script != againScript {
 		t.Fatalf("compiled scheduler is not stable:\n%#v\n%#v\n%s\n%s", triggers, again, script, againScript)
 	}
 	byKind := map[string]LoaderTrigger{}
@@ -645,7 +646,7 @@ func testProjectServiceManagedSchedulerCompileCoversTriggerKinds(t *testing.T) {
 			{Name: "same", Kind: "timeout", Timeout: "2s"},
 		},
 	}
-	if _, _, err := projectManagedLoaderTriggersAndScript("project-demo", "reviewer", "", duplicate); err == nil || !strings.Contains(err.Error(), "duplicate scheduler trigger name") {
+	if _, _, err := projects.ManagedLoaderTriggersAndScript("project-demo", "reviewer", "", duplicate); err == nil || !strings.Contains(err.Error(), "duplicate scheduler trigger name") {
 		t.Fatalf("duplicate trigger name error = %v", err)
 	}
 }

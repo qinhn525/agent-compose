@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"connectrpc.com/connect"
 	"gopkg.in/yaml.v3"
@@ -91,11 +90,11 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 	if issues := s.validateProjectManagedSchedulers(ctx, normalized); len(issues) > 0 {
 		return connect.NewResponse(&agentcomposev2.ApplyProjectResponse{Issues: issues}), nil
 	}
-	agentRecords, err := projectAgentRecordsFromSpec(project.ID, 0, normalized.spec)
+	agentRecords, err := projects.NewAgentRecordsFromSpec(project.ID, 0, normalized.spec)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
 	}
-	agentDefinitions, err := projectManagedAgentDefinitionsFromSpec(project, 0, normalized.spec)
+	agentDefinitions, err := projects.NewAgentDefinitionsFromSpec(project, 0, normalized.spec)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
 	}
@@ -105,9 +104,9 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 	}
 	if req.Msg.GetDryRun() {
 		return connect.NewResponse(&agentcomposev2.ApplyProjectResponse{
-			Project:  projectResponse(project, normalized.specProto, agentRecords, schedulerRecords),
-			Revision: projectRevisionResponse(ProjectRevisionRecord{ProjectID: project.ID, SpecHash: normalized.specHash}, normalized.specProto),
-			Changes:  dryRunProjectChanges(project, agentRecords, agentDefinitions, schedulerRecords, managedLoaders),
+			Project:  api.ProjectToProto(project, normalized.specProto, agentRecords, schedulerRecords),
+			Revision: api.ProjectRevisionToProto(ProjectRevisionRecord{ProjectID: project.ID, SpecHash: normalized.specHash}, normalized.specProto),
+			Changes:  api.DryRunProjectChanges(project, agentRecords, agentDefinitions, schedulerRecords, managedLoaders),
 			Applied:  false,
 		}), nil
 	}
@@ -140,11 +139,11 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: reload project: %w", normalized.spec.Name, err))
 	}
 
-	agentRecords, err = projectAgentRecordsFromSpec(project.ID, revision.Revision, normalized.spec)
+	agentRecords, err = projects.NewAgentRecordsFromSpec(project.ID, revision.Revision, normalized.spec)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
 	}
-	agentDefinitions, err = projectManagedAgentDefinitionsFromSpec(project, revision.Revision, normalized.spec)
+	agentDefinitions, err = projects.NewAgentDefinitionsFromSpec(project, revision.Revision, normalized.spec)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
 	}
@@ -152,7 +151,7 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("apply project %s: %w", normalized.spec.Name, err))
 	}
-	changes := projectApplyChanges(project, existingProject, projectFound, revision, revisionCreated)
+	changes := api.ProjectApplyChanges(project, existingProject, projectFound, revision, revisionCreated)
 	agentsUnchanged := true
 	for _, agent := range agentRecords {
 		existingAgent, found, err := getProjectAgentIfExists(ctx, s.configDB, project.ID, agent.AgentName)
@@ -193,11 +192,11 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: %w; list project schedulers after reconcile failure: %v", normalized.spec.Name, err, listSchedulersErr))
 		}
 		return connect.NewResponse(&agentcomposev2.ApplyProjectResponse{
-			Project:  projectResponse(project, normalized.specProto, agents, schedulers),
-			Revision: projectRevisionResponse(revision, normalized.specProto),
+			Project:  api.ProjectToProto(project, normalized.specProto, agents, schedulers),
+			Revision: api.ProjectRevisionToProto(revision, normalized.specProto),
 			Changes:  changes,
 			Issues: []*agentcomposev2.ProjectValidationIssue{
-				projectValidationIssue("reconcile.schedulers", fmt.Sprintf("apply project %s: %v", normalized.spec.Name, err)),
+				api.ProjectValidationIssue("reconcile.schedulers", fmt.Sprintf("apply project %s: %v", normalized.spec.Name, err)),
 			},
 			Applied:   false,
 			Unchanged: false,
@@ -217,13 +216,13 @@ func (s *Service) ApplyProject(ctx context.Context, req *connect.Request[agentco
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("apply project %s: list project schedulers: %w", normalized.spec.Name, err))
 	}
 	return connect.NewResponse(&agentcomposev2.ApplyProjectResponse{
-		Project:  projectResponse(project, normalized.specProto, agents, schedulers),
-		Revision: projectRevisionResponse(revision, normalized.specProto),
+		Project:  api.ProjectToProto(project, normalized.specProto, agents, schedulers),
+		Revision: api.ProjectRevisionToProto(revision, normalized.specProto),
 		Changes:  changes,
 		Applied:  true,
 		Unchanged: projectFound &&
 			!revisionCreated &&
-			projectRecordUnchanged(existingProject, project) &&
+			projects.ProjectRecordUnchanged(existingProject, project) &&
 			agentsUnchanged,
 	}), nil
 }
@@ -262,7 +261,7 @@ func (s *Service) GetProject(ctx context.Context, req *connect.Request[agentcomp
 		}
 	}
 	return connect.NewResponse(&agentcomposev2.GetProjectResponse{
-		Project: projectResponse(project, spec, agents, schedulers),
+		Project: api.ProjectToProto(project, spec, agents, schedulers),
 	}), nil
 }
 
@@ -285,7 +284,7 @@ func (s *Service) ListProjects(ctx context.Context, req *connect.Request[agentco
 		NextOffset: uint32(result.NextOffset),
 	}
 	for _, project := range result.Projects {
-		resp.Projects = append(resp.Projects, projectSummaryResponse(project, nil, nil))
+		resp.Projects = append(resp.Projects, api.ProjectSummaryToProto(project, nil, nil))
 	}
 	return connect.NewResponse(resp), nil
 }
@@ -320,7 +319,7 @@ func (s *Service) RemoveProject(ctx context.Context, req *connect.Request[agentc
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&agentcomposev2.RemoveProjectResponse{
-		Project: projectResponse(project, nil, agents, schedulers),
+		Project: api.ProjectToProto(project, nil, agents, schedulers),
 		Changes: changes,
 	}), nil
 }
@@ -365,9 +364,9 @@ func (s *Service) resolveProjectRef(ctx context.Context, ref *agentcomposev2.Pro
 
 func normalizeProjectServiceSpec(spec *agentcomposev2.ProjectSpec, source *agentcomposev2.ProjectSource, expectedHash string) (normalizedV2Project, []*agentcomposev2.ProjectValidationIssue, error) {
 	if spec == nil {
-		return normalizedV2Project{}, []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("spec", "project spec is required")}, nil
+		return normalizedV2Project{}, []*agentcomposev2.ProjectValidationIssue{api.ProjectValidationIssue("spec", "project spec is required")}, nil
 	}
-	raw, issues := projectSpecYAMLShape(spec)
+	raw, issues := api.ProjectSpecYAMLShape(spec)
 	if len(issues) > 0 {
 		return normalizedV2Project{}, issues, nil
 	}
@@ -377,15 +376,15 @@ func normalizeProjectServiceSpec(spec *agentcomposev2.ProjectSpec, source *agent
 	}
 	parsed, err := compose.Parse(data)
 	if err != nil {
-		return normalizedV2Project{}, []*agentcomposev2.ProjectValidationIssue{issueFromComposeError(err)}, nil
+		return normalizedV2Project{}, []*agentcomposev2.ProjectValidationIssue{api.IssueFromComposeError(err)}, nil
 	}
-	sourcePath := projectServiceSourcePath(source)
+	sourcePath := api.ProjectServiceSourcePath(source)
 	normalized, err := compose.Normalize(parsed, compose.NormalizeOptions{
 		ComposePath: sourcePath,
 		ProjectDir:  strings.TrimSpace(source.GetProjectDir()),
 	})
 	if err != nil {
-		return normalizedV2Project{}, []*agentcomposev2.ProjectValidationIssue{issueFromComposeError(err)}, nil
+		return normalizedV2Project{}, []*agentcomposev2.ProjectValidationIssue{api.IssueFromComposeError(err)}, nil
 	}
 	hash, err := normalized.Hash()
 	if err != nil {
@@ -399,37 +398,13 @@ func normalizeProjectServiceSpec(spec *agentcomposev2.ProjectSpec, source *agent
 	}
 	expectedHash = strings.TrimSpace(expectedHash)
 	if expectedHash != "" && expectedHash != hash {
-		return result, []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("expected_spec_hash", fmt.Sprintf("expected spec hash %s does not match normalized spec hash %s", expectedHash, hash))}, nil
+		return result, []*agentcomposev2.ProjectValidationIssue{api.ProjectValidationIssue("expected_spec_hash", fmt.Sprintf("expected spec hash %s does not match normalized spec hash %s", expectedHash, hash))}, nil
 	}
 	return result, nil, nil
 }
 
-func projectSpecYAMLShape(spec *agentcomposev2.ProjectSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {
-	return api.ProjectSpecYAMLShape(spec)
-}
-
-func projectServiceSourcePath(source *agentcomposev2.ProjectSource) string {
-	return api.ProjectServiceSourcePath(source)
-}
-
-func issueFromComposeError(err error) *agentcomposev2.ProjectValidationIssue {
-	return api.IssueFromComposeError(err)
-}
-
-func projectValidationIssue(path, message string) *agentcomposev2.ProjectValidationIssue {
-	return api.ProjectValidationIssue(path, message)
-}
-
 func specHashOrEmpty(normalized normalizedV2Project) string {
 	return normalized.specHash
-}
-
-func projectAgentRecordsFromSpec(projectID string, revision int64, spec *compose.NormalizedProjectSpec) ([]ProjectAgentRecord, error) {
-	return projects.NewAgentRecordsFromSpec(projectID, revision, spec)
-}
-
-func projectManagedAgentDefinitionsFromSpec(project ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]AgentDefinition, error) {
-	return projects.NewAgentDefinitionsFromSpec(project, revision, spec)
 }
 
 func (s *Service) projectManagedSchedulersFromSpec(ctx context.Context, project ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]ProjectSchedulerRecord, []Loader, error) {
@@ -437,15 +412,8 @@ func (s *Service) projectManagedSchedulersFromSpec(ctx context.Context, project 
 	if err != nil {
 		return nil, nil, err
 	}
-	return projectManagedSchedulerRecords(builds), projectManagedSchedulerLoaders(builds), nil
-}
-
-func projectManagedSchedulerRecords(builds []projectManagedSchedulerBuild) []ProjectSchedulerRecord {
-	return projects.SchedulerRecords(projectSchedulerBuildsToProjects(builds))
-}
-
-func projectManagedSchedulerLoaders(builds []projectManagedSchedulerBuild) []Loader {
-	return projects.SchedulerLoaders(projectSchedulerBuildsToProjects(builds))
+	projectBuilds := projectSchedulerBuildsToProjects(builds)
+	return projects.SchedulerRecords(projectBuilds), projects.SchedulerLoaders(projectBuilds), nil
 }
 
 func projectManagedSchedulerBuildsFromSpec(project ProjectRecord, revision int64, spec *compose.NormalizedProjectSpec) ([]projectManagedSchedulerBuild, error) {
@@ -510,27 +478,23 @@ func (s *Service) projectManagedSchedulerBuildsFromSpec(ctx context.Context, pro
 	return projectSchedulerBuildsFromProjects(builds), nil
 }
 
-func projectManagedLoaderTriggersAndScript(projectID, agentName, schedulerName string, scheduler *compose.NormalizedSchedulerSpec) ([]LoaderTrigger, string, error) {
-	return projects.ManagedLoaderTriggersAndScript(projectID, agentName, schedulerName, scheduler)
-}
-
 func (s *Service) validateProjectManagedSchedulers(ctx context.Context, normalized normalizedV2Project) []*agentcomposev2.ProjectValidationIssue {
 	project, err := NewProjectRecordFromSpec(normalized.spec, normalized.sourcePath)
 	if err != nil {
-		return []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("spec", err.Error())}
+		return []*agentcomposev2.ProjectValidationIssue{api.ProjectValidationIssue("spec", err.Error())}
 	}
 	builds, err := s.projectManagedSchedulerBuildsFromSpec(ctx, project, 0, normalized.spec)
 	if err != nil {
 		return []*agentcomposev2.ProjectValidationIssue{projectManagedSchedulerBuildIssue(err)}
 	}
-	loaders := projectManagedSchedulerLoaders(builds)
+	loaders := projects.SchedulerLoaders(projectSchedulerBuildsToProjects(builds))
 	for _, loader := range loaders {
 		if _, err := loaderpkg.NormalizeLoader(loader, false); err != nil {
-			return []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("schedulers."+loader.Summary.ManagedAgentName, err.Error())}
+			return []*agentcomposev2.ProjectValidationIssue{api.ProjectValidationIssue("schedulers."+loader.Summary.ManagedAgentName, err.Error())}
 		}
 		for _, trigger := range loader.Triggers {
 			if _, err := loaderpkg.NormalizeLoaderTrigger(loader.Summary.ID, trigger); err != nil {
-				return []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("schedulers."+loader.Summary.ManagedAgentName+".triggers", err.Error())}
+				return []*agentcomposev2.ProjectValidationIssue{api.ProjectValidationIssue("schedulers."+loader.Summary.ManagedAgentName+".triggers", err.Error())}
 			}
 		}
 	}
@@ -567,19 +531,19 @@ func (s *Service) validateInlineSchedulerScript(ctx context.Context, agentName s
 func projectManagedSchedulerBuildIssue(err error) *agentcomposev2.ProjectValidationIssue {
 	var buildErr *projectManagedSchedulerBuildError
 	if errors.As(err, &buildErr) {
-		return projectValidationIssue(buildErr.path, buildErr.message)
+		return api.ProjectValidationIssue(buildErr.path, buildErr.message)
 	}
-	return projectValidationIssue("schedulers", err.Error())
+	return api.ProjectValidationIssue("schedulers", err.Error())
 }
 
 func (s *Service) validateProjectManagedAgentDefinitions(normalized normalizedV2Project) []*agentcomposev2.ProjectValidationIssue {
 	project, err := NewProjectRecordFromSpec(normalized.spec, normalized.sourcePath)
 	if err != nil {
-		return []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("spec", err.Error())}
+		return []*agentcomposev2.ProjectValidationIssue{api.ProjectValidationIssue("spec", err.Error())}
 	}
-	agents, err := projectManagedAgentDefinitionsFromSpec(project, 0, normalized.spec)
+	agents, err := projects.NewAgentDefinitionsFromSpec(project, 0, normalized.spec)
 	if err != nil {
-		return []*agentcomposev2.ProjectValidationIssue{projectValidationIssue("agents", err.Error())}
+		return []*agentcomposev2.ProjectValidationIssue{api.ProjectValidationIssue("agents", err.Error())}
 	}
 	var issues []*agentcomposev2.ProjectValidationIssue
 	defaultDriver := driverpkg.RuntimeDriverDocker
@@ -589,12 +553,12 @@ func (s *Service) validateProjectManagedAgentDefinitions(normalized normalizedV2
 	for _, agent := range agents {
 		path := "agents." + agent.ManagedAgentName
 		if _, err := domain.NormalizeAgentDefinition(agent, true); err != nil {
-			issues = append(issues, projectValidationIssue(path, err.Error()))
+			issues = append(issues, api.ProjectValidationIssue(path, err.Error()))
 			continue
 		}
 		if strings.TrimSpace(agent.Driver) != "" {
 			if _, err := driverpkg.ResolveSessionRuntimeDriver(agent.Driver, defaultDriver); err != nil {
-				issues = append(issues, projectValidationIssue(path+".driver", err.Error()))
+				issues = append(issues, api.ProjectValidationIssue(path+".driver", err.Error()))
 			}
 		}
 	}
@@ -849,10 +813,6 @@ func managedLoaderChangeAction(existing Loader, found bool, current Loader) agen
 	return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
 }
 
-func sameLoaderTriggerSpecs(a, b []LoaderTrigger) bool {
-	return projects.SameLoaderTriggerSpecs(a, b)
-}
-
 func getProjectAgentIfExists(ctx context.Context, store *ConfigStore, projectID, agentName string) (ProjectAgentRecord, bool, error) {
 	agent, err := store.GetProjectAgent(ctx, projectID, agentName)
 	if err == nil {
@@ -875,18 +835,6 @@ func getProjectSchedulerIfExists(ctx context.Context, store *ConfigStore, projec
 	return ProjectSchedulerRecord{}, false, err
 }
 
-func projectApplyChanges(project ProjectRecord, existing ProjectRecord, found bool, revision ProjectRevisionRecord, revisionCreated bool) []*agentcomposev2.ProjectChange {
-	return api.ProjectApplyChanges(project, existing, found, revision, revisionCreated)
-}
-
-func dryRunProjectChanges(project ProjectRecord, agents []ProjectAgentRecord, agentDefinitions []AgentDefinition, schedulers []ProjectSchedulerRecord, loaders []Loader) []*agentcomposev2.ProjectChange {
-	return api.DryRunProjectChanges(project, agents, agentDefinitions, schedulers, loaders)
-}
-
-func projectRecordUnchanged(existing ProjectRecord, current ProjectRecord) bool {
-	return projects.ProjectRecordUnchanged(existing, current)
-}
-
 func agentChangeAction(existing ProjectAgentRecord, found bool, current ProjectAgentRecord) agentcomposev2.ProjectChangeAction {
 	if !found {
 		return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_CREATED
@@ -897,23 +845,7 @@ func agentChangeAction(existing ProjectAgentRecord, found bool, current ProjectA
 	return agentcomposev2.ProjectChangeAction_PROJECT_CHANGE_ACTION_UPDATED
 }
 
-func projectResponse(project ProjectRecord, spec *agentcomposev2.ProjectSpec, agents []ProjectAgentRecord, schedulers []ProjectSchedulerRecord) *agentcomposev2.Project {
-	return api.ProjectToProto(project, spec, agents, schedulers)
-}
-
-func projectSummaryResponse(project ProjectRecord, agents []ProjectAgentRecord, schedulers []ProjectSchedulerRecord) *agentcomposev2.ProjectSummary {
-	return api.ProjectSummaryToProto(project, agents, schedulers)
-}
-
-func projectRevisionResponse(revision ProjectRevisionRecord, spec *agentcomposev2.ProjectSpec) *agentcomposev2.ProjectRevision {
-	return api.ProjectRevisionToProto(revision, spec)
-}
-
 // ProjectSpecResponse converts a normalized compose spec into the v2 ProjectSpec API shape.
 func ProjectSpecResponse(spec *compose.NormalizedProjectSpec) *agentcomposev2.ProjectSpec {
 	return api.ProjectSpecToProto(spec)
-}
-
-func formatProjectTime(value time.Time) string {
-	return api.FormatProjectTime(value)
 }

@@ -51,7 +51,7 @@ func (s *Service) RunAgentStream(ctx context.Context, req *connect.Request[agent
 		EventType: agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_COMPLETED,
 		Run:       api.ProjectRunSummaryToProto(run),
 		RunId:     run.RunID,
-		CreatedAt: formatProjectTime(time.Now().UTC()),
+		CreatedAt: api.FormatProjectTime(time.Now().UTC()),
 	}); sendErr != nil {
 		return connect.NewError(connect.CodeUnknown, sendErr)
 	}
@@ -184,7 +184,7 @@ func projectRunAgentExecutionStream(run ProjectRunRecord, sink *projectRunStream
 				EventType: agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_STARTED,
 				Run:       api.ProjectRunSummaryToProto(run),
 				RunId:     run.RunID,
-				CreatedAt: formatProjectTime(time.Now().UTC()),
+				CreatedAt: api.FormatProjectTime(time.Now().UTC()),
 			})
 		},
 		OnChunk: func(_ string, chunk ExecChunk) error {
@@ -193,7 +193,7 @@ func projectRunAgentExecutionStream(run ProjectRunRecord, sink *projectRunStream
 				RunId:     run.RunID,
 				Chunk:     chunk.Text,
 				IsStderr:  chunk.IsStderr,
-				CreatedAt: formatProjectTime(time.Now().UTC()),
+				CreatedAt: api.FormatProjectTime(time.Now().UTC()),
 			})
 		},
 	}
