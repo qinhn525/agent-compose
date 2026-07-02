@@ -1,8 +1,6 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/execution"
-	driverpkg "agent-compose/pkg/driver"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -42,7 +40,11 @@ func registerProxyRoutes(app *echo.Echo, service *Service) {
 		if err != nil {
 			return echo.NewHTTPError(http.StatusNotFound, err.Error())
 		}
-		target, err := url.Parse("http://" + driverpkg.JupyterConnectAddress(execution.ToDriverProxyState(proxyState)))
+		targetAddress, ok := jupyterReachableAddress(proxyState, 250*time.Millisecond)
+		if !ok {
+			return echo.NewHTTPError(http.StatusBadGateway, "jupyter target is not reachable")
+		}
+		target, err := url.Parse("http://" + targetAddress)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 		}

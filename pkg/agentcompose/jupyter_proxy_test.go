@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -70,28 +71,51 @@ func TestWaitForJupyterProxyUsesGuestHostTarget(t *testing.T) {
 	}
 }
 
-func TestJupyterTargetReachableUsesGuestHostTarget(t *testing.T) {
+func TestJupyterReachableAddressPrefersHostPort(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	}))
 	t.Cleanup(backend.Close)
 
-	reachable := jupyterTargetReachable(ProxyState{
-		GuestHost: "localhost",
-		HostPort:  1,
-		GuestPort: httptestServerPort(t, backend.URL),
-	}, time.Second)
-	if !reachable {
-		t.Fatalf("jupyterTargetReachable returned false for reachable guest target")
-	}
-
-	unreachable := jupyterTargetReachable(ProxyState{
+	address, reachable := jupyterReachableAddress(ProxyState{
 		GuestHost: "localhost",
 		HostPort:  httptestServerPort(t, backend.URL),
 		GuestPort: unusedLocalTCPPort(t),
 	}, time.Second)
-	if unreachable {
-		t.Fatalf("jupyterTargetReachable returned true for unreachable guest target")
+	if !reachable {
+		t.Fatalf("jupyterReachableAddress returned false for reachable host port")
+	}
+	if address != "127.0.0.1:"+strconv.Itoa(httptestServerPort(t, backend.URL)) {
+		t.Fatalf("jupyterReachableAddress = %q, want host port address", address)
+	}
+}
+
+func TestJupyterReachableAddressFallsBackToGuestHostTarget(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	t.Cleanup(backend.Close)
+
+	address, reachable := jupyterReachableAddress(ProxyState{
+		GuestHost: "localhost",
+		HostPort:  unusedLocalTCPPort(t),
+		GuestPort: httptestServerPort(t, backend.URL),
+	}, time.Second)
+	if !reachable {
+		t.Fatalf("jupyterReachableAddress returned false for reachable guest target")
+	}
+	if address != "localhost:"+strconv.Itoa(httptestServerPort(t, backend.URL)) {
+		t.Fatalf("jupyterReachableAddress = %q, want guest target address", address)
+	}
+}
+
+func TestJupyterTargetReachableReturnsFalseWhenNoTargetIsReachable(t *testing.T) {
+	if jupyterTargetReachable(ProxyState{
+		GuestHost: "localhost",
+		HostPort:  unusedLocalTCPPort(t),
+		GuestPort: unusedLocalTCPPort(t),
+	}, time.Second) {
+		t.Fatalf("jupyterTargetReachable returned true for unreachable targets")
 	}
 }
 
