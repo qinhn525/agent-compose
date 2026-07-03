@@ -1560,9 +1560,11 @@ func TestIntegrationCLIImageRemoveAliasesAndJSON(t *testing.T) {
 }
 
 func TestIntegrationCLIImageInspectJSON(t *testing.T) {
+	calls := 0
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		image: imageServiceStub{
 			inspectImage: func(ctx context.Context, req *connect.Request[agentcomposev2.InspectImageRequest]) (*connect.Response[agentcomposev2.InspectImageResponse], error) {
+				calls++
 				if req.Msg.GetImageRef() != "agent:latest" {
 					t.Fatalf("InspectImage image_ref = %q", req.Msg.GetImageRef())
 				}
@@ -1579,16 +1581,34 @@ func TestIntegrationCLIImageInspectJSON(t *testing.T) {
 	})
 	defer server.Close()
 
-	stdout, stderr, _, exitCode := executeCLICommand("image", "inspect", "--host", server.URL, "agent:latest")
+	stdout, stderr, _, exitCode := executeCLICommand("inspect", "--host", server.URL, "image", "agent:latest")
 	if exitCode != 0 || stderr != "" {
-		t.Fatalf("image inspect code/stderr = %d / %q", exitCode, stderr)
+		t.Fatalf("inspect image code/stderr = %d / %q", exitCode, stderr)
 	}
 	var decoded composeImageInspectOutput
 	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
-		t.Fatalf("image inspect JSON decode failed: %v\n%s", err, stdout)
+		t.Fatalf("inspect image JSON decode failed: %v\n%s", err, stdout)
 	}
 	if decoded.Image.ImageRef != "agent:latest" || decoded.Image.Platform != "linux/amd64" || decoded.StoreStatus.Endpoint == "" {
-		t.Fatalf("image inspect JSON = %#v", decoded)
+		t.Fatalf("inspect image JSON = %#v", decoded)
+	}
+
+	legacyOut, legacyErr, _, legacyCode := executeCLICommand("image", "inspect", "--host", server.URL, "agent:latest")
+	if legacyCode != 0 {
+		t.Fatalf("legacy image inspect code = %d; stderr=%q", legacyCode, legacyErr)
+	}
+	if !strings.Contains(legacyErr, "deprecated") || !strings.Contains(legacyErr, "agent-compose inspect image") {
+		t.Fatalf("legacy image inspect stderr = %q", legacyErr)
+	}
+	var legacyDecoded composeImageInspectOutput
+	if err := json.Unmarshal([]byte(legacyOut), &legacyDecoded); err != nil {
+		t.Fatalf("legacy image inspect JSON decode failed: %v\n%s", err, legacyOut)
+	}
+	if legacyDecoded.Image.ImageRef != "agent:latest" || legacyDecoded.StoreStatus.Endpoint == "" {
+		t.Fatalf("legacy image inspect JSON = %#v", legacyDecoded)
+	}
+	if calls != 2 {
+		t.Fatalf("InspectImage calls = %d, want 2", calls)
 	}
 }
 

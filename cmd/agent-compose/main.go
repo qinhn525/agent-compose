@@ -616,14 +616,18 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		Short: "Inspect an image",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Deprecated: use `agent-compose inspect image <image>` instead.
+			if err := writeDeprecatedWarning(cmd.ErrOrStderr(), "agent-compose image inspect", "agent-compose inspect image"); err != nil {
+				return err
+			}
 			return runComposeImageInspectCommand(cmd, options, args[0])
 		},
 	}
 	imageCmd.AddCommand(imageLSCmd, imagePullCmd, imageRemoveCmd, imageInspectCmd)
 
 	inspectCmd := &cobra.Command{
-		Use:   "inspect <project|agent|run|session> [name-or-id]",
-		Short: "Inspect project, agent, run, or session details",
+		Use:   "inspect <project|agent|run|session|image> [name-or-id]",
+		Short: "Inspect project, agent, run, session, or image details",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runComposeInspectCommand(cmd, options, args)
@@ -1093,11 +1097,22 @@ func runComposeImageInspectCommand(cmd *cobra.Command, cli cliOptions, imageRef 
 	return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
 }
 
+func writeDeprecatedWarning(out io.Writer, oldUsage string, newUsage string) error {
+	_, err := fmt.Fprintf(out, "Warning: %s is deprecated and will be removed in a future release; use %s instead.\n", oldUsage, newUsage)
+	return err
+}
+
 func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string) error {
 	kind := strings.ToLower(strings.TrimSpace(args[0]))
 	target := ""
 	if len(args) > 1 {
 		target = strings.TrimSpace(args[1])
+	}
+	if kind == "image" {
+		if target == "" {
+			return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("inspect image requires an image reference")}
+		}
+		return runComposeImageInspectCommand(cmd, cli, target)
 	}
 	_, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
