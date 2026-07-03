@@ -15,7 +15,8 @@
 
 当前 project 解析逻辑：
 
-- `resolveComposePath` 只在未指定 `-f` 时读取当前目录下的 `agent-compose.yml`。
+- `resolveComposePath` 在未指定 `-f` 时读取当前目录下的 `agent-compose.yml` 或 `agent-compose.yaml`。
+- 如果当前目录同时存在 `agent-compose.yml` 和 `agent-compose.yaml`，返回 usage error，要求用户通过 `-f/--file` 显式指定。
 - `loadNormalizedCompose` 使用 `compose.ParseFile` 解析配置，并用 `--project-name` 覆盖配置中的 project name。
 - `runComposeUpCommand` apply project 时会把 `ProjectSource.ComposePath` 设置为配置文件路径，把 `ProjectSource.ProjectDir` 设置为配置文件所在目录。
 
@@ -29,23 +30,49 @@
 | `config` | `agent-compose config [--quiet]` | 解析并输出 normalized config。 |
 | `up` | `agent-compose up` | 调用 v2 `ProjectService.ApplyProject`；无 `-d/--detach`，无前台 attach。 |
 | `down` | `agent-compose down` | 调用 v2 `ProjectService.RemoveProject`。 |
-| `run` | `agent-compose run <agent> [prompt...]` | 调用 v2 `RunService.RunAgentStream`；positional 剩余参数会拼成 prompt；支持 `--prompt`、`--session-id`、`--keep-running`。 |
-| `logs` | `agent-compose logs` | 支持 `--agent`、`--run-id`、`--session-id`、`--follow`。 |
-| `ps` | `agent-compose ps` | 通过 `GetProject` 汇总 project agents、latest run 和 running session；当前不是 sandbox 列表。 |
-| `exec` | `agent-compose exec [flags] <command> [args...]` | 调用 v2 `ExecService.ExecStream`；通过 `--agent`、`--run-id`、`--session-id` 选择目标；支持 `--cwd`。 |
-| `inspect` | `agent-compose inspect <project|agent|run|session> [name-or-id]` | 查看 project、agent、run、session。 |
+| `run` | `agent-compose run <agent> [prompt...]` | 调用 v2 `RunService.RunAgentStream`；支持 `--prompt`、`--trigger`、`--sandbox`、`--session-id` deprecated alias、`--keep-running`、`--rm`；旧 positional prompt 保留并输出 deprecated warning。 |
+| `logs` | `agent-compose logs [agent]` | 支持 `--agent`、`--run-id`、`--sandbox`、`--session-id` deprecated alias、`--follow`。 |
+| `ps` | `agent-compose ps [-a] [--status ...] [--verbose]` | 已转为 sandbox 列表视图，默认展示 running sandbox。 |
+| `stop` | `agent-compose stop <sandbox...>` | 基于 v1 `StopSession` 停止 sandbox。 |
+| `resume` | `agent-compose resume <sandbox...>` | 基于 v1 `ResumeSession` 恢复 sandbox。 |
+| `rm` | `agent-compose rm [--force] <sandbox...>` | 调用 v2 `SandboxService.RemoveSandbox` 删除 sandbox；running sandbox 无 `--force` 会报 `is running`。 |
+| `exec` | `agent-compose exec <sandbox> [command] [args...]` | 调用 v2 `ExecService.ExecStream`；旧 `--agent`、`--run-id`、`--session-id` 目标选择方式保留并输出 deprecated warning；支持 `--cwd`。 |
+| `inspect` | `agent-compose inspect <project|agent|run|sandbox|session|image> [name-or-id]` | 查看 project、agent、run、sandbox/session、image；`inspect session` 保留并输出 deprecated warning。 |
 | `images` | `agent-compose images` | 调用 image list；支持 `--query`、`-a/--all`。 |
-| `pull` | `agent-compose pull <image>` | 调用 image pull；支持 `--platform`。 |
+| `pull` | `agent-compose pull [image]` | 指定 image 时拉取单个镜像；无参数时读取当前 project 下所有 agent image 并去重拉取；支持 `--platform`。 |
 | `rmi` | `agent-compose rmi <image>` | 调用 image remove；支持 `--force`、`--prune-children`。 |
-| `image` | `agent-compose image <subcommand>` | 旧 image 命令树，包含 `ls`、`pull`、`rm`、`inspect`。 |
+| `image` | `agent-compose image <subcommand>` | 旧 image 命令树，包含 `ls`、`pull`、`rm`、`inspect`，全部保留并输出 deprecated warning。 |
 
 现有后端/API 能力：
 
 - v2 `ProjectService` 已有 `ListProjects`、`ApplyProject`、`GetProject`、`RemoveProject`、`WatchProject`。
 - v2 `ListProjectsResponse` 返回 `ProjectSummary` 列表，summary 包含 `project_id`、`name`、`source_path`、`current_revision`、`spec_hash`、`agent_count`、`scheduler_count`、`running_run_count`、`latest_run_id`、`created_at`、`updated_at`、`removed_at`。
-- 当前 `ProjectService.ListProjects` 调用 `ProjectSummaryToProto(project, nil, nil)`，因此 `agent_count` 和 `scheduler_count` 在 list 场景下会是 0；如果 `ls` 要展示真实 agent/scheduler 数量，需要修复该实现或补充查询。
-- v1 `SessionService` 已有 `ResumeSession`、`StopSession`、`GetSession`、`ListSessions`、`WatchSession`，没有删除 session/sandbox 的 RPC。
+- `ProjectService.ListProjects` 已可返回 list 场景下的 agent/scheduler 数量。
+- v1 `SessionService` 已有 `ResumeSession`、`StopSession`、`GetSession`、`ListSessions`、`WatchSession`。
+- v2 `SandboxService.RemoveSandbox` 已新增，用于删除 sandbox；running sandbox 需要 `force=true`。
 - runtime driver 已有 stop 能力；资源统计命令没有现成 CLI 和统一 API。
+
+## 当前完成进度
+
+截至 `feature/cli-optimization` 当前主线，已完成：
+
+- 文档：命令行使用手册和本改进计划。
+- 配置文件发现：支持 `agent-compose.yml` / `agent-compose.yaml`，`-f/--file` 可指向任意路径，并以配置文件所在目录作为 project root。
+- Project 列表：新增 `ls`，支持 `--verbose` 和 `--json`，并修复 list project 的 agent/scheduler 计数。
+- 命名迁移和兼容层：新增 `inspect image`、`inspect sandbox`；旧 `image` 命令树、`inspect session`、`--session-id` 等兼容入口输出 deprecated warning 到 stderr。
+- Sandbox 可观测性：`ps` 已转为 sandbox 视图，支持 `-a/--all`、`--status`、`--verbose`、`--json`。
+- Sandbox 生命周期：新增 `stop`、`resume`、`rm --force`；新增 v2 `SandboxService.RemoveSandbox` 和底层 session 删除能力。
+- 执行目标迁移：`exec <sandbox> [command] [args...]` 已落地；旧 target flags 保留并输出 deprecated warning。
+- Run 增强：新增 `--sandbox`、`--trigger`、`--rm`；旧 `--session-id` 和 positional prompt 保留并输出 deprecated warning。
+- 镜像命令：旧 `image` 命令树已 deprecated；`pull [image]` 支持无参数时拉取当前 project 下所有 agent image。
+
+仍未完成且不建议在小补丁中强行落地：
+
+- `run --command`、`run -d/--detach`、`run -i/--interactive`、`--jupyter`、`--jupyter-expose`：需要明确 v2 Run API、后台运行、交互和 runtime/session 创建参数。
+- `up -d` 与默认前台 attach/Ctrl+C down：需要 project 级日志 attach 和中断处理，不应只增加一个无真实语义的 flag。
+- `logs -n/--tail`、`logs -t/--timestamp`：需要先明确日志来源、服务端过滤还是 CLI 截断，以及 follow 模式的时间戳语义。
+- `push`：需要扩展 v2 ImageService。
+- `stats` / `stats -w`：需要统一 sandbox stats API 和 runtime driver 指标接入，放在最后阶段。
 
 ## 目标命令体系
 
@@ -100,13 +127,13 @@ rmi
 
 以下任务会影响后续多个命令，应优先完成：
 
-| 前置任务 | 原因 | 影响命令 |
-| --- | --- | --- |
-| 配置文件发现统一 | 所有 project 命令都依赖 `resolveComposeProject`；`.yml/.yaml` 和 `-f` 语义必须一致。 | `config`、`up`、`down`、`run`、`ps`、`logs`、`inspect`、`stats`、sandbox 生命周期命令 |
-| CLI 输出模型整理 | 多个命令需要把内部 session/run 转换成对外 sandbox；先定义 shared output struct 可减少重复和破坏性变更。 | `ps`、`run`、`exec`、`logs`、`inspect sandbox`、`stop`、`resume`、`rm`、`stats` |
-| deprecation warning 机制 | 旧 `image`、`--session-id`、`inspect session`、旧 `exec` 目标选择都需要兼容期 warning，且不能污染 `--json` stdout。 | `run`、`exec`、`logs`、`inspect`、`image` |
-| project list 计数字段修复 | `ls` 默认要展示 agent/scheduler 数量；当前 `ListProjects` 传 nil 导致计数为 0。 | `ls` |
-| sandbox 删除 API 设计 | `rm` 和 `run --rm` 都依赖删除能力；当前没有删除 session/sandbox RPC。 | `rm`、`run --rm` |
+| 前置任务 | 状态 | 原因 | 影响命令 |
+| --- | --- | --- | --- |
+| 配置文件发现统一 | 已完成 | 所有 project 命令都依赖 `resolveComposeProject`；`.yml/.yaml` 和 `-f` 语义必须一致。 | `config`、`up`、`down`、`run`、`ps`、`logs`、`inspect`、`stats`、sandbox 生命周期命令 |
+| CLI 输出模型整理 | 主体已完成 | 多个命令需要把内部 session/run 转换成对外 sandbox；先定义 shared output struct 可减少重复和破坏性变更。 | `ps`、`run`、`exec`、`logs`、`inspect sandbox`、`stop`、`resume`、`rm`、`stats` |
+| deprecation warning 机制 | 已完成 | 旧 `image`、`--session-id`、`inspect session`、旧 `exec` 目标选择都需要兼容期 warning，且不能污染 `--json` stdout。 | `run`、`exec`、`logs`、`inspect`、`image` |
+| project list 计数字段修复 | 已完成 | `ls` 默认要展示 agent/scheduler 数量。 | `ls` |
+| sandbox 删除 API 设计 | 已完成 | `rm` 和 `run --rm` 都依赖删除能力。 | `rm`、`run --rm` |
 
 ### 顺序链路
 
@@ -128,31 +155,29 @@ rmi
 
 | 可并行任务 | 前置条件 | 说明 |
 | --- | --- | --- |
-| `ls` CLI | 配置文件发现不阻塞；需修复 list 计数 | 只依赖现有 ProjectService，和 sandbox 命令基本正交。 |
-| `inspect image` | deprecation warning 机制 | 复用现有 `runComposeImageInspectCommand`，与 sandbox 生命周期无关。 |
-| `logs [agent]`、`--tail`、`--timestamp` | 输出/warning 规则 | 可以在 `ps` sandbox 化前完成；`--sandbox` 可后续补。 |
+| `logs --tail`、`--timestamp` | 日志来源和截断/时间戳语义明确 | `logs [agent]` 和 `--sandbox` 已完成；tail/timestamp 暂缓。 |
 | image `push` | ImageService 扩展方案确定 | 与 project/sandbox 命令正交。 |
-| `up -d` flag | `up` 当前行为确认 | 第一阶段只加 flag 和 help，前台 attach 可后续做。 |
+| `up -d`/attach | project 级 attach 和中断语义明确 | 不建议只加 flag，需要真实语义。 |
 
 ### 命令级开发矩阵
 
 | 命令 | 当前状态 | 目标变更 | 后端/API 需求 | 依赖 | 可并行性 |
 | --- | --- | --- | --- | --- | --- |
-| `config` | 已实现 | 支持 `.yaml` 默认发现 | 无 | 配置文件发现 | 前置基础 |
-| `ls` | CLI 未实现，API 已有 | 新增 project 列表命令 | 修复 `ListProjects` 计数字段；确认 services 字段来源 | project list API | 可独立推进 |
+| `config` | 已实现，已支持 `.yml/.yaml` | 保持现状 | 无 | 无 | 已完成 |
+| `ls` | 已实现 | 后续如需展示 services，需要扩展 API/store | services 字段来源未定义 | project list API | 主体已完成 |
 | `up` | 已实现 apply | 新增 `-d`，默认前台 attach，Ctrl+C down | 可能复用 `WatchProject`/logs；无需先改 proto | project logs/stop 语义 | `-d` 可先做，attach 顺序推进 |
 | `down` | 已实现 | 文案和输出对齐 sandbox | 无 | sandbox 输出术语 | 可随输出模型调整 |
-| `run` | 已实现 prompt stream | trigger/command/detach/sandbox/jupyter/rm | 需要扩展 Run API 或定义映射；`--rm` 依赖删除 API | sandbox 删除、run API | 需拆多 PR，不能一次做完 |
-| `ps` | 已实现 agent 视图 | 改为 sandbox 视图 | 可组合 v1 ListSessions + v2 ListRuns；必要时补查询 | sandbox 输出模型 | 依赖 inspect/logs 部分模型 |
-| `stop` | CLI 未实现，API 有 StopSession | 新增 stop sandbox | 可先复用 v1 StopSession | sandbox id 映射 | 可在 rm 前做 |
-| `resume` | CLI 未实现，API 有 ResumeSession | 新增 resume sandbox | 可先复用 v1 ResumeSession | sandbox id 映射 | 可与 stop 同 PR |
-| `rm` | CLI/API 都缺 | 删除 sandbox，running 需 `--force` | 需要新增 v2 sandbox 删除 API 和存储清理 | sandbox 删除 API | 必须在 run --rm 前 |
-| `exec` | 已实现 flag 选择目标 | 新增 `exec <sandbox>`，旧 target flags deprecated | 现有 ExecRequest 支持 session target；CLI 映射即可 | ps sandbox 发现路径 | ps 后推进 |
-| `logs` | 已实现 flags | positional agent、tail、timestamp、sandbox | 可能需要服务端 tail/filter，或 CLI 层截断 | warning/output 规则 | agent/tail 可先做，sandbox 后做 |
-| `inspect` | 已实现 project/agent/run/session；image 在旧树 | 新增 sandbox/image，旧入口 warning | 无新增 API；复用 GetSession/InspectImage | warning 机制 | 可早做 |
+| `run` | 已支持 prompt stream、`--sandbox`、`--trigger`、`--rm` | `--command`、`-d/--detach`、`-i/--interactive`、jupyter 参数 | 需要扩展 Run API 或定义后台/交互/runtime 映射 | run API | 剩余需拆设计 |
+| `ps` | 已实现 sandbox 视图 | 后续按需要补更多 verbose 字段 | 可能需要补查询 | sandbox 输出模型 | 主体已完成 |
+| `stop` | 已实现 | 保持现状 | 复用 v1 StopSession | sandbox id 映射 | 已完成 |
+| `resume` | 已实现 | 保持现状 | 复用 v1 ResumeSession | sandbox id 映射 | 已完成 |
+| `rm` | 已实现 | 保持现状，后续可优化批量部分失败 JSON | 已新增 v2 SandboxService 和 store 删除能力 | sandbox 删除 API | 已完成 |
+| `exec` | 已实现 `exec <sandbox>`，旧 flags deprecated | 后续评估 `--prompt`、`--command`、`-d`、`-i` | 现有 ExecRequest 支持 session target；新输入模式可能需扩展 | ps sandbox 发现路径 | 主体已完成 |
+| `logs` | 已支持 positional agent、`--sandbox`、旧 `--session-id` warning | `--tail`、`--timestamp` | 可能需要服务端 tail/filter，或 CLI 层截断 | 日志语义 | 部分完成 |
+| `inspect` | 已支持 sandbox/image，旧入口 warning | 保持现状 | 无新增 API；复用 GetSession/InspectImage | warning 机制 | 已完成 |
 | `stats` | 缺 CLI/API | running sandbox 当前值和 watch | 新增统一 stats API；driver 接入 | sandbox 输出模型、driver 指标能力 | 最后阶段实现 |
 | `images` | 已实现 | 保留 | 无 | 无 | 无需优先改 |
-| `pull` | 已实现 | 保留 | 无 | 无 | 无需优先改 |
+| `pull` | 已支持 `pull [image]` | 保持现状 | 无 | compose 解析 | 已完成 |
 | `push` | 缺 CLI/API | 新增 push | v2 ImageService 增加 PushImage | image store 能力 | 与 sandbox 正交 |
 | `rmi` | 已实现 | 保留 | 无 | 无 | 无需优先改 |
 
@@ -319,30 +344,32 @@ rmi
 当前差异：
 
 - 当前 `run <agent> [prompt...]` 会把第二个及后续 positional 参数拼成 prompt。
-- 当前 `RunAgentRequest` 有 `Prompt`、`SessionId`、`CleanupPolicy`，没有 trigger/command/detach/jupyter/rm 字段。
+- 当前 `RunAgentRequest` 有 `Prompt`、`SessionId`、`CleanupPolicy`、`TriggerId`，没有 command/detach/jupyter/rm 字段。
 
 实现要点：
 
-- 需要扩展 v2 run API 或定义 trigger/command 到现有 run 模型的映射。
+- `--trigger` 已映射到现有 `RunAgentRequest.TriggerId`。
+- 仍需要扩展 v2 run API 或定义 command 到现有 run 模型的映射。
 - `--detach` 需要非 streaming 或 stream 早返回语义。
-- `--rm` 依赖 sandbox 删除能力。
+- `--rm` 已依赖 v2 `SandboxService.RemoveSandbox` 实现；成功 run 后按 sandbox id 强制删除。
 - `--jupyter`/`--jupyter-expose` 需要 runtime/session 创建参数支持。
 - trigger、prompt、command 必须互斥。
 
 兼容策略：
 
 1. 先新增 `--sandbox` alias，保留 `--session-id` warning。
-2. 新增 `--trigger`/`--command`，不改变旧 positional prompt。
+2. 新增 `--trigger`，不改变旧 positional prompt。
 3. 对旧 positional prompt 输出 warning。
-4. 兼容期后将第二 positional 参数解释为 trigger。
-5. 旧 positional prompt 和 `--session-id` 兼容逻辑旁增加 `Deprecated:` 注释，标明替代用法。
+4. 后续新增 `--command`。
+5. 兼容期后将第二 positional 参数解释为 trigger。
+6. 旧 positional prompt 和 `--session-id` 兼容逻辑旁增加 `Deprecated:` 注释，标明替代用法。
 
 测试点：
 
 - `run reviewer --prompt "..."` 不受影响。
-- `run reviewer trigger-name` 在迁移期 warning，最终作为 trigger。
-- `--trigger`、`--prompt`、`--command` 互斥。
-- `--rm --keep-running` 报 usage error。
+- `run reviewer legacy prompt` 在迁移期 warning，最终 positional 参数将作为 trigger。
+- `--trigger`、`--prompt`、未来 `--command` 互斥。
+- `--rm --keep-running` 成功 run 后仍会强制删除 sandbox。
 
 ### 7. `exec` 目标重构
 
@@ -491,21 +518,17 @@ rmi
 | `agent-compose logs --session-id <id>` | `agent-compose logs --sandbox <sandbox>` | 保留 alias，输出 deprecated warning，代码旁增加 `Deprecated:` 注释。 |
 | `agent-compose inspect session <id>` | `agent-compose inspect sandbox <sandbox>` | 保留 alias，输出 deprecated warning，代码旁增加 `Deprecated:` 注释。 |
 
-## 推荐 PR 顺序
+## 推荐后续 PR 顺序
 
-1. 文档：命令行使用手册和本改进计划。
-2. 配置文件发现：支持 `.yml/.yaml`。
-3. `ls`：基于现有 `ListProjects` 增加 CLI，并修复 list project 的 agent/scheduler count。
-4. `inspect image` 和 `inspect sandbox`，旧入口 warning。
-5. `logs` 增强：positional agent、tail、timestamp、sandbox alias。
-6. `ps` sandbox 视图。
-7. `stop` 和 `resume`：先基于 v1 session API 实现 sandbox 包装。
-8. v2 sandbox 删除 API 与 `rm --force`。
-9. `exec <sandbox>` 目标重构。
-10. `run` 输入模式重构。
-11. `up -d` 与前台 attach/shutdown。
-12. `push` 和旧 `image` 命令树 deprecated warning。
-13. `stats` 统一 API 与 CLI。
+已完成的基础迁移不再重复拆分。后续建议按以下顺序继续：
+
+1. `logs -n/--tail` 与 `logs -t/--timestamp`：先明确 run detail、follow 和未来 project attach 的日志来源，再决定服务端过滤还是 CLI 端截断。
+2. `run --command`：先设计 v2 Run API 或 command 到现有 run 模型的可靠映射，再实现 CLI。
+3. `run -d/--detach`：需要后台 run 语义，不能复用当前同步 `RunAgent` 或 streaming API 伪装。
+4. `run -i/--interactive`、`--jupyter`、`--jupyter-expose`：需要 runtime/session 创建参数支持，建议与 run API 扩展一起设计。
+5. `up -d` 与默认前台 attach/Ctrl+C down：先实现 project 级日志 attach 和中断处理，再开放 flag。
+6. `push`：扩展 v2 ImageService，再新增 CLI。
+7. `stats` 和 `stats -w/--watch`：最后实现统一 stats API、runtime driver 指标接入和 watch UI。
 
 ## 仍需确认
 
