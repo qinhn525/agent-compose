@@ -6,8 +6,8 @@ import (
 
 	"github.com/samber/do/v2"
 
-	"agent-compose/pkg/agentcompose/sessionstore"
 	appconfig "agent-compose/pkg/config"
+	"agent-compose/pkg/storage/sessionstore"
 )
 
 type Store struct {

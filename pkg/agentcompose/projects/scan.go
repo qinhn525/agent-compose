@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"agent-compose/pkg/agentcompose/configstore"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/storage/configstore"
 )
 
 func ScanProject(scan func(dest ...any) error) (domain.ProjectRecord, error) {

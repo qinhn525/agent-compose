@@ -1,11 +1,11 @@
 package agentcompose
 
 import (
-	"agent-compose/pkg/agentcompose/configstore"
 	"agent-compose/pkg/agentcompose/execution"
 	"agent-compose/pkg/agentcompose/loaders"
 	driverpkg "agent-compose/pkg/driver"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/storage/configstore"
 	"context"
 	"strings"
 	"testing"

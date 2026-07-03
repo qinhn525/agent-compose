@@ -8,7 +8,7 @@ import (
 	pathpkg "path"
 	"strings"
 
-	"agent-compose/pkg/agentcompose/configstore"
+	"agent-compose/pkg/storage/configstore"
 )
 
 func ScanProvider(scan func(dest ...any) error) (Provider, error) {

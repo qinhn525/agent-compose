@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"agent-compose/pkg/agentcompose/configstore"
 	"agent-compose/pkg/agentcompose/events"
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/storage/configstore"
 )
 
 func (s *ConfigStore) ensureEventSchema(ctx context.Context) error {
