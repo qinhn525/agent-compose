@@ -516,6 +516,7 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 	}
 	runCmd.Flags().StringVar(&runOptions.Prompt, "prompt", "", "Prompt to send to the agent")
 	runCmd.Flags().StringVar(&runOptions.Trigger, "trigger", "", "Trigger to run for the agent")
+	runCmd.Flags().StringVar(&runOptions.Command, "command", "", "Bash command to execute in the agent sandbox")
 	runCmd.Flags().StringVar(&runOptions.SandboxID, "sandbox", "", "Reuse an existing sandbox")
 	// Deprecated: use --sandbox instead.
 	runCmd.Flags().StringVar(&runOptions.SessionID, "session-id", "", "Reuse an existing session")
@@ -735,6 +736,7 @@ type composeListProjectsOptions struct {
 type composeRunOptions struct {
 	Prompt      string
 	Trigger     string
+	Command     string
 	SessionID   string
 	SandboxID   string
 	KeepRunning bool
@@ -1087,14 +1089,27 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 	agentName := strings.TrimSpace(args[0])
 	prompt := strings.TrimSpace(normalizedOptions.Prompt)
 	triggerID := strings.TrimSpace(normalizedOptions.Trigger)
-	if triggerID != "" && prompt != "" {
-		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run requires only one of --trigger or --prompt")}
+	commandText := strings.TrimSpace(normalizedOptions.Command)
+	if cmd.Flags().Changed("command") && commandText == "" {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run --command requires a non-empty command")}
 	}
-	if triggerID != "" && len(args) > 1 {
-		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run with --trigger does not accept legacy positional prompt arguments")}
+	modeCount := 0
+	for _, value := range []string{prompt, triggerID, commandText} {
+		if value != "" {
+			modeCount++
+		}
 	}
-	if prompt != "" && len(args) > 1 {
-		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run with --prompt does not accept legacy positional prompt arguments")}
+	if modeCount > 1 {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run requires only one of --trigger, --prompt, or --command")}
+	}
+	if (triggerID != "" || prompt != "" || commandText != "") && len(args) > 1 {
+		mode := "--prompt"
+		if triggerID != "" {
+			mode = "--trigger"
+		} else if commandText != "" {
+			mode = "--command"
+		}
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run with %s does not accept legacy positional prompt arguments", mode)}
 	}
 	if prompt == "" && len(args) > 1 {
 		// Deprecated: positional prompt arguments will become the trigger position in a future release.
@@ -1116,11 +1131,12 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 		ProjectId:       projectID,
 		AgentName:       agentName,
 		Prompt:          prompt,
+		Command:         commandText,
 		Source:          agentcomposev2.RunSource_RUN_SOURCE_MANUAL,
 		SessionId:       strings.TrimSpace(normalizedOptions.SessionID),
 		TriggerId:       triggerID,
 		CleanupPolicy:   cleanupPolicy,
-		ClientRequestId: manualRunClientRequestID(normalized.Name, agentName, firstNonEmptyString(prompt, triggerID)),
+		ClientRequestId: manualRunClientRequestID(normalized.Name, agentName, firstNonEmptyString(prompt, triggerID, commandText)),
 	}))
 	if err != nil {
 		return commandExitErrorForConnect(fmt.Errorf("run project %s agent %s: %w", normalized.Name, agentName, err))

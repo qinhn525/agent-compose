@@ -2810,6 +2810,7 @@ type RunAgentRequest struct {
 	TriggerId        string                  `protobuf:"bytes,9,opt,name=trigger_id,json=triggerId,proto3" json:"trigger_id,omitempty"`
 	OutputSchemaJson string                  `protobuf:"bytes,10,opt,name=output_schema_json,json=outputSchemaJson,proto3" json:"output_schema_json,omitempty"`
 	ClientRequestId  string                  `protobuf:"bytes,11,opt,name=client_request_id,json=clientRequestId,proto3" json:"client_request_id,omitempty"`
+	Command          string                  `protobuf:"bytes,12,opt,name=command,proto3" json:"command,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -2917,6 +2918,13 @@ func (x *RunAgentRequest) GetOutputSchemaJson() string {
 func (x *RunAgentRequest) GetClientRequestId() string {
 	if x != nil {
 		return x.ClientRequestId
+	}
+	return ""
+}
+
+func (x *RunAgentRequest) GetCommand() string {
+	if x != nil {
+		return x.Command
 	}
 	return ""
 }
@@ -5605,7 +5613,7 @@ const file_proto_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\x10DockerDriverSpec\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\"2\n" +
 	"\x16MicrosandboxDriverSpec\x12\x18\n" +
-	"\aprofile\x18\x01 \x01(\tR\aprofile\"\xd6\x03\n" +
+	"\aprofile\x18\x01 \x01(\tR\aprofile\"\xf0\x03\n" +
 	"\x0fRunAgentRequest\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x1d\n" +
@@ -5622,7 +5630,8 @@ const file_proto_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"trigger_id\x18\t \x01(\tR\ttriggerId\x12,\n" +
 	"\x12output_schema_json\x18\n" +
 	" \x01(\tR\x10outputSchemaJson\x12*\n" +
-	"\x11client_request_id\x18\v \x01(\tR\x0fclientRequestId\"@\n" +
+	"\x11client_request_id\x18\v \x01(\tR\x0fclientRequestId\x12\x18\n" +
+	"\acommand\x18\f \x01(\tR\acommand\"@\n" +
 	"\x10RunAgentResponse\x12,\n" +
 	"\x03run\x18\x01 \x01(\v2\x1a.agentcompose.v2.RunDetailR\x03run\"\xf9\x01\n" +
 	"\x16RunAgentStreamResponse\x12G\n" +

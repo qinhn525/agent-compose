@@ -352,6 +352,7 @@ message RunAgentRequest {
   string trigger_id = 9;
   string output_schema_json = 10;
   string client_request_id = 11;
+  string command = 12;
 }
 
 message RunAgentResponse {

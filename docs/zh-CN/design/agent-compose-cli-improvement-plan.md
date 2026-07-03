@@ -37,7 +37,7 @@
 | `config` | `agent-compose config [--quiet]` | 解析并输出 normalized config。 |
 | `up` | `agent-compose up` | 调用 v2 `ProjectService.ApplyProject`；当前行为是 apply 后返回，由 daemon 管理 project；无 `-d/--detach`，无前台 attach。 |
 | `down` | `agent-compose down` | 调用 v2 `ProjectService.RemoveProject`。 |
-| `run` | `agent-compose run <agent> [prompt...]` | 调用 v2 `RunService.RunAgentStream`；支持 `--prompt`、`--trigger`、`--sandbox`、`--session-id` deprecated alias、`--keep-running`、`--rm`；旧 positional prompt 保留并输出 deprecated warning。 |
+| `run` | `agent-compose run <agent> [prompt...]` | 调用 v2 `RunService.RunAgentStream`；支持 `--prompt`、`--trigger`、`--command`、`--sandbox`、`--session-id` deprecated alias、`--keep-running`、`--rm`；旧 positional prompt 保留并输出 deprecated warning。 |
 | `logs` | `agent-compose logs [agent]` | 支持 `--agent`、`--run-id`、`--sandbox`、`--session-id` deprecated alias、`--follow`。 |
 | `ps` | `agent-compose ps [-a] [--status ...] [--verbose]` | 已转为 sandbox 列表视图，默认展示 running sandbox。 |
 | `stop` | `agent-compose stop <sandbox...>` | 基于 v1 `StopSession` 停止 sandbox。 |
@@ -70,7 +70,7 @@
 - Sandbox 可观测性：`ps` 已转为 sandbox 视图，支持 `-a/--all`、`--status`、`--verbose`、`--json`。
 - Sandbox 生命周期：新增 `stop`、`resume`、`rm --force`；新增 v2 `SandboxService.RemoveSandbox` 和底层 session 删除能力。
 - 执行目标迁移：`exec <sandbox> [command] [args...]` 已落地；`exec <sandbox> --command "..."` 已支持；旧 target flags 保留并输出 deprecated warning。
-- Run 增强：新增 `--sandbox`、`--trigger`、`--rm`；旧 `--session-id` 和 positional prompt 保留并输出 deprecated warning。
+- Run 增强：新增 `--sandbox`、`--trigger`、`--command`、`--rm`；`--command` 通过 v2 `RunAgentRequest.command` 启动或复用 agent sandbox 后执行 `bash -lc`，并把 stdout/stderr/output、exit code 和 artifacts 归档到该次 run；旧 `--session-id` 和 positional prompt 保留并输出 deprecated warning。
 - 镜像命令：旧 `image` 命令树已 deprecated；`pull [image]` 支持无参数时拉取当前 project 下所有 agent image。
 
 ## Project Service 概念调查
@@ -86,7 +86,7 @@
 
 仍未完成且不建议在小补丁中强行落地：
 
-- `run --command`、`run -d/--detach`、`run -i/--interactive`、`--jupyter`、`--jupyter-expose`：需要明确 v2 Run API、后台运行、交互和 runtime/session 创建参数。
+- `run -d/--detach`、`run -i/--interactive`、`--jupyter`、`--jupyter-expose`：需要明确后台运行、交互和 runtime/session 创建参数。
 - 默认前台 attach/Ctrl+C down：需要 project 级日志 attach 和中断处理；当前 `up` 已是 apply 后返回语义，不再新增 `-d/--detach`。
 - `push`：需要扩展 v2 ImageService。
 - `stats` / `stats -w`：需要统一 sandbox stats API 和 runtime driver 指标接入，放在最后阶段。
@@ -161,7 +161,7 @@ rmi
 3. `inspect sandbox` -> `ps` sandbox 输出模型 -> `exec <sandbox>` 和 `logs --sandbox` 的用户发现路径。
 4. sandbox 删除 API -> `rm --force` -> `run --rm`。
 5. `ps` sandbox 化 -> `stop/resume/rm` 批量操作体验。
-6. `run` 新输入模式 API 支持 -> `run --trigger/--command/--detach` -> positional prompt deprecated warning。
+6. `run` 新输入模式 API 支持 -> `run --trigger/--command` -> positional prompt deprecated warning；`run --detach` 仍需单独设计。
 7. 保持当前 `up` apply 后返回语义 -> 如未来需要前台 attach，单独设计 attach/Ctrl+C project shutdown。
 8. `inspect image` 发布 -> 旧 `image` 命令树 deprecated warning。
 9. sandbox 输出模型稳定 -> stats API -> `stats` CLI。
@@ -184,7 +184,7 @@ rmi
 | `ls` | 已实现 | 后续如需展示 services，需要扩展 API/store | services 字段来源未定义 | project list API | 主体已完成 |
 | `up` | 已实现 apply 后返回 | 保持现状；未来如需前台模式需新增 attach 语义 | 可能复用 `WatchProject`/logs；无需先改 proto | project logs/stop 语义 | attach 需单独设计 |
 | `down` | 已实现 | 文案和输出对齐 sandbox | 无 | sandbox 输出术语 | 可随输出模型调整 |
-| `run` | 已支持 prompt stream、`--sandbox`、`--trigger`、`--rm` | `--command`、`-d/--detach`、`-i/--interactive`、jupyter 参数 | 需要扩展 Run API 或定义后台/交互/runtime 映射 | run API | 剩余需拆设计 |
+| `run` | 已支持 prompt stream、`--sandbox`、`--trigger`、`--command`、`--rm` | `-d/--detach`、`-i/--interactive`、jupyter 参数 | command 模式已扩展 v2 Run API；后台/交互/jupyter 仍需定义映射 | run API | command 已完成，其余需拆设计 |
 | `ps` | 已实现 sandbox 视图 | 后续按需要补更多 verbose 字段 | 可能需要补查询 | sandbox 输出模型 | 主体已完成 |
 | `stop` | 已实现 | 保持现状 | 复用 v1 StopSession | sandbox id 映射 | 已完成 |
 | `resume` | 已实现 | 保持现状 | 复用 v1 ResumeSession | sandbox id 映射 | 已完成 |
@@ -206,7 +206,7 @@ rmi
 2. **命名迁移和兼容层**：deprecation warning、`inspect image`、`inspect sandbox`、`logs [agent]`、`--sandbox` alias。
 3. **sandbox 可观测性**：`ps` sandbox 视图、`logs --tail/--timestamp`、JSON 输出模型稳定。
 4. **sandbox 生命周期**：`stop`、`resume`、删除 API、`rm --force`。
-5. **执行和运行语义**：`exec <sandbox>`、`run --sandbox`、`run --trigger/--command`、`run -d`、`run --rm`。
+5. **执行和运行语义**：`exec <sandbox>`、`run --sandbox`、`run --trigger/--command`、`run --rm` 已完成；`run -d` 单独设计。
 6. **project 前台运行**：如确有需要，单独设计 `up` attach 或新命令的 Ctrl+C shutdown 语义。
 7. **镜像扩展和旧入口兼容**：`push`、旧 `image` 命令树 deprecated warning。
 8. **资源统计**：最后实现 `stats` 和 `stats -w/--watch`。
@@ -357,22 +357,21 @@ rmi
 
 目标：
 
-- `run <agent> <trigger>` 运行配置中的 trigger。
-- `--trigger` 与 positional trigger 等价。
+- `--trigger` 运行配置中的 trigger。
 - `--prompt` 是手动 prompt 的唯一入口。
-- 新增 `--command`。
-- 新增 `-d/--detach`、`-i/--interactive`、`--sandbox`、`--jupyter`、`--jupyter-expose`、`--rm`。
+- `--command` 启动或复用 agent sandbox 后执行 bash command，而不是把 command 当 provider prompt。
+- 新增 `--sandbox`、`--rm`；`-d/--detach`、`-i/--interactive`、`--jupyter`、`--jupyter-expose` 后续单独设计。
 - 旧 `--session-id` 作为 `--sandbox` alias，兼容期后删除。
 
 当前差异：
 
 - 当前 `run <agent> [prompt...]` 会把第二个及后续 positional 参数拼成 prompt。
-- 当前 `RunAgentRequest` 有 `Prompt`、`SessionId`、`CleanupPolicy`、`TriggerId`，没有 command/detach/jupyter/rm 字段。
+- 当前 `RunAgentRequest` 有 `Prompt`、`Command`、`SessionId`、`CleanupPolicy`、`TriggerId`，没有 detach/jupyter 字段。
 
 实现要点：
 
 - `--trigger` 已映射到现有 `RunAgentRequest.TriggerId`。
-- 仍需要扩展 v2 run API 或定义 command 到现有 run 模型的映射。
+- `--command` 已映射到 v2 `RunAgentRequest.Command`；服务端复用 project run session 准备、runtime `ExecStream`、run 持久化和 artifacts/output 字段，统一用 `bash -lc <command>` 执行。
 - `--detach` 需要非 streaming 或 stream 早返回语义。
 - `--rm` 已依赖 v2 `SandboxService.RemoveSandbox` 实现；成功 run 后按 sandbox id 强制删除。
 - `--jupyter`/`--jupyter-expose` 需要 runtime/session 创建参数支持。
@@ -383,7 +382,7 @@ rmi
 1. 先新增 `--sandbox` alias，保留 `--session-id` warning。
 2. 新增 `--trigger`，不改变旧 positional prompt。
 3. 对旧 positional prompt 输出 warning。
-4. 后续新增 `--command`。
+4. 新增 `--command`，并与 `--prompt`、`--trigger`、旧 positional prompt 互斥。
 5. 兼容期后将第二 positional 参数解释为 trigger。
 6. 旧 positional prompt 和 `--session-id` 兼容逻辑旁增加 `Deprecated:` 注释，标明替代用法。
 
@@ -391,7 +390,8 @@ rmi
 
 - `run reviewer --prompt "..."` 不受影响。
 - `run reviewer legacy prompt` 在迁移期 warning，最终 positional 参数将作为 trigger。
-- `--trigger`、`--prompt`、未来 `--command` 互斥。
+- `--trigger`、`--prompt`、`--command` 互斥。
+- `--command` 成功和失败都持久化 run，stream 输出 stdout/stderr，且不调用 provider prompt 执行路径。
 - `--rm --keep-running` 成功 run 后仍会强制删除 sandbox。
 
 ### 7. `exec` 目标重构
@@ -547,16 +547,15 @@ rmi
 已完成的基础迁移不再重复拆分。后续建议按以下顺序继续：
 
 1. 如需支持 provider 原生日志或逐 chunk 时间戳，需要新增独立日志来源/API 设计；当前 `logs` 保持基于 agent-compose run output/artifacts。
-2. `run --command`：先设计 v2 Run API 或 command 到现有 run 模型的可靠映射，再实现 CLI。
-3. `run -d/--detach`：需要后台 run 语义，不能复用当前同步 `RunAgent` 或 streaming API 伪装。
-4. `run -i/--interactive`、`--jupyter`、`--jupyter-expose`：需要 runtime/session 创建参数支持，建议与 run API 扩展一起设计。
-5. 如确需 project 前台模式：先实现 project 级日志 attach 和中断处理，再开放对应命令/参数。
-6. `push`：扩展 v2 ImageService，再新增 CLI。
-7. `stats` 和 `stats -w/--watch`：最后实现统一 stats API、runtime driver 指标接入和 watch UI。
+2. `run -d/--detach`：需要后台 run 语义，不能复用当前同步 `RunAgent` 或 streaming API 伪装。
+3. `run -i/--interactive`、`--jupyter`、`--jupyter-expose`：需要 runtime/session 创建参数支持，建议与 run API 扩展一起设计。
+4. 如确需 project 前台模式：先实现 project 级日志 attach 和中断处理，再开放对应命令/参数。
+5. `push`：扩展 v2 ImageService，再新增 CLI。
+6. `stats` 和 `stats -w/--watch`：最后实现统一 stats API、runtime driver 指标接入和 watch UI。
 
 ## 仍需确认
 
 - sandbox id 是否直接等于当前 session id，还是新增独立 alias。无论内部如何实现，CLI 输出和参数都使用 sandbox。
-- `run --command` 和 `exec <sandbox> --command` 是否都记录为 run，或 exec 单独记录执行历史。
+- `exec <sandbox> --command` 是否需要单独执行历史；当前 `run --command` 已记录为 run。
 - `--jupyter` 和 `--jupyter-expose` 需要扩展哪些 session/runtime 创建参数。
 - `stats` 的统一采集周期、字段命名和 driver 不支持字段的 JSON 表达方式。

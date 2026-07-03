@@ -130,7 +130,6 @@ agent-compose -f /path/to/project/agent-compose.yml down
 为指定 agent 启动一个 sandbox，或在已有 sandbox 中继续运行。
 
 ```bash
-agent-compose run <agent> <trigger>
 agent-compose run <agent> --trigger <trigger>
 agent-compose run <agent> --prompt "..."
 agent-compose run <agent> --command "..."
@@ -141,41 +140,37 @@ agent-compose run <agent> --sandbox <sandbox> --prompt "..."
 
 | 模式 | 用法 | 说明 |
 | --- | --- | --- |
-| trigger | `run <agent> <trigger>` 或 `run <agent> --trigger <trigger>` | 运行配置中定义的 trigger。 |
+| trigger | `run <agent> --trigger <trigger>` | 运行配置中定义的 trigger。 |
 | prompt | `run <agent> --prompt "..."` | 向 agent provider 发送 prompt。 |
-| command | `run <agent> --command "..."` | 在 sandbox 中执行命令。 |
+| command | `run <agent> --command "..."` | 启动或复用该 agent 的 sandbox 后执行 `bash -lc` 命令；命令 stdout/stderr 会实时输出，并写入该次 run 记录。 |
 | sandbox 复用 | `run <agent> --sandbox <sandbox> --prompt "..."` | 在指定 sandbox 中继续运行。 |
+
+兼容说明：
+
+- `run <agent> [prompt...]` 仍会把第二个及后续 positional 参数拼成 prompt，但该入口已废弃，会在 stderr 输出 deprecated warning；新脚本应使用 `--prompt`。
 
 选项：
 
 | 参数 | 说明 |
 | --- | --- |
-| `-d, --detach` | 后台运行，立即返回 sandbox/run 信息。 |
-| `-i, --interactive` | 交互运行。与 trigger 模式互斥。 |
-| `-k, --keep-running` | 运行结束后保留 sandbox runtime。 |
+| `--keep-running` | 运行结束后保留 sandbox runtime。 |
 | `--sandbox <sandbox>` | 指定已有 sandbox。 |
-| `--jupyter [<port>]` | 在 sandbox 内启用 Jupyter。可选端口，未指定时使用默认端口。 |
-| `--jupyter-expose [<addr>:]<port>` | 将 Jupyter 暴露到 daemon host。地址默认 `0.0.0.0`。 |
 | `--rm` | 运行结束后删除 sandbox。 |
 
 示例：
 
 ```bash
-agent-compose run reviewer nightly
 agent-compose run reviewer --trigger pr-opened
 agent-compose run reviewer --prompt "Review the staged changes"
 agent-compose run builder --command "task build"
 agent-compose run tester --command "task test" --keep-running
 agent-compose run reviewer --sandbox sandbox_123 --prompt "Continue the review"
-agent-compose run researcher --prompt "Explore this dataset" -d --jupyter
-agent-compose run researcher --prompt "Explore this dataset" --jupyter 8888 --jupyter-expose 127.0.0.1:18888
 ```
 
 互斥规则：
 
 - trigger、prompt、command 一次只能选择一种。
-- trigger 模式与 `--interactive` 互斥。
-- `--rm` 与 `--keep-running` 不能同时使用。
+- 使用 `--prompt`、`--trigger` 或 `--command` 时，不能再传 legacy positional prompt 参数。
 
 ## `ps`：查看 sandbox
 
