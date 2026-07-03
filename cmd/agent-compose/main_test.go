@@ -1045,6 +1045,56 @@ agents:
 	}
 }
 
+func TestIntegrationCLIRunCommandSendsCommandAndStreamsOutput(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-run-command
+agents:
+  reviewer:
+    provider: codex
+`)
+	var sawRequest bool
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		run: runServiceStub{
+			runAgentStream: func(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
+				sawRequest = true
+				if req.Msg.GetAgentName() != "reviewer" || req.Msg.GetCommand() != "echo command" || req.Msg.GetPrompt() != "" || req.Msg.GetTriggerId() != "" {
+					t.Fatalf("RunAgentStream command request = %#v", req.Msg)
+				}
+				if err := stream.Send(&agentcomposev2.RunAgentStreamResponse{
+					EventType: agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_OUTPUT,
+					RunId:     "run-command",
+					Chunk:     "command stdout\n",
+				}); err != nil {
+					return err
+				}
+				return stream.Send(&agentcomposev2.RunAgentStreamResponse{
+					EventType: agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_COMPLETED,
+					RunId:     "run-command",
+					Run: &agentcomposev2.RunSummary{
+						RunId:     "run-command",
+						ProjectId: req.Msg.GetProjectId(),
+						AgentName: "reviewer",
+						Status:    agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
+						SessionId: "sandbox-command",
+					},
+				})
+			},
+			getRun: func(ctx context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
+				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), "run-command", "reviewer", "sandbox-command", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "command stdout\n")}), nil
+			},
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, _, exitCode := executeCLICommand("run", "--host", server.URL, "--file", composePath, "reviewer", "--command", "echo command")
+	if exitCode != 0 || stderr != "" || stdout != "command stdout\n" {
+		t.Fatalf("run --command code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
+	}
+	if !sawRequest {
+		t.Fatal("RunAgentStream was not called")
+	}
+}
+
 func TestIntegrationCLIRunTrigger(t *testing.T) {
 	composePath := writeComposeFile(t, t.TempDir(), `
 name: cli-run-trigger
@@ -1113,7 +1163,17 @@ agents:
 		{
 			name: "trigger and prompt flags",
 			args: []string{"run", "--host", server.URL, "--file", composePath, "reviewer", "--trigger", "nightly", "--prompt", "check"},
-			want: "only one of --trigger or --prompt",
+			want: "only one of --trigger, --prompt, or --command",
+		},
+		{
+			name: "command and prompt flags",
+			args: []string{"run", "--host", server.URL, "--file", composePath, "reviewer", "--command", "echo hi", "--prompt", "check"},
+			want: "only one of --trigger, --prompt, or --command",
+		},
+		{
+			name: "command and trigger flags",
+			args: []string{"run", "--host", server.URL, "--file", composePath, "reviewer", "--command", "echo hi", "--trigger", "nightly"},
+			want: "only one of --trigger, --prompt, or --command",
 		},
 		{
 			name: "trigger and positional prompt",
@@ -1124,6 +1184,16 @@ agents:
 			name: "prompt flag and positional prompt",
 			args: []string{"run", "--host", server.URL, "--file", composePath, "reviewer", "--prompt", "check", "legacy"},
 			want: "does not accept legacy positional prompt",
+		},
+		{
+			name: "command flag and positional prompt",
+			args: []string{"run", "--host", server.URL, "--file", composePath, "reviewer", "--command", "echo hi", "legacy"},
+			want: "does not accept legacy positional prompt",
+		},
+		{
+			name: "empty command flag",
+			args: []string{"run", "--host", server.URL, "--file", composePath, "reviewer", "--command", " "},
+			want: "requires a non-empty command",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
