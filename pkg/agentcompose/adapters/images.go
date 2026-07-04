@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"connectrpc.com/connect"
+
 	appconfig "agent-compose/pkg/config"
 	"agent-compose/pkg/imagecache"
 	"agent-compose/pkg/images"
@@ -48,21 +50,21 @@ func (b *ImageBackends) BackendForStore(store agentcomposev2.ImageStoreKind) (im
 			return b.Auto, nil
 		}
 		if b == nil || b.Docker == nil {
-			return nil, fmt.Errorf("image backend is required")
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("image backend is required"))
 		}
 		return b.Docker, nil
 	case agentcomposev2.ImageStoreKind_IMAGE_STORE_KIND_DOCKER_DAEMON:
 		if b == nil || b.Docker == nil {
-			return nil, fmt.Errorf("image backend is required")
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("image backend is required"))
 		}
 		return b.Docker, nil
 	case agentcomposev2.ImageStoreKind_IMAGE_STORE_KIND_OCI_CACHE:
 		if b == nil || b.OCI == nil {
-			return nil, fmt.Errorf("OCI image backend is required")
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("OCI image backend is required"))
 		}
 		return b.OCI, nil
 	default:
-		return nil, fmt.Errorf("unsupported image store %s", store.String())
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("unsupported image store %s", store.String()))
 	}
 }
 
