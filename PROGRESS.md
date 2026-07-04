@@ -545,7 +545,7 @@
     - Docker、BoxLite、MicroSandbox 的底层强制终止仍是后续 best-effort cleanup 能力，不暴露为分叉用户语义。
   - 下一目标：7.2。
 
-- [ ] 7.2 接入 CLI `run -d`、日志提示和 daemon restart reconcile
+- [x] 7.2 接入 CLI `run -d`、日志提示和 daemon restart reconcile
 
   依赖：7.1。
 
@@ -572,10 +572,23 @@
   - 后台 run 可被 `logs` 和 `stop`/`StopRun` 操作。
 
   完成总结：
-  - 状态：待完成。
-  - 变更：待记录。
-  - 验证：待记录。
-  - 审计与例外：待记录。
+  - 状态：已完成。
+  - 变更：
+    - CLI `run -d/--detach` 复用现有 `RunAgentRequest` 构造逻辑，调用 v2 `RunService.StartRun`，不再走 `RunAgentStream`，提交后立即返回。
+    - 新增预留 `-i/--interactive` flag；`-d` 与 `-i` 明确互斥，单独使用 `-i` 返回 unsupported，不实现 TTY/PTY/运行中 stdin。
+    - detached 文本输出包含 run id、sandbox/session id、初始 status 和可直接执行的 `agent-compose logs --run-id <run-id> --follow` 提示；提示会保留 `--host`、`--file` 和 `--project-name`。
+    - detached JSON 输出复用 run summary 字段，并新增可省略的 `logs_command` 字段；warnings 保留在 JSON 或文本 stderr。
+    - daemon startup reconcile 的 stale project run error 调整为包含 `daemon interrupted`；已有 pending/running run 会通过 `Coordinator.MarkFailed` 标记 failed。
+    - CLI 手册更新 `run -d` 参数、示例、互斥规则和日志观察方式。
+  - 验证：
+    - `go test ./cmd/agent-compose -run 'TestIntegrationCLIRunDetach|TestCLIRunInputModeUsageErrors|TestCLIRunInteractiveReservedUnsupported'`：通过。
+    - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs`：通过。
+    - `task build`：通过。
+  - 审计与例外：
+    - 本阶段没有新增 durable queue；daemon 重启后，未完成的 pending/running run 按 startup reconcile 标记 failed，错误包含 `daemon interrupted`。
+    - detached `StartRunResponse.Run` 是启动时 summary，session id 可能在后台 session 创建完成前为空；CLI 文本用 `-` 占位，JSON 保持空字符串。
+    - `run -d --command` 的输出观察依赖阶段 4 已实现的 run logs append 与 `FollowRunLogs`，未新增 DB output chunk 表。
+    - `-i/--interactive` 只作为互斥和 unsupported 基线保留，没有实现 TTY、PTY、WebSocket TTY、resize 或 stdin 透传。
   - 下一目标：8.1。
 
 ## 阶段 8：command transcript 基础与 `exec <sandbox>`

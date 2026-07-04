@@ -525,6 +525,8 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 	runCmd.Flags().BoolVar(&runOptions.Remove, "rm", false, "Remove the sandbox after a successful run")
 	runCmd.Flags().BoolVar(&runOptions.Jupyter, "jupyter", false, "Enable Jupyter for this run")
 	runCmd.Flags().BoolVar(&runOptions.JupyterExpose, "jupyter-expose", false, "Mark the Jupyter proxy endpoint for this run as user-accessible")
+	runCmd.Flags().BoolVarP(&runOptions.Detach, "detach", "d", false, "Start the run in the daemon and return immediately")
+	runCmd.Flags().BoolVarP(&runOptions.Interactive, "interactive", "i", false, "Reserved for future interactive runs")
 
 	logsOptions := composeLogsOptions{}
 	logsCmd := &cobra.Command{
@@ -755,6 +757,8 @@ type composeRunOptions struct {
 	Remove        bool
 	Jupyter       bool
 	JupyterExpose bool
+	Detach        bool
+	Interactive   bool
 }
 
 type composeLogsOptions struct {
@@ -1117,6 +1121,12 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 	if err != nil {
 		return err
 	}
+	if normalizedOptions.Detach && normalizedOptions.Interactive {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run -d/--detach cannot be combined with -i/--interactive")}
+	}
+	if normalizedOptions.Interactive {
+		return commandExitError{Code: exitCodeUnsupported, Err: fmt.Errorf("run -i/--interactive is not supported")}
+	}
 	_, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
 		return err
@@ -1171,7 +1181,7 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 			Expose:  normalizedOptions.JupyterExpose,
 		}
 	}
-	stream, err := client.RunAgentStream(cmd.Context(), connect.NewRequest(&agentcomposev2.RunAgentRequest{
+	runReq := &agentcomposev2.RunAgentRequest{
 		ProjectId:       projectID,
 		AgentName:       agentName,
 		Prompt:          prompt,
@@ -1182,7 +1192,11 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 		CleanupPolicy:   cleanupPolicy,
 		ClientRequestId: manualRunClientRequestID(normalized.Name, agentName, firstNonEmptyString(prompt, triggerID, commandText)),
 		Jupyter:         jupyter,
-	}))
+	}
+	if normalizedOptions.Detach {
+		return startDetachedRun(cmd, cli, normalized.Name, client, runReq)
+	}
+	stream, err := client.RunAgentStream(cmd.Context(), connect.NewRequest(runReq))
 	if err != nil {
 		return commandExitErrorForConnect(fmt.Errorf("run project %s agent %s: %w", normalized.Name, agentName, err))
 	}
@@ -1251,6 +1265,32 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 	return nil
 }
 
+func startDetachedRun(cmd *cobra.Command, cli cliOptions, projectName string, client agentcomposev2connect.RunServiceClient, req *agentcomposev2.RunAgentRequest) error {
+	resp, err := client.StartRun(cmd.Context(), connect.NewRequest(&agentcomposev2.StartRunRequest{Run: req}))
+	if err != nil {
+		return commandExitErrorForConnect(fmt.Errorf("start run project %s agent %s: %w", projectName, req.GetAgentName(), err))
+	}
+	run := resp.Msg.GetRun()
+	if run == nil {
+		return fmt.Errorf("start run project %s agent %s: response did not include run summary", projectName, req.GetAgentName())
+	}
+	warnings := appendUniqueStrings(append([]string(nil), resp.Msg.GetWarnings()...), run.GetWarnings()...)
+	logsCommand := detachedRunLogsCommand(cli, run.GetRunId())
+	if cli.JSON {
+		output := composeRunOutputFromSummary(run, projectName, logsCommand)
+		output.Warnings = warnings
+		data, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeCommandOutput(cmd.OutOrStdout(), append(data, '\n'))
+	}
+	if err := writeRunWarnings(cmd.ErrOrStderr(), warnings); err != nil {
+		return err
+	}
+	return writeDetachedRunText(cmd.OutOrStdout(), run, logsCommand)
+}
+
 func runDetailCleanupError(detail *agentcomposev2.RunDetail) string {
 	if detail == nil {
 		return ""
@@ -1263,6 +1303,18 @@ func writeRunWarnings(out io.Writer, warnings []string) error {
 		if _, err := fmt.Fprintf(out, "warning: %s\n", warning); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func writeDetachedRunText(out io.Writer, run *agentcomposev2.RunSummary, logsCommand string) error {
+	if _, err := fmt.Fprintf(out, "Run: %s\nSandbox: %s\nStatus: %s\nLogs: %s\n",
+		firstNonEmptyString(run.GetRunId(), "-"),
+		firstNonEmptyString(run.GetSessionId(), "-"),
+		runStatusText(run.GetStatus()),
+		logsCommand,
+	); err != nil {
+		return err
 	}
 	return nil
 }
@@ -1999,6 +2051,7 @@ type composeRunOutput struct {
 	Driver       string   `json:"driver,omitempty"`
 	ImageRef     string   `json:"image_ref,omitempty"`
 	Warnings     []string `json:"warnings,omitempty"`
+	LogsCommand  string   `json:"logs_command,omitempty"`
 }
 
 type composeLogsOutput struct {
@@ -2869,6 +2922,25 @@ func composeRunOutputFromDetail(run *agentcomposev2.RunDetail) composeRunOutput 
 	return composeRunOutputFromDetailWithOptions(run, composeLogsOptions{TailLines: -1})
 }
 
+func composeRunOutputFromSummary(run *agentcomposev2.RunSummary, projectName, logsCommand string) composeRunOutput {
+	return composeRunOutput{
+		RunID:       run.GetRunId(),
+		ProjectID:   run.GetProjectId(),
+		ProjectName: firstNonEmptyString(run.GetProjectName(), projectName),
+		AgentName:   run.GetAgentName(),
+		Source:      runSourceText(run.GetSource()),
+		Status:      runStatusText(run.GetStatus()),
+		SessionID:   run.GetSessionId(),
+		ExitCode:    run.GetExitCode(),
+		Error:       run.GetError(),
+		StartedAt:   run.GetStartedAt(),
+		CompletedAt: run.GetCompletedAt(),
+		DurationMs:  run.GetDurationMs(),
+		Warnings:    appendUniqueStrings(nil, run.GetWarnings()...),
+		LogsCommand: logsCommand,
+	}
+}
+
 func composeRunOutputFromDetailWithOptions(run *agentcomposev2.RunDetail, options composeLogsOptions) composeRunOutput {
 	summary := run.GetSummary()
 	return composeRunOutput{
@@ -3431,6 +3503,34 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func detachedRunLogsCommand(cli cliOptions, runID string) string {
+	parts := []string{"agent-compose"}
+	if value := strings.TrimSpace(cli.Host); value != "" {
+		parts = append(parts, "--host", value)
+	}
+	if value := strings.TrimSpace(cli.ComposeFile); value != "" {
+		parts = append(parts, "--file", value)
+	}
+	if value := strings.TrimSpace(cli.ProjectName); value != "" {
+		parts = append(parts, "--project-name", value)
+	}
+	parts = append(parts, "logs", "--run-id", strings.TrimSpace(runID), "--follow")
+	for i, part := range parts {
+		parts[i] = shellQuoteCLIArg(part)
+	}
+	return strings.Join(parts, " ")
+}
+
+func shellQuoteCLIArg(value string) string {
+	if value == "" {
+		return "''"
+	}
+	if !strings.ContainsAny(value, " \t\n'\"\\$`!*?[]{}();&|<>#") {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func appendUniqueStrings(values []string, additions ...string) []string {

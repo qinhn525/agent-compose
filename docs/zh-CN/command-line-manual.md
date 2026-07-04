@@ -167,6 +167,8 @@ agent-compose run <agent> --sandbox <sandbox> --prompt "..."
 | `--rm` | 运行结束后删除 sandbox。 |
 | `--jupyter` | 为本次 run 启用 Jupyter；未设置时使用 agent YAML 默认，YAML 未设置时默认关闭。 |
 | `--jupyter-expose` | 标记本次 run 的 Jupyter agent-compose proxy 入口为显式暴露意图；该参数不请求 runtime driver 暴露 host port，并会同时启用 Jupyter。 |
+| `-d, --detach` | 将 run 提交给 daemon 后立即返回；输出 run id、初始状态和 `logs --follow` 查看命令。 |
+| `-i, --interactive` | 预留交互模式参数，当前返回 unsupported。 |
 
 示例：
 
@@ -175,6 +177,7 @@ agent-compose run reviewer --trigger pr-opened
 agent-compose run reviewer --prompt "Review the staged changes"
 agent-compose run builder --command "task build"
 agent-compose run tester --command "task test" --keep-running
+agent-compose run tester --command "task test" -d
 agent-compose run reviewer --sandbox sandbox_123 --prompt "Continue the review"
 agent-compose run reviewer --jupyter --jupyter-expose --prompt "Inspect the notebook state"
 ```
@@ -183,7 +186,8 @@ agent-compose run reviewer --jupyter --jupyter-expose --prompt "Inspect the note
 
 - trigger、prompt、command 一次只能选择一种。
 - 使用 `--prompt`、`--trigger` 或 `--command` 时，不能再传 legacy positional prompt 参数。
-- `run -d/--detach` 和 `run -i/--interactive` 暂未作为稳定 CLI 能力发布。
+- `run -d/--detach` 和 `run -i/--interactive` 互斥；`-i/--interactive` 当前仍未作为稳定 CLI 能力发布。
+- detached run 可通过输出的 `agent-compose logs --run-id <run-id> --follow` 命令观察输出，也可继续使用 `stop`/`logs` 操作该 run。
 
 ## `ps`：查看 sandbox
 

@@ -1156,6 +1156,169 @@ agents:
 	}
 }
 
+func TestIntegrationCLIRunDetachStartsBackgroundRun(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-run-detach
+agents:
+  reviewer:
+    provider: codex
+`)
+	var sawStart bool
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		run: runServiceStub{
+			startRun: func(ctx context.Context, req *connect.Request[agentcomposev2.StartRunRequest]) (*connect.Response[agentcomposev2.StartRunResponse], error) {
+				sawStart = true
+				runReq := req.Msg.GetRun()
+				if runReq.GetAgentName() != "reviewer" || runReq.GetCommand() != "echo detached" || runReq.GetSessionId() != "sandbox-detached" {
+					t.Fatalf("StartRun request = %#v", runReq)
+				}
+				if runReq.GetSource() != agentcomposev2.RunSource_RUN_SOURCE_MANUAL {
+					t.Fatalf("StartRun source = %#v", runReq.GetSource())
+				}
+				return connect.NewResponse(&agentcomposev2.StartRunResponse{
+					Run: &agentcomposev2.RunSummary{
+						RunId:       "run-detached",
+						ProjectId:   runReq.GetProjectId(),
+						ProjectName: "cli-run-detach",
+						AgentName:   "reviewer",
+						Status:      agentcomposev2.RunStatus_RUN_STATUS_PENDING,
+						SessionId:   "sandbox-detached",
+						Source:      agentcomposev2.RunSource_RUN_SOURCE_MANUAL,
+					},
+					Warnings: []string{"detached warning"},
+					Started:  true,
+				}), nil
+			},
+			runAgentStream: func(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
+				t.Fatalf("RunAgentStream should not be called for detached run")
+				return nil
+			},
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, _, exitCode := executeCLICommand("run", "-d", "--host", server.URL, "--file", composePath, "--sandbox", "sandbox-detached", "reviewer", "--command", "echo detached")
+	if exitCode != 0 {
+		t.Fatalf("run -d exit code = %d, stderr=%q", exitCode, stderr)
+	}
+	for _, want := range []string{
+		"Run: run-detached",
+		"Sandbox: sandbox-detached",
+		"Status: pending",
+		"Logs: agent-compose --host " + server.URL + " --file " + composePath + " logs --run-id run-detached --follow",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("run -d stdout %q does not contain %q", stdout, want)
+		}
+	}
+	if !strings.Contains(stderr, "warning: detached warning") {
+		t.Fatalf("run -d stderr = %q", stderr)
+	}
+	if !sawStart {
+		t.Fatal("StartRun was not called")
+	}
+}
+
+func TestIntegrationCLIRunDetachJSON(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-run-detach-json
+agents:
+  reviewer:
+    provider: codex
+`)
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		run: runServiceStub{
+			startRun: func(ctx context.Context, req *connect.Request[agentcomposev2.StartRunRequest]) (*connect.Response[agentcomposev2.StartRunResponse], error) {
+				runReq := req.Msg.GetRun()
+				return connect.NewResponse(&agentcomposev2.StartRunResponse{
+					Run: &agentcomposev2.RunSummary{
+						RunId:       "run-detached-json",
+						ProjectId:   runReq.GetProjectId(),
+						ProjectName: "cli-run-detach-json",
+						AgentName:   "reviewer",
+						Status:      agentcomposev2.RunStatus_RUN_STATUS_RUNNING,
+						SessionId:   "sandbox-json",
+						Source:      agentcomposev2.RunSource_RUN_SOURCE_MANUAL,
+						Warnings:    []string{"summary warning"},
+					},
+					Warnings: []string{"response warning"},
+					Started:  true,
+				}), nil
+			},
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, _, exitCode := executeCLICommand("run", "-d", "--json", "--host", server.URL, "--file", composePath, "reviewer", "--prompt", "inspect")
+	if exitCode != 0 || stderr != "" {
+		t.Fatalf("run -d --json code/stderr = %d / %q", exitCode, stderr)
+	}
+	var decoded composeRunOutput
+	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
+		t.Fatalf("decode run -d JSON: %v\n%s", err, stdout)
+	}
+	if decoded.RunID != "run-detached-json" || decoded.SessionID != "sandbox-json" || decoded.Status != "running" {
+		t.Fatalf("run -d JSON decoded = %#v", decoded)
+	}
+	if !strings.Contains(decoded.LogsCommand, "logs --run-id run-detached-json --follow") || len(decoded.Warnings) != 2 {
+		t.Fatalf("run -d JSON logs/warnings = %#v", decoded)
+	}
+}
+
+func TestIntegrationCLIRunDetachCommandCanBeFollowedByLogs(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-run-detach-logs
+agents:
+  reviewer:
+    provider: codex
+`)
+	var sawCommand bool
+	var sawFollow bool
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		run: runServiceStub{
+			startRun: func(ctx context.Context, req *connect.Request[agentcomposev2.StartRunRequest]) (*connect.Response[agentcomposev2.StartRunResponse], error) {
+				if req.Msg.GetRun().GetCommand() != "printf detached" {
+					t.Fatalf("StartRun command = %#v", req.Msg.GetRun())
+				}
+				sawCommand = true
+				return connect.NewResponse(&agentcomposev2.StartRunResponse{Run: &agentcomposev2.RunSummary{
+					RunId:     "run-detached-logs",
+					ProjectId: req.Msg.GetRun().GetProjectId(),
+					AgentName: "reviewer",
+					Status:    agentcomposev2.RunStatus_RUN_STATUS_RUNNING,
+					SessionId: "sandbox-detached-logs",
+					Source:    agentcomposev2.RunSource_RUN_SOURCE_MANUAL,
+				}, Started: true}), nil
+			},
+			getRun: func(ctx context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
+				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), "run-detached-logs", "reviewer", "sandbox-detached-logs", agentcomposev2.RunStatus_RUN_STATUS_RUNNING, 0, "")}), nil
+			},
+			followRunLogs: func(ctx context.Context, req *connect.Request[agentcomposev2.FollowRunLogsRequest], stream *connect.ServerStream[agentcomposev2.RunLogChunk]) error {
+				sawFollow = true
+				if req.Msg.GetRunId() != "run-detached-logs" {
+					t.Fatalf("FollowRunLogs request = %#v", req.Msg)
+				}
+				return stream.Send(&agentcomposev2.RunLogChunk{
+					Data: "detached output\n",
+				})
+			},
+		},
+	})
+	defer server.Close()
+
+	_, stderr, _, exitCode := executeCLICommand("run", "-d", "--host", server.URL, "--file", composePath, "reviewer", "--command", "printf detached")
+	if exitCode != 0 || stderr != "" {
+		t.Fatalf("run -d --command code/stderr = %d / %q", exitCode, stderr)
+	}
+	logOut, logErr, _, logCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--run-id", "run-detached-logs", "--follow")
+	if logCode != 0 || logErr != "" || logOut != "reviewer | detached output\n" {
+		t.Fatalf("logs --follow code/stdout/stderr = %d / %q / %q", logCode, logOut, logErr)
+	}
+	if !sawCommand || !sawFollow {
+		t.Fatalf("sawCommand=%v sawFollow=%v", sawCommand, sawFollow)
+	}
+}
+
 func TestIntegrationCLIRunSendsJupyterExpose(t *testing.T) {
 	composePath := writeComposeFile(t, t.TempDir(), `
 name: cli-run-jupyter
@@ -1391,6 +1554,11 @@ agents:
 			args: []string{"run", "--host", server.URL, "--file", composePath, "reviewer", "--command", " "},
 			want: "requires a non-empty command",
 		},
+		{
+			name: "detach and interactive flags",
+			args: []string{"run", "--host", server.URL, "--file", composePath, "reviewer", "-d", "-i"},
+			want: "cannot be combined",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stdout, stderr, _, exitCode := executeCLICommand(tc.args...)
@@ -1401,6 +1569,22 @@ agents:
 				t.Fatalf("stdout/stderr = %q / %q, want stderr containing %q", stdout, stderr, tc.want)
 			}
 		})
+	}
+}
+
+func TestCLIRunInteractiveReservedUnsupported(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-run-interactive
+agents:
+  reviewer:
+    provider: codex
+`)
+	stdout, stderr, _, exitCode := executeCLICommand("run", "--file", composePath, "reviewer", "-i")
+	if exitCode != exitCodeUnsupported {
+		t.Fatalf("run -i exit code = %d, want %d; stderr=%q", exitCode, exitCodeUnsupported, stderr)
+	}
+	if stdout != "" || !strings.Contains(stderr, "run -i/--interactive is not supported") {
+		t.Fatalf("run -i stdout/stderr = %q / %q", stdout, stderr)
 	}
 }
 
@@ -3661,12 +3845,20 @@ func testStatsMetric(value float64, unit string) *agentcomposev2.MetricValue {
 }
 
 type runServiceStub struct {
+	startRun       func(context.Context, *connect.Request[agentcomposev2.StartRunRequest]) (*connect.Response[agentcomposev2.StartRunResponse], error)
 	runAgentStream func(context.Context, *connect.Request[agentcomposev2.RunAgentRequest], *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error
 	getRun         func(context.Context, *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error)
 	listRuns       func(context.Context, *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error)
 	followRunLogs  func(context.Context, *connect.Request[agentcomposev2.FollowRunLogsRequest], *connect.ServerStream[agentcomposev2.RunLogChunk]) error
 
 	agentcomposev2connect.UnimplementedRunServiceHandler
+}
+
+func (s runServiceStub) StartRun(ctx context.Context, req *connect.Request[agentcomposev2.StartRunRequest]) (*connect.Response[agentcomposev2.StartRunResponse], error) {
+	if s.startRun == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("StartRun stub is not configured"))
+	}
+	return s.startRun(ctx, req)
 }
 
 func (s runServiceStub) RunAgentStream(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
@@ -3866,7 +4058,7 @@ func newComposeServiceStubServer(t *testing.T, stubs composeServiceStubs) *httpt
 		path, handler := agentcomposev2connect.NewProjectServiceHandler(stubs.project)
 		mux.Handle(path, handler)
 	}
-	if stubs.run.runAgentStream != nil || stubs.run.getRun != nil || stubs.run.listRuns != nil {
+	if stubs.run.startRun != nil || stubs.run.runAgentStream != nil || stubs.run.getRun != nil || stubs.run.listRuns != nil || stubs.run.followRunLogs != nil {
 		path, handler := agentcomposev2connect.NewRunServiceHandler(stubs.run)
 		mux.Handle(path, handler)
 	}
