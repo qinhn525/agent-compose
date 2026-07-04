@@ -88,7 +88,11 @@ func TestRunsCoordinatorAndHelperWorkflows(t *testing.T) {
 	if transition.ExitCode == 0 || !strings.Contains(transition.Error, "boom") {
 		t.Fatalf("transition from exec error = %#v", transition)
 	}
-	if !CleanupPolicyStopsSession(agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_STOP_ON_COMPLETION) || CleanupPolicyStopsSession(agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING) {
+	if !CleanupPolicyStopsSession(agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_STOP_ON_COMPLETION) ||
+		!CleanupPolicyStopsSession(agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_REMOVE_ON_COMPLETION) ||
+		CleanupPolicyStopsSession(agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING) ||
+		!CleanupPolicyRemovesSession(agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_REMOVE_ON_COMPLETION) ||
+		CleanupPolicyRemovesSession(agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_STOP_ON_COMPLETION) {
 		t.Fatalf("cleanup policy mapping failed")
 	}
 }
@@ -354,6 +358,214 @@ func TestE2ERunsControllerRunProjectAgentCommandWorkflow(t *testing.T) {
 	TestRunsControllerRunProjectAgentCommandWorkflow(t)
 }
 
+type controllerRunFixture struct {
+	ctx        context.Context
+	config     *appconfig.Config
+	store      *sessionstore.Store
+	configDB   *fakeControllerStore
+	driver     *fakeControllerDriver
+	executor   *fakeControllerExecutor
+	dashboard  *fakeControllerDashboard
+	controller *Controller
+}
+
+func newControllerRunFixture(t *testing.T) *controllerRunFixture {
+	t.Helper()
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:      root,
+		SessionRoot:   filepath.Join(root, "sessions"),
+		RuntimeDriver: "boxlite",
+		DefaultImage:  "guest:latest",
+	}
+	store, err := sessionstore.NewWithConfig(config)
+	if err != nil {
+		t.Fatalf("NewWithConfig returned error: %v", err)
+	}
+	configDB := &fakeControllerStore{
+		project: domain.ProjectRecord{ID: "project-1", Name: "Project", CurrentRevision: 1},
+		projectAgent: domain.ProjectAgentRecord{
+			ProjectID: "project-1", AgentName: "worker", ManagedAgentID: "agent-1", Driver: "boxlite", Image: "guest:latest",
+		},
+		managed: ManagedAgentDefinition{
+			ID: "agent-1", Enabled: true, Driver: "boxlite", GuestImage: "guest:latest", ManagedProjectID: "project-1", ManagedAgentName: "worker",
+		},
+		revision: domain.ProjectRevisionRecord{ProjectID: "project-1", Revision: 1, SpecJSON: `{"agents":[{"name":"worker"}]}`},
+		agent:    domain.AgentDefinition{ID: "agent-1", Provider: "codex"},
+		runs:     map[string]domain.ProjectRunRecord{},
+	}
+	driver := &fakeControllerDriver{store: store}
+	executor := &fakeControllerExecutor{}
+	dashboard := &fakeControllerDashboard{}
+	controller := NewController(ControllerDependencies{
+		Config:    config,
+		Store:     store,
+		ConfigDB:  configDB,
+		Driver:    driver,
+		Executor:  executor,
+		Images:    fakeControllerImages{},
+		Dashboard: dashboard,
+	})
+	return &controllerRunFixture{
+		ctx:        ctx,
+		config:     config,
+		store:      store,
+		configDB:   configDB,
+		driver:     driver,
+		executor:   executor,
+		dashboard:  dashboard,
+		controller: controller,
+	}
+}
+
+func runAgentWithRemoveOnCompletion(t *testing.T, fixture *controllerRunFixture, extra func(*RunAgentRequest)) (domain.ProjectRunRecord, error, error) {
+	t.Helper()
+	req := RunAgentRequest{
+		ProjectID:       "project-1",
+		AgentName:       "worker",
+		Prompt:          "do work",
+		Source:          domain.ProjectRunSourceAPI,
+		ClientRequestID: uuidForTest(t.Name()),
+		CleanupPolicy:   agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_REMOVE_ON_COMPLETION,
+	}
+	if extra != nil {
+		extra(&req)
+	}
+	return fixture.controller.RunProjectAgent(fixture.ctx, req, nil)
+}
+
+func uuidForTest(name string) string {
+	return strings.NewReplacer("/", "-", " ", "-").Replace(name)
+}
+
+func TestRunsControllerRunProjectAgentRemoveOnCompletionCleanup(t *testing.T) {
+	t.Run("success removes created session", func(t *testing.T) {
+		fixture := newControllerRunFixture(t)
+		run, execErr, err := runAgentWithRemoveOnCompletion(t, fixture, nil)
+		if err != nil || execErr != nil {
+			t.Fatalf("RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, run)
+		}
+		if run.Status != domain.ProjectRunStatusSucceeded || run.SessionID == "" || run.CleanupError != "" {
+			t.Fatalf("run = %#v", run)
+		}
+		if _, statErr := os.Stat(fixture.store.SessionDir(run.SessionID)); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("created session dir still exists or stat error mismatch: %v", statErr)
+		}
+		if !fixture.driver.stopped || !containsString(fixture.dashboard.reasons, "session_removed") {
+			t.Fatalf("driver=%#v dashboard=%#v", fixture.driver, fixture.dashboard.reasons)
+		}
+	})
+
+	t.Run("agent failure removes created session and preserves original error", func(t *testing.T) {
+		fixture := newControllerRunFixture(t)
+		fixture.executor.execErr = errors.New("agent failed")
+		fixture.executor.cell = domain.NotebookCell{ID: "cell-1", Type: execution.CellTypeAgent, Output: "failed", Success: false, ExitCode: 7, Stderr: "agent failed"}
+		run, execErr, err := runAgentWithRemoveOnCompletion(t, fixture, nil)
+		if err != nil || execErr == nil || !strings.Contains(execErr.Error(), "agent failed") {
+			t.Fatalf("RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, run)
+		}
+		if run.Status != domain.ProjectRunStatusFailed || run.CleanupError != "" {
+			t.Fatalf("run = %#v", run)
+		}
+		if _, statErr := os.Stat(fixture.store.SessionDir(run.SessionID)); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("created session dir still exists or stat error mismatch: %v", statErr)
+		}
+	})
+
+	t.Run("context cancel marks canceled and removes created session", func(t *testing.T) {
+		fixture := newControllerRunFixture(t)
+		fixture.executor.execErr = context.Canceled
+		fixture.executor.cell = domain.NotebookCell{ID: "cell-1", Type: execution.CellTypeAgent, Output: "canceled", Success: false, ExitCode: 1, Stderr: "canceled"}
+		run, execErr, err := runAgentWithRemoveOnCompletion(t, fixture, nil)
+		if err != nil || !errors.Is(execErr, context.Canceled) {
+			t.Fatalf("RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, run)
+		}
+		if run.Status != domain.ProjectRunStatusCanceled || run.CleanupError != "" {
+			t.Fatalf("run = %#v", run)
+		}
+		if _, statErr := os.Stat(fixture.store.SessionDir(run.SessionID)); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("created session dir still exists or stat error mismatch: %v", statErr)
+		}
+	})
+
+	t.Run("existing session is stopped but not removed", func(t *testing.T) {
+		fixture := newControllerRunFixture(t)
+		session, err := fixture.store.CreateSession(fixture.ctx, "existing", "", "boxlite", "guest:latest", "", domain.SessionTypeManual, nil, nil, nil)
+		if err != nil {
+			t.Fatalf("CreateSession returned error: %v", err)
+		}
+		run, execErr, err := runAgentWithRemoveOnCompletion(t, fixture, func(req *RunAgentRequest) {
+			req.SessionID = session.Summary.ID
+		})
+		if err != nil || execErr != nil {
+			t.Fatalf("RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, run)
+		}
+		loaded, err := fixture.store.GetSession(fixture.ctx, session.Summary.ID)
+		if err != nil {
+			t.Fatalf("existing session was removed: %v", err)
+		}
+		if run.SessionID != session.Summary.ID || loaded.Summary.VMStatus != domain.VMStatusStopped {
+			t.Fatalf("run=%#v loaded session=%#v", run, loaded.Summary)
+		}
+	})
+}
+
+func TestRunsControllerRunProjectAgentCleanupErrorRecording(t *testing.T) {
+	t.Run("successful run reports cleanup error", func(t *testing.T) {
+		fixture := newControllerRunFixture(t)
+		fixture.driver.stopErr = errors.New("stop failed")
+		run, execErr, err := runAgentWithRemoveOnCompletion(t, fixture, nil)
+		if err != nil || execErr != nil {
+			t.Fatalf("RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, run)
+		}
+		if run.Status != domain.ProjectRunStatusSucceeded || !strings.Contains(run.CleanupError, "stop failed") {
+			t.Fatalf("run = %#v", run)
+		}
+		if _, statErr := os.Stat(fixture.store.SessionDir(run.SessionID)); statErr != nil {
+			t.Fatalf("session dir should remain when cleanup fails: %v", statErr)
+		}
+	})
+
+	t.Run("failed run keeps original error and records cleanup error", func(t *testing.T) {
+		fixture := newControllerRunFixture(t)
+		fixture.driver.stopErr = errors.New("stop failed")
+		fixture.executor.execErr = errors.New("agent failed")
+		fixture.executor.cell = domain.NotebookCell{ID: "cell-1", Type: execution.CellTypeAgent, Output: "failed", Success: false, ExitCode: 7, Stderr: "agent failed"}
+		run, execErr, err := runAgentWithRemoveOnCompletion(t, fixture, nil)
+		if err != nil || execErr == nil || !strings.Contains(execErr.Error(), "agent failed") {
+			t.Fatalf("RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, run)
+		}
+		if run.Status != domain.ProjectRunStatusFailed || !strings.Contains(run.Error, "agent failed") || !strings.Contains(run.CleanupError, "stop failed") {
+			t.Fatalf("run = %#v", run)
+		}
+	})
+
+	t.Run("session start failure cleans created session", func(t *testing.T) {
+		fixture := newControllerRunFixture(t)
+		fixture.driver.startErr = errors.New("start failed")
+		run, execErr, err := runAgentWithRemoveOnCompletion(t, fixture, nil)
+		if err != nil || execErr == nil || !strings.Contains(execErr.Error(), "start failed") {
+			t.Fatalf("RunProjectAgent err=%v execErr=%v run=%#v", err, execErr, run)
+		}
+		if run.Status != domain.ProjectRunStatusFailed || run.SessionID == "" || run.CleanupError != "" {
+			t.Fatalf("run = %#v", run)
+		}
+		if _, statErr := os.Stat(fixture.store.SessionDir(run.SessionID)); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("created session dir still exists or stat error mismatch: %v", statErr)
+		}
+	})
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 type fakeRunStore struct {
 	project      domain.ProjectRecord
 	projectAgent domain.ProjectAgentRecord
@@ -500,13 +712,18 @@ func (s *fakeControllerStore) GetWorkspaceConfig(context.Context, string) (domai
 }
 
 type fakeControllerDriver struct {
-	started bool
-	stopped bool
-	store   *sessionstore.Store
+	started  bool
+	stopped  bool
+	startErr error
+	stopErr  error
+	store    *sessionstore.Store
 }
 
 func (d *fakeControllerDriver) StartSessionVM(_ context.Context, session *domain.Session) error {
 	d.started = true
+	if d.startErr != nil {
+		return d.startErr
+	}
 	if d.store != nil {
 		return d.store.SaveVMState(session.Summary.ID, domain.VMState{Driver: session.Summary.Driver, BoxID: "box-1"})
 	}
@@ -515,11 +732,16 @@ func (d *fakeControllerDriver) StartSessionVM(_ context.Context, session *domain
 
 func (d *fakeControllerDriver) StopSessionVM(context.Context, *domain.Session) error {
 	d.stopped = true
+	if d.stopErr != nil {
+		return d.stopErr
+	}
 	return nil
 }
 
 type fakeControllerExecutor struct {
 	request execution.ExecuteAgentRequest
+	cell    domain.NotebookCell
+	execErr error
 }
 
 func (e *fakeControllerExecutor) ExecuteAgentRequest(_ context.Context, _ *domain.Session, req execution.ExecuteAgentRequest) (domain.NotebookCell, domain.SessionEvent, domain.SessionEvent, error) {
@@ -534,10 +756,14 @@ func (e *fakeControllerExecutor) ExecuteAgentRequest(_ context.Context, _ *domai
 			return domain.NotebookCell{}, domain.SessionEvent{}, domain.SessionEvent{}, err
 		}
 	}
-	return domain.NotebookCell{ID: "cell-1", Type: execution.CellTypeAgent, Output: "done", Success: true, ExitCode: 0},
+	cell := e.cell
+	if strings.TrimSpace(cell.ID) == "" {
+		cell = domain.NotebookCell{ID: "cell-1", Type: execution.CellTypeAgent, Output: "done", Success: true, ExitCode: 0}
+	}
+	return cell,
 		domain.SessionEvent{ID: "user", Type: "user", Message: req.Message},
 		domain.SessionEvent{ID: "assistant", Type: "assistant", Message: "done"},
-		nil
+		e.execErr
 }
 
 type fakeControllerRuntime struct {

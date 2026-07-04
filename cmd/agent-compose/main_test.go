@@ -1326,15 +1326,10 @@ agents:
   reviewer:
     provider: codex
 `)
-	type removedRequest struct {
-		sandbox string
-		force   bool
-	}
-	var removed []removedRequest
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		run: runServiceStub{
 			runAgentStream: func(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
-				if req.Msg.GetCleanupPolicy() != agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_STOP_ON_COMPLETION {
+				if req.Msg.GetCleanupPolicy() != agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_REMOVE_ON_COMPLETION {
 					t.Fatalf("RunAgentStream cleanup policy = %#v", req.Msg.GetCleanupPolicy())
 				}
 				if err := stream.Send(&agentcomposev2.RunAgentStreamResponse{
@@ -1360,15 +1355,6 @@ agents:
 				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), "run-rm", "reviewer", "sandbox-rm", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "done\n")}), nil
 			},
 		},
-		sandbox: sandboxServiceStub{
-			removeSandbox: func(ctx context.Context, req *connect.Request[agentcomposev2.RemoveSandboxRequest]) (*connect.Response[agentcomposev2.RemoveSandboxResponse], error) {
-				removed = append(removed, removedRequest{sandbox: req.Msg.GetSandboxId(), force: req.Msg.GetForce()})
-				return connect.NewResponse(&agentcomposev2.RemoveSandboxResponse{
-					SandboxId: req.Msg.GetSandboxId(),
-					Removed:   true,
-				}), nil
-			},
-		},
 	})
 	defer server.Close()
 
@@ -1376,25 +1362,24 @@ agents:
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("run --rm code/stderr = %d / %q", exitCode, stderr)
 	}
-	if stdout != "done\nremoved sandbox sandbox-rm\n" {
+	if stdout != "done\n" {
 		t.Fatalf("run --rm stdout = %q", stdout)
-	}
-	if len(removed) != 1 || removed[0].sandbox != "sandbox-rm" || !removed[0].force {
-		t.Fatalf("removed requests = %#v", removed)
 	}
 }
 
-func TestIntegrationCLIRunRemoveSandboxUsesDetailSandbox(t *testing.T) {
+func TestIntegrationCLIRunRemoveSandboxJSONDoesNotPrintCleanupText(t *testing.T) {
 	composePath := writeComposeFile(t, t.TempDir(), `
 name: cli-run-rm-detail
 agents:
   reviewer:
     provider: codex
 `)
-	var removed []string
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		run: runServiceStub{
 			runAgentStream: func(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
+				if req.Msg.GetCleanupPolicy() != agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_REMOVE_ON_COMPLETION {
+					t.Fatalf("RunAgentStream cleanup policy = %#v", req.Msg.GetCleanupPolicy())
+				}
 				return stream.Send(&agentcomposev2.RunAgentStreamResponse{
 					EventType: agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_COMPLETED,
 					RunId:     "run-rm-detail",
@@ -1410,12 +1395,6 @@ agents:
 				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), "run-rm-detail", "reviewer", "sandbox-from-detail", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "")}), nil
 			},
 		},
-		sandbox: sandboxServiceStub{
-			removeSandbox: func(ctx context.Context, req *connect.Request[agentcomposev2.RemoveSandboxRequest]) (*connect.Response[agentcomposev2.RemoveSandboxResponse], error) {
-				removed = append(removed, req.Msg.GetSandboxId())
-				return connect.NewResponse(&agentcomposev2.RemoveSandboxResponse{SandboxId: req.Msg.GetSandboxId(), Removed: true}), nil
-			},
-		},
 	})
 	defer server.Close()
 
@@ -1425,9 +1404,6 @@ agents:
 	}
 	if strings.Contains(stdout, "removed sandbox") {
 		t.Fatalf("run --rm --json stdout contains text cleanup output: %q", stdout)
-	}
-	if len(removed) != 1 || removed[0] != "sandbox-from-detail" {
-		t.Fatalf("removed sandboxes = %#v", removed)
 	}
 }
 
@@ -1489,10 +1465,12 @@ agents:
   reviewer:
     provider: codex
 `)
-	var removeCalled bool
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		run: runServiceStub{
 			runAgentStream: func(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
+				if req.Msg.GetCleanupPolicy() != agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_REMOVE_ON_COMPLETION {
+					t.Fatalf("RunAgentStream cleanup policy = %#v", req.Msg.GetCleanupPolicy())
+				}
 				return stream.Send(&agentcomposev2.RunAgentStreamResponse{
 					EventType: agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_COMPLETED,
 					RunId:     "run-rm-failed",
@@ -1511,12 +1489,6 @@ agents:
 				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), "run-rm-failed", "reviewer", "sandbox-failed", agentcomposev2.RunStatus_RUN_STATUS_FAILED, 9, "")}), nil
 			},
 		},
-		sandbox: sandboxServiceStub{
-			removeSandbox: func(ctx context.Context, req *connect.Request[agentcomposev2.RemoveSandboxRequest]) (*connect.Response[agentcomposev2.RemoveSandboxResponse], error) {
-				removeCalled = true
-				return connect.NewResponse(&agentcomposev2.RemoveSandboxResponse{}), nil
-			},
-		},
 	})
 	defer server.Close()
 
@@ -1526,9 +1498,6 @@ agents:
 	}
 	if stdout != "" || !strings.Contains(stderr, "failed before cleanup") {
 		t.Fatalf("run --rm failed stdout/stderr = %q / %q", stdout, stderr)
-	}
-	if removeCalled {
-		t.Fatal("RemoveSandbox was called for a failed run")
 	}
 }
 
@@ -1542,6 +1511,9 @@ agents:
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		run: runServiceStub{
 			runAgentStream: func(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
+				if req.Msg.GetCleanupPolicy() != agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_REMOVE_ON_COMPLETION {
+					t.Fatalf("RunAgentStream cleanup policy = %#v", req.Msg.GetCleanupPolicy())
+				}
 				return stream.Send(&agentcomposev2.RunAgentStreamResponse{
 					EventType: agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_COMPLETED,
 					RunId:     "run-rm-error",
@@ -1555,12 +1527,9 @@ agents:
 				})
 			},
 			getRun: func(ctx context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
-				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), "run-rm-error", "reviewer", "sandbox-rm-error", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "")}), nil
-			},
-		},
-		sandbox: sandboxServiceStub{
-			removeSandbox: func(ctx context.Context, req *connect.Request[agentcomposev2.RemoveSandboxRequest]) (*connect.Response[agentcomposev2.RemoveSandboxResponse], error) {
-				return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("remove failed"))
+				run := testRunDetail(req.Msg.GetProjectId(), "run-rm-error", "reviewer", "sandbox-rm-error", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "")
+				run.CleanupError = "remove failed"
+				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: run}), nil
 			},
 		},
 	})
@@ -1570,7 +1539,7 @@ agents:
 	if exitCode == 0 {
 		t.Fatalf("run --rm cleanup error exit code = %d, want non-zero", exitCode)
 	}
-	if stdout != "" || !strings.Contains(stderr, "remove sandbox sandbox-rm-error after run run-rm-error") || !strings.Contains(stderr, "remove failed") {
+	if stdout != "" || !strings.Contains(stderr, "succeeded but sandbox cleanup failed") || !strings.Contains(stderr, "remove failed") {
 		t.Fatalf("run --rm cleanup error stdout/stderr = %q / %q", stdout, stderr)
 	}
 }

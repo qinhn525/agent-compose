@@ -179,6 +179,7 @@ func (c *Controller) RunProjectAgent(ctx context.Context, req RunAgentRequest, s
 		if markErr != nil {
 			return domain.ProjectRunRecord{}, nil, markErr
 		}
+		run = c.cleanupProjectRunSession(transitionCtx, coordinator, run, sessionResult, req.CleanupPolicy)
 		return run, err, nil
 	}
 	run, err = coordinator.MarkRunning(transitionCtx, run.RunID, sessionResult.Session.Summary.ID)
@@ -188,18 +189,18 @@ func (c *Controller) RunProjectAgent(ctx context.Context, req RunAgentRequest, s
 	if commandText != "" {
 		transition, execErr := c.executeProjectRunCommand(ctx, run, sessionResult.Session, req, commandText, stream)
 		if execErr != nil || transition.ExitCode != 0 {
-			run, err = coordinator.MarkFailed(transitionCtx, transition)
+			run, err = markProjectRunTerminalError(transitionCtx, coordinator, transition, execErr)
 			if err != nil {
 				return domain.ProjectRunRecord{}, nil, err
 			}
-			run = c.cleanupProjectRunSession(transitionCtx, coordinator, run, sessionResult.Session, req.CleanupPolicy)
+			run = c.cleanupProjectRunSession(transitionCtx, coordinator, run, sessionResult, req.CleanupPolicy)
 			return run, execErr, nil
 		}
 		run, err = coordinator.MarkSucceeded(transitionCtx, transition)
 		if err != nil {
 			return domain.ProjectRunRecord{}, nil, err
 		}
-		run = c.cleanupProjectRunSession(transitionCtx, coordinator, run, sessionResult.Session, req.CleanupPolicy)
+		run = c.cleanupProjectRunSession(transitionCtx, coordinator, run, sessionResult, req.CleanupPolicy)
 		return run, nil, nil
 	}
 	agentConfig, err := c.projectRunAgentConfig(ctx, run)
@@ -213,6 +214,7 @@ func (c *Controller) RunProjectAgent(ctx context.Context, req RunAgentRequest, s
 		if markErr != nil {
 			return domain.ProjectRunRecord{}, nil, markErr
 		}
+		run = c.cleanupProjectRunSession(transitionCtx, coordinator, run, sessionResult, req.CleanupPolicy)
 		return run, err, nil
 	}
 	if c.executor == nil {
@@ -226,6 +228,7 @@ func (c *Controller) RunProjectAgent(ctx context.Context, req RunAgentRequest, s
 		if markErr != nil {
 			return domain.ProjectRunRecord{}, nil, markErr
 		}
+		run = c.cleanupProjectRunSession(transitionCtx, coordinator, run, sessionResult, req.CleanupPolicy)
 		return run, err, nil
 	}
 	cell, _, _, execErr := c.executor.ExecuteAgentRequest(ctx, sessionResult.Session, execution.ExecuteAgentRequest{
@@ -239,19 +242,26 @@ func (c *Controller) RunProjectAgent(ctx context.Context, req RunAgentRequest, s
 	})
 	transition := TransitionFromAgentCell(run, sessionResult.Session, cell, execErr)
 	if execErr != nil || !cell.Success {
-		run, err = coordinator.MarkFailed(transitionCtx, transition)
+		run, err = markProjectRunTerminalError(transitionCtx, coordinator, transition, execErr)
 		if err != nil {
 			return domain.ProjectRunRecord{}, nil, err
 		}
-		run = c.cleanupProjectRunSession(transitionCtx, coordinator, run, sessionResult.Session, req.CleanupPolicy)
+		run = c.cleanupProjectRunSession(transitionCtx, coordinator, run, sessionResult, req.CleanupPolicy)
 		return run, execErr, nil
 	}
 	run, err = coordinator.MarkSucceeded(transitionCtx, transition)
 	if err != nil {
 		return domain.ProjectRunRecord{}, nil, err
 	}
-	run = c.cleanupProjectRunSession(transitionCtx, coordinator, run, sessionResult.Session, req.CleanupPolicy)
+	run = c.cleanupProjectRunSession(transitionCtx, coordinator, run, sessionResult, req.CleanupPolicy)
 	return run, nil, nil
+}
+
+func markProjectRunTerminalError(ctx context.Context, coordinator *Coordinator, transition TransitionRequest, err error) (domain.ProjectRunRecord, error) {
+	if errors.Is(err, context.Canceled) {
+		return coordinator.MarkCanceled(ctx, transition)
+	}
+	return coordinator.MarkFailed(ctx, transition)
 }
 
 func (c *Controller) executeProjectRunCommand(ctx context.Context, run domain.ProjectRunRecord, session *domain.Session, req RunAgentRequest, commandText string, sink *StreamSink) (TransitionRequest, error) {
@@ -560,11 +570,12 @@ func (c *Controller) publishProjectRunSessionStarted(ctx context.Context, sessio
 	}
 }
 
-func (c *Controller) cleanupProjectRunSession(ctx context.Context, coordinator *Coordinator, run domain.ProjectRunRecord, session *domain.Session, policy agentcomposev2.RunSessionCleanupPolicy) domain.ProjectRunRecord {
+func (c *Controller) cleanupProjectRunSession(ctx context.Context, coordinator *Coordinator, run domain.ProjectRunRecord, sessionResult SessionResult, policy agentcomposev2.RunSessionCleanupPolicy) domain.ProjectRunRecord {
+	session := sessionResult.Session
 	if !CleanupPolicyStopsSession(policy) || session == nil {
 		return run
 	}
-	cleanupErr := c.stopProjectRunSession(ctx, session)
+	cleanupErr := c.cleanupProjectRunSessionByPolicy(ctx, sessionResult, policy)
 	if cleanupErr == nil {
 		return run
 	}
@@ -578,6 +589,26 @@ func (c *Controller) cleanupProjectRunSession(ctx context.Context, coordinator *
 		return run
 	}
 	return updated
+}
+
+func (c *Controller) cleanupProjectRunSessionByPolicy(ctx context.Context, sessionResult SessionResult, policy agentcomposev2.RunSessionCleanupPolicy) error {
+	session := sessionResult.Session
+	if CleanupPolicyRemovesSession(policy) && sessionResult.Created {
+		if err := c.stopProjectRunSession(ctx, session); err != nil {
+			return err
+		}
+		if c.store == nil {
+			return fmt.Errorf("session store is required")
+		}
+		if err := c.store.RemoveSession(ctx, session.Summary.ID); err != nil {
+			return err
+		}
+		if c.dashboard != nil {
+			c.dashboard.Notify("session_removed")
+		}
+		return nil
+	}
+	return c.stopProjectRunSession(ctx, session)
 }
 
 func (c *Controller) stopProjectRunSession(ctx context.Context, session *domain.Session) error {

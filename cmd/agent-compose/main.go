@@ -1126,6 +1126,8 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 	cleanupPolicy := agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_STOP_ON_COMPLETION
 	if normalizedOptions.KeepRunning {
 		cleanupPolicy = agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING
+	} else if normalizedOptions.Remove {
+		cleanupPolicy = agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_REMOVE_ON_COMPLETION
 	}
 	client := agentcomposev2connect.NewRunServiceClient(newDaemonHTTPClient(clientConfig), clientConfig.BaseURL)
 	stream, err := client.RunAgentStream(cmd.Context(), connect.NewRequest(&agentcomposev2.RunAgentRequest{
@@ -1180,31 +1182,25 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 			return err
 		}
 	}
+	cleanupErr := runDetailCleanupError(detail.Msg.GetRun())
 	if runSummaryFailed(completed) {
-		return commandExitError{Code: runSummaryExitCode(completed), Err: fmt.Errorf("run %s for project %s agent %s failed: %s", completed.GetRunId(), normalized.Name, agentName, firstNonEmptyString(completed.GetError(), runStatusText(completed.GetStatus())))}
+		message := fmt.Sprintf("run %s for project %s agent %s failed: %s", completed.GetRunId(), normalized.Name, agentName, firstNonEmptyString(completed.GetError(), runStatusText(completed.GetStatus())))
+		if cleanupErr != "" {
+			message += fmt.Sprintf("; cleanup warning: %s", cleanupErr)
+		}
+		return commandExitError{Code: runSummaryExitCode(completed), Err: fmt.Errorf("%s", message)}
 	}
-	if normalizedOptions.Remove {
-		sandboxID := strings.TrimSpace(completed.GetSessionId())
-		if sandboxID == "" && detail.Msg.GetRun() != nil {
-			sandboxID = strings.TrimSpace(detail.Msg.GetRun().GetSummary().GetSessionId())
-		}
-		if sandboxID == "" {
-			return fmt.Errorf("run %s for project %s agent %s completed without sandbox id for --rm", completed.GetRunId(), normalized.Name, agentName)
-		}
-		clients, err := newCLIServiceClients(cli)
-		if err != nil {
-			return err
-		}
-		if err := removeSandbox(cmd.Context(), clients.sandbox, sandboxID, true); err != nil {
-			return commandExitErrorForConnect(fmt.Errorf("remove sandbox %s after run %s: %w", sandboxID, completed.GetRunId(), err))
-		}
-		if !cli.JSON {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "removed sandbox %s\n", sandboxID); err != nil {
-				return err
-			}
-		}
+	if cleanupErr != "" {
+		return commandExitError{Code: exitCodeGeneral, Err: fmt.Errorf("run %s for project %s agent %s succeeded but sandbox cleanup failed: %s", completed.GetRunId(), normalized.Name, agentName, cleanupErr)}
 	}
 	return nil
+}
+
+func runDetailCleanupError(detail *agentcomposev2.RunDetail) string {
+	if detail == nil {
+		return ""
+	}
+	return strings.TrimSpace(detail.GetCleanupError())
 }
 
 func normalizeComposeRunOptions(cmd *cobra.Command, options composeRunOptions) (composeRunOptions, error) {

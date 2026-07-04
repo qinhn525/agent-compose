@@ -125,7 +125,7 @@
 
 ## 阶段 2：`run --rm` terminal 清理
 
-- [ ] 2.1 修正 `run --rm` 在成功、失败和取消后的 cleanup 语义
+- [x] 2.1 修正 `run --rm` 在成功、失败和取消后的 cleanup 语义
 
   依赖：0.1。
 
@@ -153,10 +153,25 @@
   - cleanup 错误不覆盖原始 run 错误。
 
   完成总结：
-  - 状态：待完成。
-  - 变更：待记录。
-  - 验证：待记录。
-  - 审计与例外：待记录。
+  - 状态：已完成。
+  - 变更：
+    - v2 `RunSessionCleanupPolicy` 新增 `RUN_SESSION_CLEANUP_POLICY_REMOVE_ON_COMPLETION = 3`，并重新生成 Go proto/Connect Go 与 proto-client TS 产物。
+    - CLI `run --rm` 改为向 `RunAgentStream` 发送 `REMOVE_ON_COMPLETION`；默认仍为 `STOP_ON_COMPLETION`，`--keep-running` 仍优先映射为 `KEEP_RUNNING`。
+    - CLI 不再在 run 成功后调用 `SandboxService.RemoveSandbox` 作为权威 cleanup owner；改为读取 `RunDetail.cleanup_error`，成功 run 的 cleanup 失败返回非 0，失败 run 的 cleanup 失败追加 cleanup warning 且保留原始退出码。
+    - `pkg/runs.Controller` 在 terminal transition 后统一执行 cleanup；`REMOVE_ON_COMPLETION` 只删除本次 run 新建的 session，显式传入的已有 `--sandbox`/`--session-id` 只按策略停止、不删除。
+    - controller cleanup 覆盖 succeeded、failed、`context.Canceled` canceled、agent config/executor 缺失失败、session start failure 等路径；cleanup 失败写入 `project_run.cleanup_error`，不覆盖原始 run status/error。
+    - session 删除成功后通知 dashboard `session_removed`，保持与 sandbox remove API 的可观测性基本一致。
+    - 补充 CLI `--rm` cleanup policy、JSON 输出、cleanup warning/exit code 测试，以及 `pkg/runs` remove-on-completion 成功、失败、取消、已有 session、cleanup 失败和 session start failure 测试。
+  - 验证：
+    - `go test ./cmd/agent-compose ./pkg/runs`：通过。
+    - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs ./pkg/storage/sessionstore`：通过。
+    - `protoc -I . --go_out=. --go_opt=module=agent-compose --connect-go_out=. --connect-go_opt=module=agent-compose proto/agentcompose/v2/agentcompose.proto`：通过。
+    - `cd proto-client && npm ci && npm run gen && npm run build`：通过。
+    - `task build`：通过。
+  - 审计与例外：
+    - 本任务没有实现后台 run supervisor、cancel map 或 `StopRun` 对 live execution 的强取消；当前 `StopRun` 仍是既有的 DB 状态标记路径，后续后台/cancel 语义按计划中 `run -d/--detach` 阶段处理。
+    - `run --rm --keep-running` 保持现有 flag 优先级，`--keep-running` 优先于 `--rm`，没有新增互斥 usage error。
+    - CLI 手册已描述 `--rm` 为运行结束后删除 sandbox；本阶段未新增稳定命令或参数，最终文案校准仍留到阶段 10。
   - 下一目标：3.1。
 
 ## 阶段 3：`run --trigger` managed trigger 解析
