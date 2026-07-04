@@ -1492,7 +1492,7 @@ agents:
 	}
 }
 
-func TestIntegrationCLIRunInteractiveCommandNoValueMode(t *testing.T) {
+func TestIntegrationCLIRunInteractiveCommandReusesSession(t *testing.T) {
 	composePath := writeComposeFile(t, t.TempDir(), `
 name: cli-run-interactive-command
 agents:
@@ -1500,18 +1500,31 @@ agents:
     provider: codex
 `)
 	var commands []string
+	var sessions []string
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		run: runServiceStub{
 			runAgentStream: func(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
 				commands = append(commands, req.Msg.GetCommand())
+				sessions = append(sessions, req.Msg.GetSessionId())
 				if req.Msg.GetPrompt() != "" || req.Msg.GetTriggerId() != "" {
 					t.Fatalf("RunAgentStream interactive command request = %#v", req.Msg)
 				}
+				if req.Msg.GetCleanupPolicy() != agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING {
+					t.Fatalf("RunAgentStream cleanup policy = %#v", req.Msg.GetCleanupPolicy())
+				}
+				runID := fmt.Sprintf("run-command-repl-%d", len(commands))
+				if err := stream.Send(&agentcomposev2.RunAgentStreamResponse{
+					EventType:  agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_OUTPUT,
+					RunId:      runID,
+					Transcript: &agentcomposev2.TranscriptEvent{Text: fmt.Sprintf("command %d output\n", len(commands))},
+				}); err != nil {
+					return err
+				}
 				return stream.Send(&agentcomposev2.RunAgentStreamResponse{
 					EventType: agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_COMPLETED,
-					RunId:     "run-command-repl",
+					RunId:     runID,
 					Run: &agentcomposev2.RunSummary{
-						RunId:     "run-command-repl",
+						RunId:     runID,
 						ProjectId: req.Msg.GetProjectId(),
 						AgentName: "reviewer",
 						Status:    agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
@@ -1526,12 +1539,18 @@ agents:
 	})
 	defer server.Close()
 
-	stdout, stderr, _, exitCode := executeCLICommandWithInput("pwd\n/exit\n", "run", "--host", server.URL, "--file", composePath, "reviewer", "-i", "--command")
-	if exitCode != 0 || stdout != "" || stderr != "" {
+	stdout, stderr, _, exitCode := executeCLICommandWithInput("pwd\nwhoami\n/exit\n", "run", "--host", server.URL, "--file", composePath, "reviewer", "-i", "--command")
+	if exitCode != 0 || stderr != "" {
 		t.Fatalf("run -i --command code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
 	}
-	if strings.Join(commands, "|") != "pwd" {
+	if stdout != "command 1 output\ncommand 2 output\n" {
+		t.Fatalf("run -i --command stdout = %q", stdout)
+	}
+	if strings.Join(commands, "|") != "pwd|whoami" {
 		t.Fatalf("commands = %#v", commands)
+	}
+	if strings.Join(sessions, "|") != "|sandbox-command-repl" {
+		t.Fatalf("sessions = %#v", sessions)
 	}
 }
 

@@ -424,6 +424,31 @@ func TestRunsControllerRunProjectAgentCommandWorkflow(t *testing.T) {
 	if !started || len(chunks) != 3 || runtime.spec.Command != "sh" || !strings.Contains(strings.Join(runtime.spec.Args, " "), "agent-compose-runtime exec") {
 		t.Fatalf("started=%v chunks=%#v spec=%#v", started, chunks, runtime.spec)
 	}
+	second, secondExecErr, secondErr := controller.RunProjectAgent(ctx, RunAgentRequest{
+		ProjectID:       "project-1",
+		AgentName:       "worker",
+		Command:         "pwd",
+		SessionID:       run.SessionID,
+		Source:          domain.ProjectRunSourceAPI,
+		ClientRequestID: "command-request-2",
+		CleanupPolicy:   agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING,
+	}, nil)
+	if secondErr != nil || secondExecErr != nil {
+		t.Fatalf("second command run err=%v execErr=%v run=%#v", secondErr, secondExecErr, second)
+	}
+	if second.RunID == run.RunID || second.ArtifactsDir == run.ArtifactsDir || second.LogsPath == run.LogsPath {
+		t.Fatalf("command runs should have independent ids/artifacts/logs: first=%#v second=%#v", run, second)
+	}
+	if !strings.Contains(second.ArtifactsDir, second.RunID) || !strings.Contains(second.LogsPath, second.RunID) {
+		t.Fatalf("second command paths do not include run id: artifacts=%q logs=%q run=%q", second.ArtifactsDir, second.LogsPath, second.RunID)
+	}
+	secondRequestData, err := os.ReadFile(filepath.Join(second.ArtifactsDir, "command-request.json"))
+	if err != nil || !strings.Contains(string(secondRequestData), `"script": "pwd"`) {
+		t.Fatalf("second command request artifact = %q err=%v", string(secondRequestData), err)
+	}
+	if _, err := os.Stat(filepath.Join(run.ArtifactsDir, "command-request.json")); err != nil {
+		t.Fatalf("first command artifact should remain after second run: %v", err)
+	}
 	if _, _, err := controller.RunProjectAgent(ctx, RunAgentRequest{
 		ProjectID: "project-1", AgentName: "worker", Command: "echo command", Prompt: "prompt",
 	}, nil); !errors.Is(err, ErrInvalidRequest) {

@@ -830,7 +830,7 @@
     - Gemini runtime runner 仍保留一次性 prompt 能力；只有 CLI prompt REPL 明确返回 unsupported。
   - 下一目标：9.3。
 
-- [ ] 9.3 实现 command REPL 复用 workspace 和 JS runtime transcript
+- [x] 9.3 实现 command REPL 复用 workspace 和 JS runtime transcript
 
   依赖：9.1、8.3。
 
@@ -857,10 +857,22 @@
   - 输出由 JS runtime transcript 驱动。
 
   完成总结：
-  - 状态：待完成。
-  - 变更：待记录。
-  - 验证：待记录。
-  - 审计与例外：待记录。
+  - 状态：已完成。
+  - 变更：
+    - 补强 CLI command REPL integration 覆盖，连续两轮 stdin command 均作为 `RunAgentRequest.command` 发送，第二轮复用第一轮返回的 sandbox/session。
+    - command REPL 测试断言每轮使用 `KEEP_RUNNING` cleanup policy，并按 `TranscriptEvent` 流式输出 JS runtime command transcript。
+    - 补强 `pkg/runs` command workflow 覆盖，连续两次 command run 复用同一 session，但生成独立 `ProjectRun`、独立 `state/runs/<run_id>/` artifact dir 和独立 `transcript.txt` `logs_path`。
+    - command request artifact 断言第二轮写入自己的 `command-request.json`，且第一轮 artifact 保留不被覆盖。
+  - 验证：
+    - `go test ./cmd/agent-compose -run 'TestIntegrationCLIRunInteractiveCommandReusesSession'`：通过。
+    - `go test ./pkg/runs -run 'TestRunsControllerRunProjectAgentCommandWorkflow'`：通过。
+    - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs`：通过。
+    - `cd runtime/javascript && TEST_SHAPE=unit npm run test:unit`：通过，10 个 test files / 107 个 tests。
+    - `task build`：通过。
+  - 审计与例外：
+    - 本阶段没有新增 proto 字段或重新生成 proto-client。
+    - 本阶段没有实现运行中 stdin、TTY、PTY、WebSocket TTY、terminal resize、Connect bidi stream 或 `ExecInteractive`。
+    - 需要 stdin 的程序仍需由用户包装成单次 command/script 输入；command REPL 只提供“每行一次 run”的 shell command 模式。
   - 下一目标：10.1。
 
 ## 阶段 10：文档和最终质量门禁
