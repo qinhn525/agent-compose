@@ -1,0 +1,712 @@
+# CLI runtime capabilities progress
+
+本文档把 `cli-runtime-capabilities` 的 spec 和实施计划拆成可独立执行、独立验收的任务清单。任务按依赖顺序排列；标记为 `可并行` 的子任务可在同一父任务内并发推进，并发上限为 5。
+
+## 文档索引
+
+- Spec：[docs/spec/cli-runtime-capabilities-spec.md](docs/spec/cli-runtime-capabilities-spec.md)
+- 实施计划：[docs/plan/cli-runtime-capabilities-implementation-plan.md](docs/plan/cli-runtime-capabilities-implementation-plan.md)
+- Harness：[AGENTS.md](AGENTS.md)
+- 测试标准：[TESTING.md](TESTING.md)
+- Task runner：[Taskfile.yml](Taskfile.yml)
+- CLI 手册：[docs/zh-CN/command-line-manual.md](docs/zh-CN/command-line-manual.md)
+- 旧 CLI 改进设计：[docs/zh-CN/design/agent-compose-cli-improvement-plan.md](docs/zh-CN/design/agent-compose-cli-improvement-plan.md)
+
+## 执行规则
+
+- 严格按顶层任务顺序执行；只有依赖已满足且标记为 `可并行` 的子任务可以并发。
+- 每次只完成一个顶层 checkbox 任务；如果拆分并行子任务，父任务收口时必须统一验收。
+- 不实现 `build`、`push`，不为 `up` 增加 attach/detach，不新增 run output chunk DB 表。
+- 不实现 TTY、PTY、terminal resize、WebSocket TTY endpoint、Connect bidi stdin 或运行中 stdin 透传。
+- 不新增 `ExecInteractive`；`ExecStream` 保持一次性 command server streaming。
+- `pull` 只面向 OCI image reference 和 image backend/store，不挂到 Docker、BoxLite 或 MicroSandbox runtime driver。
+- Jupyter expose 统一走 agent-compose proxy，不请求 runtime driver host port mapping。
+- 涉及 proto 变更时必须重新生成 Go proto、Connect Go 和 `proto-client` TS 产物，并记录生成命令和结果。
+- 涉及 CLI 用户可见行为时必须更新或准备更新 `docs/zh-CN/command-line-manual.md`；最终集中校准在阶段 10 完成。
+- 每个任务完成后必须把 checkbox 改为 `[x]`，并按 `状态`、`变更`、`验证`、`审计与例外`、`下一目标` 记录完成总结。
+- 质量门禁以 `task lint`、`task build`、`task test` 为最终权威；阶段内先运行任务列出的最小测试。
+
+## 阶段 0：协议生成和错误基线
+
+- [ ] 0.1 建立 proto 生成、typed error 和 CLI 错误输出基线
+
+  依赖：无。
+
+  工作内容：
+  - 确认并记录 Go proto/Connect Go 生成命令，覆盖 `proto/health/v1`、`proto/agentcompose/v1`、`proto/agentcompose/v2`。
+  - 确认 `proto-client` 生成命令为 `cd proto-client && npm ci && npm run gen && npm run build`。
+  - 审计并统一 typed unsupported、not found、invalid argument 的错误映射，优先复用 owner package sentinel error 和 `pkg/agentcompose/api` 的 Connect code 映射。
+  - 在 CLI 层区分 unsupported、not found 和普通 execution failure 的展示与退出。
+  - 不改变用户可见功能语义，只建立后续阶段可复用基础。
+
+  可并行子任务：
+  - 可并行：审计 `proto/agentcompose/v2/agentcompose.proto` 字段号和生成产物布局。
+  - 可并行：审计 `pkg/model/errors.go`、`pkg/images/errors.go` 和 `pkg/agentcompose/api/*` 的错误映射。
+  - 可并行：审计 `cmd/agent-compose/main.go` 的 Connect error 到退出码/输出映射。
+
+  测试方案：
+  - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs ./pkg/driver`
+  - 如触达 proto-client：`cd proto-client && npm ci && npm run gen && npm run build`
+  - `task build`
+
+  验收标准：
+  - 后续任务可复用统一 typed error。
+  - proto 生成命令可重复执行并保持产物一致。
+  - 未引入功能语义变化时，现有相关测试通过。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：1.1。
+
+## 阶段 1：OCI image `pull` inspect-and-skip
+
+- [ ] 1.1 实现 driver-independent OCI image `pull <image>` inspect-and-skip
+
+  依赖：0.1。
+
+  工作内容：
+  - 在 image service/backend 中实现 pull 前 inspect，判断本地 OCI image store/backend 是否已有 `<image>`。
+  - Docker daemon 只作为 Docker-backed OCI image backend 使用，不作为 runtime driver pull 能力。
+  - OCI cache 或其他 daemon-less store 使用已有 inspect/cache status 能力。
+  - 本地命中时返回 succeeded，`PullImageResponse.warnings` 加入 skipped/local already exists 信息，`image` 填充本地镜像信息。
+  - CLI 文本输出显示已存在并跳过；JSON 输出保留 warnings。
+  - 保持 deprecated `agent-compose image pull <image>` 与顶层 `pull` 行为一致。
+  - 不在 Docker、BoxLite、MicroSandbox runtime driver interface 上新增 pull/image-store 语义。
+
+  可并行子任务：
+  - 可并行：补 image service/backend fake，断言 inspect 命中时不调用 pull。
+  - 可并行：补 Docker-backed OCI image inspect 命中/未命中测试。
+  - 可并行：补 OCI cache inspect 命中/未命中测试。
+  - 可并行：补 CLI 文本/JSON 输出和 deprecated wrapper 行为测试。
+  - 可并行：补 service/CLI 测试，证明 runtime driver 选择不影响 `pull` 行为。
+
+  测试方案：
+  - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/adapters ./pkg/images ./pkg/imagecache ./pkg/driver`
+  - `task build`
+
+  验收标准：
+  - 本地已有 OCI image 不会再次 pull。
+  - inspect 失败和 pull 失败仍返回非 0，并带 image reference 和 image backend/store 上下文。
+  - `pull` 结果不随 runtime driver 为 Docker、BoxLite、MicroSandbox 而改变。
+  - deprecated `image pull` 无行为分叉。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：2.1。
+
+## 阶段 2：`run --rm` terminal 清理
+
+- [ ] 2.1 修正 `run --rm` 在成功、失败和取消后的 cleanup 语义
+
+  依赖：0.1。
+
+  工作内容：
+  - 将 `--rm` cleanup 语义下沉到 `pkg/runs.Controller` 或同等 service run pipeline。
+  - 扩展 v2 cleanup policy，首选新增 `REMOVE_ON_COMPLETION`；默认仍为 stop-on-completion，`--keep-running` 仍为 keep-running。
+  - 只清理本次 run 创建的 session/sandbox；用户显式传入的已有 `--sandbox`/`--session-id` 不删除。
+  - terminal 状态包括 succeeded、failed、canceled，均尝试 cleanup。
+  - cleanup 失败写入 `project_run.cleanup_error`，并按 spec 保持原始 run 错误优先。
+  - 如短期保留 CLI cleanup，必须放在失败退出前执行，并输出 cleanup warning；CLI 不能继续作为权威 cleanup owner。
+
+  可并行子任务：
+  - 可并行：补 `pkg/runs` fake runtime/store，覆盖 succeeded、failed、canceled cleanup。
+  - 可并行：补指定已有 sandbox 时不删除的测试。
+  - 可并行：补 cleanup 失败写入 `cleanup_error` 的测试。
+  - 可并行：补 CLI exit code 和 stderr warning 测试。
+
+  测试方案：
+  - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs ./pkg/storage/sessionstore`
+  - `task build`
+
+  验收标准：
+  - `--rm` 对所有 terminal run 生效。
+  - 不会删除用户显式指定的已有 sandbox。
+  - cleanup 错误不覆盖原始 run 错误。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：3.1。
+
+## 阶段 3：`run --trigger` managed trigger 解析
+
+- [ ] 3.1 实现手动 `run --trigger <trigger_id>` 的 trigger 解析和 prompt 注入
+
+  依赖：0.1。
+
+  工作内容：
+  - 新增 `ResolveTriggerForManualRun(ctx, projectID, agentName, triggerID)` 或等价内部函数。
+  - 从 `project_scheduler` 反查当前 project/agent 的 managed loader，再复用 `loaders.Controller.LoadLoaderForRun(ctx, loaderID, triggerID)` 或等价逻辑。
+  - 校验 trigger 存在且属于当前 project/agent。
+  - 解析 scheduler id、managed loader id、trigger prompt/template、环境变量、上下文和 Jupyter 默认配置。
+  - 在 `BeginRun` 前解析 trigger，并将实际 prompt 写入 run start request 和 `ExecuteAgentRequest.Message`。
+  - disabled trigger 手动运行允许执行，但 CLI stderr 和 JSON 输出要包含 warning。
+  - trigger 不存在、agent/project 不匹配、prompt/template 解析失败时返回清晰错误；未创建 run 前失败不得落可执行 run。
+
+  可并行子任务：
+  - 可并行：补 loader/project store 查询和 trigger resolver 单测。
+  - 可并行：补 run executor fake，断言 `ExecuteAgentRequest.Message` 使用解析后 prompt。
+  - 可并行：补 disabled trigger warning 测试。
+  - 可并行：补 CLI `--trigger` 与 `--prompt`/`--command` 互斥和 JSON warnings 输出测试。
+
+  测试方案：
+  - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs ./pkg/loaders ./pkg/projects ./pkg/storage/configstore`
+  - 针对 `up` 注册 managed loader 后 `run --trigger` 的 integration 测试。
+  - `task build`
+
+  验收标准：
+  - `project_run.prompt` 保存实际执行 prompt。
+  - run summary/detail 保留原始 `trigger_id`。
+  - `run --trigger` 不依赖 scheduler 自动触发路径。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：4.1。
+
+## 阶段 4：`logs --follow` 文件 tail
+
+- [ ] 4.1 统一 run 过程中的 `logs_path/output.txt` 实时 append
+
+  依赖：0.1、2.1。
+
+  工作内容：
+  - 审计 command run 当前 `state/runs/<run_id>/output.txt` 写入路径。
+  - 审计 agent run 当前 `state/cells/<cell_id>/output.txt` 写入路径。
+  - command run 的 stream writer 同步 append 到 `project_run.logs_path`。
+  - agent run 如 cell artifact 不能增量写入，则在 `AgentExecutionStream.OnChunk` 或等价 stream sink 中同步 append 到 run log artifact。
+  - 保持 `project_run.output` 为汇总视图，不作为 follow 权威来源。
+  - 不新增 DB output chunk 表。
+
+  可并行子任务：
+  - 可并行：审计 command run 日志写入和测试 fixture。
+  - 可并行：审计 agent execution stream/cell artifact 增量写入能力。
+  - 可并行：补日志 append helper 单测，覆盖 stdout/stderr 顺序和文件 flush。
+
+  测试方案：
+  - `go test ./pkg/runs ./pkg/execution ./pkg/storage/sessionstore`
+  - command run 和 agent run 相关 integration 测试。
+  - `task build`
+
+  验收标准：
+  - running run 期间 `logs_path` 文件可增量增长。
+  - run 结束后 `project_run.output` 与日志文件关系明确且稳定。
+  - 未创建 run output chunk DB 表。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：4.2。
+
+- [ ] 4.2 实现 `FollowRunLogs` API 和 CLI `logs --follow`
+
+  依赖：4.1。
+
+  工作内容：
+  - 在 v2 `RunService` 新增 server streaming `FollowRunLogs`。
+  - 定义 request：`project_id`、`run_id`、`tail_lines`、`start_offset`、`follow`。
+  - 定义 response：`data`、`offset`、`is_final`、`run_status`、`created_at`。
+  - service 按 byte offset 读取 `logs_path`，terminal 后 flush 剩余内容并发送 final。
+  - `--tail N` 由 service 计算起始 offset，CLI 不直接读取 daemon 本地文件。
+  - CLI `logs --follow --run-id <id>` 调用新 API；保留 `logs --json --follow` 互斥错误。
+  - 如多 run follow 首版串行处理，必须在手册中说明。
+
+  可并行子任务：
+  - 可并行：proto/message 设计和 Go/TS 生成。
+  - 可并行：service file tail helper 和 offset/tail 单测。
+  - 可并行：CLI follow 输出和重复输出测试。
+  - 可并行：缺失日志文件按 run 状态返回清晰错误或空 final 的测试。
+
+  测试方案：
+  - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs ./pkg/storage/configstore ./pkg/storage/sessionstore`
+  - `cd proto-client && npm ci && npm run gen && npm run build`
+  - `task build`
+
+  验收标准：
+  - `logs --follow` 不再轮询 `RunDetail.output`。
+  - offset、tail、terminal final 行为可测试。
+  - 缺失日志文件有清晰错误或按 run 状态返回空 final。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：5.1。
+
+## 阶段 5：`stats` driver optional interface
+
+- [ ] 5.1 实现稳定 JSON model、`GetSandboxStats` 和 CLI `stats`
+
+  依赖：0.1。
+
+  工作内容：
+  - 在 v2 API 中扩展 `SandboxService.GetSandboxStats`，避免新增语义分散的 service。
+  - 定义 `SandboxStats`：CPU、memory、network、block IO、uptime、driver、sampled_at。
+  - 为各 metric 字段明确可空性：使用 proto optional/wrapper，或定义 `MetricValue { value, status }`，其中 `status` 至少表达 ok、unknown、unavailable。
+  - JSON 输出保持字段 key 稳定，不因 Docker、BoxLite、MicroSandbox 不同而省略字段。
+  - driver 层使用 optional interface 承载 stats。
+  - Docker runtime 基于 Docker stats API 实现单次 snapshot。
+  - MicroSandbox runtime 映射 SDK `Metrics` 中已有字段。
+  - BoxLite runtime 如 metrics 回调稳定可用，映射可获得字段；不可获得字段返回 unknown/null。
+  - driver 没有稳定指标入口时由 service 返回 typed unsupported，不显示为 execution failed。
+  - CLI 新增 `stats <sandbox>`，支持表格输出和 `--json`。
+
+  可并行子任务：
+  - 可并行：proto/API 和生成产物。
+  - 可并行：Docker stats sample parser 测试。
+  - 可并行：MicroSandbox metrics sample 映射测试。
+  - 可并行：BoxLite metrics fake callback 映射和缺失字段测试。
+  - 可并行：CLI 表格/JSON 输出稳定 key 测试。
+  - 可并行：service unsupported/stopped/not found 测试。
+
+  测试方案：
+  - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/storage/sessionstore ./pkg/driver`
+  - `cd proto-client && npm ci && npm run gen && npm run build`
+  - `task build`
+
+  验收标准：
+  - Docker sandbox 可返回 CPU/memory/network/block IO/uptime。
+  - MicroSandbox sandbox 可返回 SDK 已有的 CPU/memory/disk/network/uptime 字段。
+  - BoxLite sandbox 返回可获得字段；缺失字段不显示为 execution failed。
+  - JSON 字段保持稳定；driver 差异只通过 value null、status unknown/unavailable 或表格 `-` 表达。
+  - 无指标入口的 driver 返回明确 unsupported。
+  - `stats` 不影响现有 `ps`、`inspect` 行为。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：6.1。
+
+## 阶段 6：Jupyter CLI/YAML 和 proxy expose
+
+- [ ] 6.1 增加 agent YAML Jupyter schema、解析和 validation
+
+  依赖：0.1。
+
+  工作内容：
+  - proto `AgentSpec` 增加 `JupyterSpec`：`enabled`、`guest_port`。
+  - YAML parsing/normalization 支持 `agents.<name>.jupyter.enabled` 和 `guest_port`。
+  - `guest_port` 为 0 时使用 daemon 默认，非 0 时校验合法 TCP port。
+  - YAML 中出现 host bind、host port、expose 类字段时返回 validation error。
+  - project agent/agent definition 通过 spec JSON 保留 Jupyter 配置；除非 UI 列表必须展示，不新增 DB 列。
+
+  可并行子任务：
+  - 可并行：proto 和 TS client 生成。
+  - 可并行：compose YAML parsing/normalization 单测。
+  - 可并行：validation error 单测。
+  - 可并行：project agent/agent definition spec JSON 保留测试。
+
+  测试方案：
+  - `go test ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/compose ./pkg/projects ./pkg/storage/configstore ./pkg/config`
+  - `cd proto-client && npm ci && npm run gen && npm run build`
+  - `task build`
+
+  验收标准：
+  - YAML 可表达 agent 默认 Jupyter proxy 配置。
+  - 默认 disabled。
+  - YAML 不允许隐式 host expose。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：6.2。
+
+- [ ] 6.2 将 Jupyter resolved config 接入 run/session/proxy 和 CLI expose intent
+
+  依赖：6.1。
+
+  工作内容：
+  - run/session 创建时解析 agent YAML default 和 CLI 覆盖。
+  - `run --jupyter` 覆盖 enabled=true。
+  - `run --jupyter-expose` 只来自 CLI，效果是创建/标记 agent-compose proxy access endpoint。
+  - proxy listen/bind 由 daemon 部署配置决定，不作为 agent YAML 或 runtime driver port mapping。
+  - session/proxy 状态只表达 agent-compose proxy route/access URL 和 guest endpoint。
+  - 若 `ProxyState.HostPort` 继续存在，只能表示 daemon proxy 层访问结果，不得写入 Docker、BoxLite、MicroSandbox driver host port mapping。
+  - runtime 创建参数不得因 `--jupyter-expose` 请求 driver host port expose。
+  - trigger-created sandbox 使用 agent resolved Jupyter config。
+  - 更新 `docs/zh-CN/command-line-manual.md` 中 Jupyter 说明，或在阶段 10 集中收口时记录待同步项。
+
+  可并行子任务：
+  - 可并行：session/proxy state 测试。
+  - 可并行：CLI flag 到 request/session options 测试。
+  - 可并行：trigger-created sandbox Jupyter config integration 测试。
+  - 可并行：Docker、BoxLite、MicroSandbox runtime create request 不包含 Jupyter host port mapping 的 fake 测试。
+
+  测试方案：
+  - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs ./pkg/storage/sessionstore ./pkg/config ./pkg/driver`
+  - `task build`
+
+  验收标准：
+  - YAML enabled 会让 trigger-created sandbox 按 resolved config 启动 Jupyter proxy。
+  - YAML enabled 不产生外部 host bind/host port 配置。
+  - CLI `--jupyter-expose` 只创建 agent-compose proxy access endpoint。
+  - Docker、BoxLite、MicroSandbox runtime 创建请求均不包含 Jupyter host port mapping。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：7.1。
+
+## 阶段 7：`run -d/--detach` 和统一取消
+
+- [ ] 7.1 实现 daemon-owned `StartRun`/后台 supervisor 和统一 `StopRun` cancellation
+
+  依赖：4.2。
+
+  工作内容：
+  - 在 v2 `RunService` 新增 `StartRun(StartRunRequest) returns (StartRunResponse)`，或实现等价 detach API；首选 `StartRun`。
+  - 复用现有 `RunAgentRequest` 字段和 run pipeline。
+  - daemon 创建 run 后返回 `run_id`、`session_id`、status。
+  - 后台 goroutine/supervisor 持有 run context 和 cancel handle。
+  - supervisor registry 保存 cancel handle，`StopRun` 通过统一 run context cancellation 请求停止。
+  - prompt 和 command 执行都沿用 common execution context，取消信号传递到 `RunAgentStream`/`ExecStream(ctx)` 及下游 JS runtime transcript 执行。
+  - run 状态机统一进入 canceling/canceled 或 failed terminal 状态；不得因 driver/provider/子进程无法即时终止而长期保持 running。
+  - Docker、BoxLite、MicroSandbox 如需要底层强制终止，只能封装为 best-effort cleanup，不暴露成不同用户语义。
+  - 不实现 durable queue。
+
+  可并行子任务：
+  - 可并行：proto/API 和生成产物。
+  - 可并行：in-memory supervisor registry 单测。
+  - 可并行：`StopRun` cancel active run 并稳定落 terminal 状态测试。
+  - 可并行：fake runtime 验证 context cancellation 传递到 prompt/command 执行路径。
+  - 可并行：fake runtime 忽略 cancellation 时的 cancel requested 和最终 terminal 状态测试。
+
+  测试方案：
+  - `go test ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs`
+  - `cd proto-client && npm ci && npm run gen && npm run build`
+  - `task build`
+
+  验收标准：
+  - `StartRun` 立即返回，后台 run 最终 terminal。
+  - CLI 进程不持有后台 run 生命周期。
+  - `StopRun` 在 Docker、BoxLite、MicroSandbox 上保持同一 API 和状态语义。
+  - 差异只允许存在于底层 best-effort 终止能力。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：7.2。
+
+- [ ] 7.2 接入 CLI `run -d`、日志提示和 daemon restart reconcile
+
+  依赖：7.1。
+
+  工作内容：
+  - CLI `run -d` 调用后台启动 API。
+  - `run -d` 与 `-i` 互斥。
+  - 文本输出 run id、sandbox id、初始 status、查看日志命令。
+  - JSON 输出 run/session/status/logs command 或 logs URL。
+  - daemon restart reconcile 将 orphan pending/running run 标记 failed，error 写明 `daemon interrupted`。
+  - `run -d --command` 可通过 `logs --follow` 观察输出。
+
+  可并行子任务：
+  - 可并行：CLI 参数互斥和输出测试。
+  - 可并行：restart reconcile 测试。
+  - 可并行：`run -d --command` + logs integration 测试。
+
+  测试方案：
+  - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs`
+  - `task build`
+
+  验收标准：
+  - `run -d` 立即返回。
+  - daemon restart 不留下永久 running run。
+  - 后台 run 可被 `logs` 和 `stop`/`StopRun` 操作。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：8.1。
+
+## 阶段 8：command transcript 基础与 `exec <sandbox>`
+
+- [ ] 8.1 定义统一 `TranscriptEvent` 并实现 JS runtime command transcript/artifacts
+
+  依赖：0.1、4.1。
+
+  工作内容：
+  - v2 定义统一 `TranscriptEvent` message，字段包含 `kind`、`text`、`is_stderr`、`name`、`payload_json`、`created_at`。
+  - `RunAgentStreamResponse` 和 `ExecStreamResponse` 使用 `TranscriptEvent transcript` 承载过程输出。
+  - v2 不需要保持兼容，可移除或弃用原 `chunk/is_stderr` 直出字段，避免 CLI 同时维护两套输出逻辑。
+  - `runtime/javascript/src/command.ts` 在启动 command 前输出 `$ <command>` transcript。
+  - stdout/stderr 继续原样写入 `stdout.txt`、`stderr.txt`、`output.txt` 和进程 stdout/stderr。
+  - 非零 exit code 时输出简短 exit 摘要；结构化结果仍写入 `command-result.json`。
+
+  可并行子任务：
+  - 可并行：proto `TranscriptEvent` 设计和 Go/TS 生成。
+  - 可并行：runtime JS command transcript 单测。
+  - 可并行：runtime JS command artifact 写入单测。
+
+  测试方案：
+  - `cd proto-client && npm ci && npm run gen && npm run build`
+  - `cd runtime/javascript && TEST_SHAPE=unit npm run test:unit`
+  - `task build`
+
+  验收标准：
+  - prompt 和 command stream 可复用同一 transcript event 模型。
+  - `agent-compose-runtime exec` 写入 stdout/stderr/output/result artifacts。
+  - 不新增 `ExecInteractive`、WebSocket、TTY、PTY、resize 或运行中 stdin。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：8.2。
+
+- [ ] 8.2 让 `run --command` 和 `ExecStream` 通过 guest `agent-compose-runtime exec` 执行
+
+  依赖：8.1。
+
+  工作内容：
+  - `executeProjectRunCommand` 不再直接 `bash -lc` 执行用户命令并由 host 拼 artifacts。
+  - 为每个 command run 写入 runtime command request JSON，调用 guest `agent-compose-runtime exec`。
+  - 将 runtime stream chunk 转换为 `TranscriptEvent`，同时 append 到 `project_run.logs_path`。
+  - 保持 `ProjectRun` 的 `output`、`result_json`、`artifacts_dir`、`logs_path` 和 exit code 语义。
+  - `ExecStream` 继续一次性提交 `ExecRequest`，服务端解析 target、校验 session running。
+  - 为每个 exec 创建 `<session>/state/exec/<exec_id>/` artifact dir 和 request file。
+  - 调用 guest `agent-compose-runtime exec`，返回 transcript stream 和最终 `ExecResult`。
+  - `exec` 不创建 `ProjectRun`；如需要 run 审计，用户使用 `run --command`。
+
+  可并行子任务：
+  - 可并行：run command fake runtime 测试。
+  - 可并行：ExecStream target resolve/stopped sandbox failed precondition 测试。
+  - 可并行：exec artifact dir 和 final result 测试。
+  - 可并行：logs_path append 与阶段 4 行为回归测试。
+
+  测试方案：
+  - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs ./pkg/execution`
+  - `task build`
+
+  验收标准：
+  - `run --command` 和 `exec <sandbox>` 的执行都由 JS runtime command transcript 驱动。
+  - `ExecStream` 仍是 server streaming；没有新增 `ExecInteractive`、WebSocket 或 bidi stream。
+  - command artifacts 由 JS runtime 生成，host 不重复覆盖 `command-result.json`。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：8.3。
+
+- [ ] 8.3 统一 CLI command transcript 输出
+
+  依赖：8.2。
+
+  工作内容：
+  - `run --command` 和 `exec` 共用 transcript 打印 helper。
+  - 文本模式按 transcript 原样输出。
+  - JSON 模式输出最终 result/detail，不打印流式 transcript，不污染 stdout。
+  - 不实现 `exec -i`；如后续提供 CLI sugar，也必须实现为“每轮一次 `ExecStream`/`RunAgentStream`”，不是运行中 stdin。
+
+  可并行子任务：
+  - 可并行：CLI transcript 打印 helper 单测。
+  - 可并行：JSON 模式 stdout/stderr 分离测试。
+  - 可并行：`exec -i` unsupported/usage 文案测试。
+
+  测试方案：
+  - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app`
+  - `task build`
+
+  验收标准：
+  - `run --command` 和 `exec <sandbox>` 输出呈现一致。
+  - JSON 模式机器可读且无流式 transcript 污染。
+  - 普通 prompt run、command run 和 exec 行为不退化。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：9.1。
+
+## 阶段 9：`run -i` prompt/command REPL
+
+- [ ] 9.1 实现 CLI `run -i` 参数互斥、REPL loop 和 session 复用
+
+  依赖：2.1、4.2、8.3。
+
+  工作内容：
+  - 新增 `-i/--interactive` bool。
+  - `run -i --prompt` 进入 prompt REPL；`--prompt <text>` 可作为第一轮 prompt。为支持无值 `--prompt`，按需设置 pflag `NoOptDefVal`。
+  - `run -i --command` 进入 command REPL；`--command <cmd>` 可作为第一轮 command。`-i` 场景下允许 `--command` 无值作为模式标记。
+  - 未显式 `--prompt` 或 `--command` 时，如果 `-i` 已指定，返回 usage error。
+  - `run -i` 与 `--trigger`、`-d` 互斥；prompt 模式与 command 模式互斥。
+  - 空输入不创建 run；`/exit` 和 Ctrl+D 退出。
+  - Ctrl+C best-effort cancel 当前轮等待并请求 `StopRun`；不承诺 provider adapter 或 command 子进程强中断。
+  - REPL 启动时创建或解析一个 session/sandbox；每轮调用 `RunAgentStream` 并传入同一个 `session_id`。
+  - 每轮使用 keep-running cleanup policy，并生成独立 `ProjectRun`。
+  - REPL 默认保留 sandbox；用户显式 `--rm` 时退出后清理本 REPL 创建的 sandbox。
+
+  可并行子任务：
+  - 可并行：CLI REPL input loop 测试。
+  - 可并行：CLI 参数互斥和 `--prompt`/`--command` 无值模式测试。
+  - 可并行：integration 测试同一 session 连续两轮 run。
+  - 可并行：`--rm` 退出后清理语义测试。
+
+  测试方案：
+  - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs`
+  - `task build`
+
+  验收标准：
+  - 一条用户输入对应一条 run。
+  - REPL 生命周期内 workspace/session 连续。
+  - 每轮 `logs_path` 可独立查看。
+  - 不依赖 TTY、stdin 透传或 terminal resize。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：9.2。
+
+- [ ] 9.2 实现 prompt REPL provider 复用和 unsupported 语义
+
+  依赖：9.1。
+
+  工作内容：
+  - 每轮把用户输入作为 `RunAgentRequest.prompt`。
+  - 未指定 provider 时使用 agent definition provider。
+  - Codex、Claude/cc、OpenCode 允许 interactive prompt。
+  - Gemini 返回 unsupported，并列出支持 provider。
+  - runtime/provider 测试确认 provider session file 复用。
+  - `state/agents/providers/<provider>.json` 在连续两轮后仍是同一 conversation/session。
+  - 不新增 durable conversation resource；审计以每轮 `ProjectRun` 为准。
+
+  可并行子任务：
+  - 可并行：Codex runner session reuse 测试。
+  - 可并行：Claude/cc runner session reuse 测试。
+  - 可并行：OpenCode runner session reuse 测试。
+  - 可并行：Gemini unsupported 测试。
+  - 可并行：CLI provider unsupported 错误输出测试。
+
+  测试方案：
+  - `cd runtime/javascript && TEST_SHAPE=unit npm run test:unit`
+  - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs`
+  - `task build`
+
+  验收标准：
+  - `run -i --prompt` 可对 Codex、Claude/cc、OpenCode 完成连续多轮交互。
+  - provider session 文件可证明复用。
+  - Gemini 明确 unsupported。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：9.3。
+
+- [ ] 9.3 实现 command REPL 复用 workspace 和 JS runtime transcript
+
+  依赖：9.1、8.3。
+
+  工作内容：
+  - 每轮把用户输入作为 `RunAgentRequest.command`。
+  - 使用阶段 8 的 JS runtime command transcript 和 artifacts。
+  - command REPL 连续两轮复用同一 session/workspace/home/state。
+  - 每轮生成独立 `ProjectRun`、独立 `logs_path` 和 command artifacts。
+  - 不支持运行中 stdin；需要 stdin 的程序应改成一次性命令或脚本输入。
+
+  可并行子任务：
+  - 可并行：command REPL 连续两轮 session/workspace 复用测试。
+  - 可并行：每轮独立 `ProjectRun` 和 `logs_path` 测试。
+  - 可并行：需要 stdin 的命令 usage/unsupported 文案测试。
+
+  测试方案：
+  - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runs`
+  - `cd runtime/javascript && TEST_SHAPE=unit npm run test:unit`
+  - `task build`
+
+  验收标准：
+  - `run -i --command` 可连续执行多轮 command。
+  - 每轮有独立 run 记录、日志和 artifacts。
+  - 输出由 JS runtime transcript 驱动。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：10.1。
+
+## 阶段 10：文档和最终质量门禁
+
+- [ ] 10.1 同步 CLI 手册、旧设计说明和完整质量门禁
+
+  依赖：1.1、2.1、3.1、4.2、5.1、6.2、7.2、8.3、9.3。
+
+  工作内容：
+  - 更新 `docs/zh-CN/command-line-manual.md`：
+    - 标记或移除 `build`、`push` 已实现暗示，说明后续单独设计。
+    - 移除 `up` attach/detach 描述。
+    - 补齐 OCI image `pull`、`run --rm`、`run --trigger`、`logs --follow`、`stats`、Jupyter proxy expose、`run -d`/`StopRun` 统一取消、`run -i` prompt/command REPL、`exec <sandbox>` command transcript 的最终语义。
+    - 明确不提供 TTY、PTY、WebSocket TTY、terminal resize 或运行中 stdin 透传。
+    - 写明 stats 缺失字段按 unknown/null/`-` 表达，只有无稳定指标入口时才 unsupported。
+  - 如 `docs/zh-CN/design/agent-compose-cli-improvement-plan.md` 仍含旧决策，追加 supersede 说明或同步修正。
+  - 确认 Go generated code、TS proto-client、runtime JS 相关产物无遗漏。
+  - 运行最终质量门禁并记录结果。
+
+  可并行子任务：
+  - 可并行：文档一致性审计。
+  - 可并行：proto-client 生成产物审计。
+  - 可并行：runtime JS/package 验证。
+  - 可并行：Go lint/build/test 门禁。
+
+  测试方案：
+  - `task lint`
+  - `task build`
+  - `task test`
+  - `cd proto-client && npm ci && npm run gen && npm run build`
+  - `cd runtime/javascript && npm ci && npm run test:unit`
+  - 如涉及 runtime SDK：`cd runtime/agent-compose-runtime-sdk && npm ci && npm test && npm run test:packaging`
+
+  验收标准：
+  - 手册与实现一致。
+  - `build`、`push` 不作为本轮已实现命令出现。
+  - `up` 不再有 attach/detach 语义。
+  - CI 对应 Go、coverage、runtime、proto-client 任务可通过。
+
+  完成总结：
+  - 状态：待完成。
+  - 变更：待记录。
+  - 验证：待记录。
+  - 审计与例外：待记录。
+  - 下一目标：无。
+
+## 风险和停止条件
+
+- 如果现有 executor 无法在 agent run 过程中增量写入 cell artifact，阶段 4 必须先在 stream sink 增加 run log append；不能退回轮询 `RunDetail.output`。
+- 如果 trigger prompt/template 解析需要 scheduler runtime 执行脚本才能得到 prompt，阶段 3 必须停止并补充 trigger payload/template 设计；不得猜测执行结果。
+- 如果 OCI image backend 无法区分“已拉取的 OCI image”和 BoxLite/MicroSandbox materialized runtime artifact，阶段 1 必须先补充 image domain metadata；不得把 `pull` 退回 runtime driver 语义。
+- 如果 Jupyter proxy/expose 当前由全局配置强绑定，阶段 6 必须先把 resolved session Jupyter config 写入 session/runtime state；不得用全局变量模拟 agent 级配置。
+- 如果 Jupyter expose 需要 runtime driver host port mapping 才能工作，阶段 6 必须先改成通过 agent-compose proxy 暴露；不得为 Docker、BoxLite、MicroSandbox 增加分叉 host expose 行为。
+- 如果后台 run supervisor 无法在 daemon 内持有 cancel handle，阶段 7 必须先补齐 in-memory run registry；不得实现成 CLI fork 后台进程。
+- 如果某个 runtime 的 `ExecStream(ctx)` 或 prompt 执行路径忽略 context cancellation，阶段 7 必须记录 best-effort 限制并补齐 service 侧 cancel requested/terminal 状态处理；不得暴露 driver-specific `StopRun` 语义。
+- 如果 `agent-compose-runtime exec` 无法在运行过程中稳定写入 command artifacts 和 transcript，阶段 8 必须先修复 JS runtime command 流式归档；不得回退到 host 侧重复拼写 `command-result.json`。
+- 如果 provider runner 不能稳定复用 session 文件，阶段 9 只允许对可证明复用的 provider 开启 prompt REPL，其他 provider 返回 unsupported。
