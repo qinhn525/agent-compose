@@ -69,6 +69,7 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 	config := &appconfig.Config{
 		DataRoot:       root,
 		DbAddr:         filepath.Join(root, "data.db"),
+		LLMAPIKey:      "global-provider-key",
 		RuntimeBaseURL: "http://agent-compose.test:7410",
 		GuestHomePath:  "/root",
 	}
