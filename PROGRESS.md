@@ -519,7 +519,7 @@
       - BoxLite/Microsandbox manifest 仍只有 `<session> -> /data`，没有重新引入 file source mount。
     - 下一目标：7.3。
 
-- [ ] 7.3 改造 directory-only bootstrap 为 home 条目 symlink
+- [x] 7.3 改造 directory-only bootstrap 为 home 条目 symlink
   - 依赖：7.2。
   - 工作内容：
     - 删除 bootstrap 中的 `/root` bind mount 逻辑。
@@ -527,9 +527,9 @@
     - 为统一逻辑清单中的 home 条目创建 `/root/... -> /data/home/...` symlink。
     - 更新 BoxLite/Microsandbox bootstrap guard 和 unit tests。
   - 可并行子任务：
-    - [ ] 可并行：实现 bootstrap symlink 逻辑。
-    - [ ] 可并行：更新 bootstrap command tests。
-    - [ ] 可并行：更新 lifecycle/exec guard tests。
+    - [x] 可并行：实现 bootstrap symlink 逻辑。
+    - [x] 可并行：更新 bootstrap command tests。
+    - [x] 可并行：更新 lifecycle/exec guard tests。
   - 测试方案：
     - `go test ./pkg/driver -run 'TestDirectoryOnly|Test.*Bootstrap'`
     - `go test ./pkg/driver`
@@ -539,10 +539,22 @@
     - `/data/home` 缺失时不删除或移动 `/root`。
     - 声明 home 条目可通过 symlink 从 `/root/...` 访问。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - 将 `directoryOnlyGuestSessionBootstrapCommand(config)` 从 `/root` bind mount 方案改为真实 `/root` + 声明 home 条目 symlink 方案。
+      - 保留 `/workspace` 强制修复语义，继续重建 `/workspace -> /data/workspace`，避免 guest image 中已有 `/workspace` 目录阻塞启动。
+      - `/root` 处理改为：遇到未知 mount point 直接失败；旧整体 `/root` symlink 会被移除并重建为真实目录；已有真实 `/root` 目录保持不动；非目录 `/root` 失败。
+      - 为统一逻辑清单中的 home 条目创建 `/root/... -> /data/home/...` symlink，覆盖 `.codex`、`.claude`、`.opencode`、`.claude.json`、`.gitconfig`、`.gemini`、`.config/*`、`.local/share/gemini`。
+      - 新增 `directoryOnlySymlinkCommand`，对 workspace 使用可替换目标模式，对 home 条目使用保守模式：正确 symlink 保持，错误 symlink 修复，非 symlink 既有 target fail fast。
+      - 更新 BoxLite/Microsandbox bootstrap exec spec tests 和 directory-only bootstrap command tests，不再期待 bind mount。
+    - 验证：
+      - `go test ./pkg/driver -run 'TestDirectoryOnly|Test.*Bootstrap'`：通过。
+      - `go test ./pkg/driver`：通过。
+      - `git diff --check`：通过。
+    - 审计与例外：
+      - 本任务未修改 API、CLI、proto、数据库 schema、配置项、Docker compose、`GUEST_HOME`、`HOME` 注入或 JS runtime provider 行为。
+      - 生产 bootstrap 代码不再包含 `mount --bind /data/home /root`，也不生成整体 `/root -> /data/home` symlink。
+      - 真实 BoxLite/Microsandbox smoke 尚未更新或运行；按队列留给 7.4。
     - 下一目标：7.4。
 
 - [ ] 7.4 更新真实 runtime smoke 覆盖

@@ -263,22 +263,32 @@ func TestDirectoryOnlyGuestSessionBootstrapUsesDataMountRoot(t *testing.T) {
 		"test -d '/data/workspace'",
 		"test -d '/data/home'",
 		"ln -s '/data/workspace' '/workspace'",
+		"if mountpoint -q '/root'; then echo \"refusing to replace mounted home target /root\" >&2; exit 1; fi",
 		"if [ -L '/root' ]; then rm -f '/root'; mkdir -p '/root';",
 		"if [ ! -d '/root' ]; then echo \"refusing to replace non-directory /root\" >&2; exit 1; fi;",
-		"if [ ! -e '/root.image' ]; then mv '/root' '/root.image'; mkdir -p '/root'; fi;",
-		"mount --bind '/data/home' '/root'",
-		"mountpoint -q '/root'",
-		"test ! -L '/root'",
-		"[ \"$(stat -c '%d:%i' '/root')\" = \"$(stat -c '%d:%i' '/data/home')\" ]",
-		"mv '/root' '/root.image'",
-		"refusing to replace unknown mount point /root",
+		"test -d '/root' || { echo \"directory-only home target is not a directory /root\" >&2; exit 1; }",
+		"ln -s '/data/home/.codex' '/root/.codex'",
+		"ln -s '/data/home/.claude' '/root/.claude'",
+		"ln -s '/data/home/.opencode' '/root/.opencode'",
+		"ln -s '/data/home/.claude.json' '/root/.claude.json'",
+		"ln -s '/data/home/.gitconfig' '/root/.gitconfig'",
+		"ln -s '/data/home/.gemini' '/root/.gemini'",
+		"ln -s '/data/home/.config/claude' '/root/.config/claude'",
+		"ln -s '/data/home/.config/Claude' '/root/.config/Claude'",
+		"ln -s '/data/home/.config/gemini' '/root/.config/gemini'",
+		"ln -s '/data/home/.config/opencode' '/root/.config/opencode'",
+		"ln -s '/data/home/.local/share/gemini' '/root/.local/share/gemini'",
+		"test \"$(readlink '/root/.gitconfig')\" = '/data/home/.gitconfig'",
+		"test \"$(readlink '/root/.codex')\" = '/data/home/.codex'",
 	} {
 		if !strings.Contains(command, required) {
 			t.Fatalf("bootstrap command missing %q: %s", required, command)
 		}
 	}
 	for _, forbidden := range []string{
+		"mount --bind '/data/home' '/root'",
 		"ln -s '/data/home' '/root'",
+		"mv '/root' '/root.image'",
 		"ln -s '/data/state' '/data/state'",
 		"ln -s '/data/runtime' '/data/runtime'",
 		"ln -s '/data/logs' '/data/logs'",
@@ -288,9 +298,8 @@ func TestDirectoryOnlyGuestSessionBootstrapUsesDataMountRoot(t *testing.T) {
 		}
 	}
 	assertSubstringOrder(t, command, "test -d '/data/home'", "rm -f '/root'")
-	assertSubstringOrder(t, command, "test -d '/data/home'", "mv '/root' '/root.image'")
-	assertSubstringOrder(t, command, "mount --bind '/data/home' '/root'", "test ! -L '/root'")
-	assertSubstringOrder(t, command, "mount --bind '/data/home' '/root'", "mountpoint -q '/root' ||")
+	assertSubstringOrder(t, command, "test -d '/data/home'", "ln -s '/data/home/.codex' '/root/.codex'")
+	assertSubstringOrder(t, command, "test -d '/root' ||", "ln -s '/data/home/.codex' '/root/.codex'")
 }
 
 func assertSubstringOrder(t *testing.T, text, before, after string) {
@@ -318,8 +327,11 @@ func TestJupyterLaunchCommandDoesNotRunDirectoryOnlyBootstrapByDefault(t *testin
 	}
 
 	directoryOnlyCommand := directoryOnlyJupyterLaunchCommand(config, proxyState, false)
-	if !strings.Contains(directoryOnlyCommand, "mount --bind '/data/home' '/root'") {
-		t.Fatalf("directory-only jupyter command missing bootstrap: %s", directoryOnlyCommand)
+	if strings.Contains(directoryOnlyCommand, "mount --bind '/data/home' '/root'") {
+		t.Fatalf("directory-only jupyter command unexpectedly contains bind mount: %s", directoryOnlyCommand)
+	}
+	if !strings.Contains(directoryOnlyCommand, "ln -s '/data/home/.codex' '/root/.codex'") {
+		t.Fatalf("directory-only jupyter command missing home symlink bootstrap: %s", directoryOnlyCommand)
 	}
 }
 

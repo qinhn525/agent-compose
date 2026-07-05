@@ -81,8 +81,14 @@ func TestBoxLiteBootstrapExecSpecRunsFromRoot(t *testing.T) {
 	if len(spec.Args) != 2 || spec.Args[0] != "-lc" {
 		t.Fatalf("bootstrap args = %#v, want sh -lc script", spec.Args)
 	}
-	if !strings.Contains(spec.Args[1], "mount --bind '/data/home' '/root'") {
-		t.Fatalf("bootstrap script missing bind mount: %s", spec.Args[1])
+	if strings.Contains(spec.Args[1], "mount --bind '/data/home' '/root'") {
+		t.Fatalf("bootstrap script unexpectedly contains bind mount: %s", spec.Args[1])
+	}
+	if strings.Contains(spec.Args[1], "ln -s '/data/home' '/root'") {
+		t.Fatalf("bootstrap script unexpectedly contains whole-root symlink: %s", spec.Args[1])
+	}
+	if !strings.Contains(spec.Args[1], "ln -s '/data/home/.codex' '/root/.codex'") {
+		t.Fatalf("bootstrap script missing codex home symlink: %s", spec.Args[1])
 	}
 	if spec.Cwd != "/" {
 		t.Fatalf("bootstrap cwd = %q, want /", spec.Cwd)
@@ -121,8 +127,14 @@ func TestMicrosandboxBootstrapExecSpecRunsFromRoot(t *testing.T) {
 	if len(spec.Args) != 2 || spec.Args[0] != "-lc" {
 		t.Fatalf("bootstrap args = %#v, want sh -lc script", spec.Args)
 	}
-	if !strings.Contains(spec.Args[1], "mount --bind '/data/home' '/root'") {
-		t.Fatalf("bootstrap script missing bind mount: %s", spec.Args[1])
+	if strings.Contains(spec.Args[1], "mount --bind '/data/home' '/root'") {
+		t.Fatalf("bootstrap script unexpectedly contains bind mount: %s", spec.Args[1])
+	}
+	if strings.Contains(spec.Args[1], "ln -s '/data/home' '/root'") {
+		t.Fatalf("bootstrap script unexpectedly contains whole-root symlink: %s", spec.Args[1])
+	}
+	if !strings.Contains(spec.Args[1], "ln -s '/data/home/.gitconfig' '/root/.gitconfig'") {
+		t.Fatalf("bootstrap script missing gitconfig home symlink: %s", spec.Args[1])
 	}
 	if spec.Cwd != "/" {
 		t.Fatalf("bootstrap cwd = %q, want /", spec.Cwd)

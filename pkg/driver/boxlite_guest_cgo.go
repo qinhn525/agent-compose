@@ -225,53 +225,65 @@ func directoryOnlyGuestSessionBootstrapCommand(config *appconfig.Config) string 
 	workspaceTarget := filepath.Clean(config.GuestWorkspacePath)
 	homeSource := filepath.Clean(filepath.Join(directoryOnlyGuestSessionPath, "home"))
 	homeTarget := filepath.Clean(config.GuestHomePath)
-	homeImageTarget := homeTarget + ".image"
 
 	commands := []string{
 		"test -d " + shellQuote(workspaceSource) + " || { echo \"missing directory-only workspace " + workspaceSource + "\" >&2; exit 1; }",
 		"test -d " + shellQuote(homeSource) + " || { echo \"missing directory-only home " + homeSource + "\" >&2; exit 1; }",
 	}
-	for _, link := range []struct {
-		source string
-		target string
-	}{
-		{source: workspaceSource, target: workspaceTarget},
-		{source: filepath.Join(directoryOnlyGuestSessionPath, "state"), target: config.GuestStateRoot},
-		{source: filepath.Join(directoryOnlyGuestSessionPath, "runtime"), target: config.GuestRuntimeRoot},
-		{source: filepath.Join(directoryOnlyGuestSessionPath, "logs"), target: config.GuestLogRoot},
-	} {
-		source := filepath.Clean(link.source)
-		target := filepath.Clean(link.target)
-		if source == target {
-			continue
-		}
-		commands = append(commands,
-			"rm -rf "+shellQuote(target),
-			"mkdir -p "+shellQuote(filepath.Dir(target)),
-			"ln -s "+shellQuote(source)+" "+shellQuote(target),
-		)
-	}
+	commands = append(commands, directoryOnlySymlinkCommand(workspaceSource, workspaceTarget, false, true))
 	if homeSource != homeTarget {
 		commands = append(commands,
 			"mkdir -p "+shellQuote(filepath.Dir(homeTarget)),
-			"if mountpoint -q "+shellQuote(homeTarget)+"; then "+
-				"if [ \"$(stat -c '%d:%i' "+shellQuote(homeTarget)+")\" != \"$(stat -c '%d:%i' "+shellQuote(homeSource)+")\" ]; then "+
-				"echo \"refusing to replace unknown mount point "+homeTarget+"\" >&2; exit 1; "+
-				"fi; "+
-				"else "+
-				"if [ -L "+shellQuote(homeTarget)+" ]; then rm -f "+shellQuote(homeTarget)+"; mkdir -p "+shellQuote(homeTarget)+"; "+
+			"if mountpoint -q "+shellQuote(homeTarget)+"; then echo \"refusing to replace mounted home target "+homeTarget+"\" >&2; exit 1; fi",
+			"if [ -L "+shellQuote(homeTarget)+" ]; then rm -f "+shellQuote(homeTarget)+"; mkdir -p "+shellQuote(homeTarget)+"; "+
 				"elif [ -e "+shellQuote(homeTarget)+" ]; then "+
 				"if [ ! -d "+shellQuote(homeTarget)+" ]; then echo \"refusing to replace non-directory "+homeTarget+"\" >&2; exit 1; fi; "+
-				"if [ ! -e "+shellQuote(homeImageTarget)+" ]; then mv "+shellQuote(homeTarget)+" "+shellQuote(homeImageTarget)+"; mkdir -p "+shellQuote(homeTarget)+"; fi; "+
-				"else mkdir -p "+shellQuote(homeTarget)+"; fi; "+
-				"mount --bind "+shellQuote(homeSource)+" "+shellQuote(homeTarget)+"; "+
-				"fi",
-			"test ! -L "+shellQuote(homeTarget)+" || { echo \"directory-only home target is still a symlink "+homeTarget+"\" >&2; exit 1; }",
-			"mountpoint -q "+shellQuote(homeTarget)+" || { echo \"directory-only home target is not a mount point "+homeTarget+"\" >&2; exit 1; }",
-			"[ \"$(stat -c '%d:%i' "+shellQuote(homeTarget)+")\" = \"$(stat -c '%d:%i' "+shellQuote(homeSource)+")\" ] || { echo \"directory-only home target does not match "+homeSource+"\" >&2; exit 1; }",
+				"else mkdir -p "+shellQuote(homeTarget)+"; fi",
+			"test -d "+shellQuote(homeTarget)+" || { echo \"directory-only home target is not a directory "+homeTarget+"\" >&2; exit 1; }",
 		)
 	}
+	for _, entry := range runtimeMountEntries(config) {
+		if entry.directoryOnlyExposure != directoryOnlyExposureSymlink || !strings.HasPrefix(entry.sessionPath, "home/") {
+			continue
+		}
+		source := filepath.Clean(filepath.Join(directoryOnlyGuestSessionPath, filepath.FromSlash(entry.sessionPath)))
+		target := filepath.Clean(entry.guestPath)
+		commands = append(commands, directoryOnlySymlinkCommand(source, target, entry.isFile, false))
+	}
 	return strings.Join(commands, "; ")
+}
+
+func directoryOnlySymlinkCommand(source, target string, isFile bool, replaceExisting bool) string {
+	source = filepath.Clean(source)
+	target = filepath.Clean(target)
+	if source == target {
+		return ":"
+	}
+	sourceQuote := shellQuote(source)
+	targetQuote := shellQuote(target)
+	sourceParentQuote := shellQuote(filepath.Dir(source))
+	targetParentQuote := shellQuote(filepath.Dir(target))
+	prepareSource := "if [ -e " + sourceQuote + " ]; then " +
+		"if [ ! -d " + sourceQuote + " ]; then echo \"directory-only symlink source is not a directory " + source + "\" >&2; exit 1; fi; " +
+		"else mkdir -p " + sourceQuote + "; fi"
+	if isFile {
+		prepareSource = "mkdir -p " + sourceParentQuote + "; " +
+			"if [ -d " + sourceQuote + " ]; then echo \"directory-only symlink source is a directory " + source + "\" >&2; exit 1; fi; " +
+			"if [ ! -e " + sourceQuote + " ]; then : > " + sourceQuote + "; fi; " +
+			"if [ ! -f " + sourceQuote + " ]; then echo \"directory-only symlink source is not a file " + source + "\" >&2; exit 1; fi"
+	}
+	prepareTarget := "mkdir -p " + targetParentQuote + "; "
+	if replaceExisting {
+		prepareTarget += "rm -rf " + targetQuote + "; ln -s " + sourceQuote + " " + targetQuote + "; "
+		return prepareSource + "; " + prepareTarget +
+			"test \"$(readlink " + targetQuote + ")\" = " + sourceQuote + " || { echo \"directory-only symlink target does not match " + source + "\" >&2; exit 1; }"
+	}
+	return prepareSource + "; " + prepareTarget +
+		"if [ -L " + targetQuote + " ]; then " +
+		"if [ \"$(readlink " + targetQuote + ")\" != " + sourceQuote + " ]; then rm -f " + targetQuote + "; ln -s " + sourceQuote + " " + targetQuote + "; fi; " +
+		"elif [ -e " + targetQuote + " ]; then echo \"refusing to replace existing directory-only symlink target " + target + "\" >&2; exit 1; " +
+		"else ln -s " + sourceQuote + " " + targetQuote + "; fi; " +
+		"test \"$(readlink " + targetQuote + ")\" = " + sourceQuote + " || { echo \"directory-only symlink target does not match " + source + "\" >&2; exit 1; }"
 }
 
 func directoryOnlyGuestSessionBootstrapExecSpec(config *appconfig.Config) ExecSpec {
