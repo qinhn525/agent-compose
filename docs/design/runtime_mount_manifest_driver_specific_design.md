@@ -192,6 +192,24 @@ the guest image's native `/data`. `/workspace` is recreated as a symlink.
 `mount --bind` privileges and avoids replacing the entire home directory with
 `/root -> /data/home`.
 
+## Directory-Only Bootstrap
+
+BoxLite and Microsandbox execute the same bootstrap command after the sandbox or
+box is started or reconnected. The command runs with cwd `/`, before Jupyter
+readiness checks, and before each `Exec` / `ExecStream` user command.
+
+Bootstrap verifies that `/data/workspace` and `/data/home` exist, recreates
+`/workspace -> /data/workspace`, ensures `/root` is a real directory, and then
+creates or repairs declared home-entry symlinks. It refuses to replace unknown
+non-symlink targets under `/root`, refuses mounted `/root` targets, does not run
+`mount --bind /data/home /root`, and does not create an overall
+`/root -> /data/home` symlink.
+
+Bootstrap stdout/stderr is kept out of user command streams. If bootstrap fails,
+the driver returns a diagnostic error with driver, session, runtime id,
+exit-code, stdout, and stderr context where available, and the original user
+command is not executed.
+
 ## Driver Switch Behavior
 
 Before start/resume, the manifest is always rewritten according to the currently
@@ -223,9 +241,9 @@ resolution follows a Docker-first strategy:
 This strategy does not change the BoxLite/Microsandbox directory-only mount
 manifest or guest environment contract.
 
-## Verification Coverage
+## Test Coverage
 
-Current and planned tests cover:
+The test suite covers:
 
 - Docker manifest includes file sources such as `.claude.json` and
   `.gitconfig`.

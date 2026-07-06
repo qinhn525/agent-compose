@@ -166,6 +166,14 @@ BoxLite 和 Microsandbox driver 下，fresh session 的 host 侧包含逻辑 sou
 
 目录级挂载 `<session> -> /data` 会覆盖 guest image 原生 `/data` 的最终可见内容。`/workspace` 会被重建为 symlink。`/root` 保持镜像内真实目录，只将声明的 `/root` home 条目 symlink 到 `/data/home`。这样不依赖 guest `mount --bind` 权限，也避免整体 `/root -> /data/home` 替换。
 
+## Directory-Only Bootstrap
+
+BoxLite 和 Microsandbox 在 sandbox/box start 或 reconnect 后执行同一段 bootstrap command。该命令以 cwd `/` 运行，发生在 Jupyter readiness 检查之前，也发生在每次 `Exec` / `ExecStream` 用户命令之前。
+
+bootstrap 会验证 `/data/workspace` 和 `/data/home` 存在，重建 `/workspace -> /data/workspace`，确保 `/root` 是真实目录，然后创建或修复声明 home 条目的 symlink。它会拒绝替换 `/root` 下未知的非 symlink target，拒绝 mounted `/root` target，不执行 `mount --bind /data/home /root`，也不创建整体 `/root -> /data/home` symlink。
+
+bootstrap stdout/stderr 不会混入用户命令输出。bootstrap 失败时，driver 返回带 driver、session、runtime id、exit code、stdout、stderr 上下文的诊断错误；原始用户命令不会执行。
+
 ## Driver Switch Behavior
 
 start/resume 前 manifest 始终按当前已解析 driver 重写。同一个 session 如果先用 Docker 生成 manifest，再用 BoxLite 或 Microsandbox 启动，最终 manifest 会变为 directory-only layout，不会复用旧的 Docker file source mounts。
@@ -180,9 +188,9 @@ mount manifest 只描述 session 数据目录如何挂载，不描述 guest root
 
 该策略不改变 BoxLite/Microsandbox 的 directory-only mount manifest 和 guest environment contract。
 
-## Verification Coverage
+## Test Coverage
 
-当前和计划测试覆盖以下行为：
+当前测试覆盖以下行为：
 
 - Docker manifest 包含 `.claude.json`、`.gitconfig` 等 file source。
 - Docker mount rebase 覆盖 file source。
