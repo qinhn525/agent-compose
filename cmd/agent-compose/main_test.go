@@ -2562,6 +2562,65 @@ agents:
 	}
 }
 
+func TestIntegrationCLIProjectCommandsMissingProjectAreFriendly(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-ps-missing
+agents:
+  reviewer:
+    provider: codex
+`)
+	tests := []struct {
+		name        string
+		args        []string
+		wantCommand string
+	}{
+		{name: "ps", args: []string{"ps", "--host", "%s", "--file", composePath}, wantCommand: "ps"},
+		{name: "stats", args: []string{"stats", "--host", "%s", "--file", composePath}, wantCommand: "stats"},
+		{name: "inspect project", args: []string{"inspect", "--host", "%s", "--file", composePath, "project"}, wantCommand: "inspect project"},
+		{name: "inspect agent", args: []string{"inspect", "--host", "%s", "--file", composePath, "agent", "reviewer"}, wantCommand: "inspect agent"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := newComposeServiceStubServer(t, composeServiceStubs{
+				project: projectServiceStub{
+					getProject: func(context.Context, *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
+						return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("project project-cli-ps-missing not found: sql: no rows in result set"))
+					},
+				},
+			})
+			defer server.Close()
+
+			args := append([]string(nil), tc.args...)
+			for i, arg := range args {
+				if arg == "%s" {
+					args[i] = server.URL
+				}
+			}
+			stdout, stderr, _, exitCode := executeCLICommand(args...)
+			if exitCode != exitCodeUsage {
+				t.Fatalf("%s missing project exit code = %d, want %d; stderr=%q", tc.name, exitCode, exitCodeUsage, stderr)
+			}
+			if stdout != "" {
+				t.Fatalf("%s missing project stdout = %q, want empty", tc.name, stdout)
+			}
+			for _, want := range []string{
+				`project "cli-ps-missing" has not been started on this daemon or was removed by ` + "`agent-compose down`",
+				"agent-compose up --file " + composePath,
+				"before `agent-compose " + tc.wantCommand + "`",
+			} {
+				if !strings.Contains(stderr, want) {
+					t.Fatalf("%s missing project stderr = %q, want %q", tc.name, stderr, want)
+				}
+			}
+			for _, notWant := range []string{"not_found", "sql: no rows"} {
+				if strings.Contains(stderr, notWant) {
+					t.Fatalf("%s missing project stderr = %q, should not expose %q", tc.name, stderr, notWant)
+				}
+			}
+		})
+	}
+}
+
 func TestIntegrationCLIStopSandbox(t *testing.T) {
 	var stopped []string
 	server := newComposeServiceStubServer(t, composeServiceStubs{

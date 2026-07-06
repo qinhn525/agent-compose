@@ -1110,7 +1110,7 @@ func runComposeStatsCommand(cmd *cobra.Command, cli cliOptions, args []string) e
 	if len(args) > 0 {
 		return runComposeSingleStatsCommand(cmd, cli, args[0])
 	}
-	_, normalized, projectID, err := resolveComposeProject(cli)
+	composePath, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
 		return err
 	}
@@ -1122,7 +1122,7 @@ func runComposeStatsCommand(cmd *cobra.Command, cli cliOptions, args []string) e
 		Project: &agentcomposev2.ProjectRef{ProjectId: projectID},
 	}))
 	if err != nil {
-		return commandExitErrorForConnect(fmt.Errorf("get project %s: %w", normalized.Name, err))
+		return commandExitErrorForComposeProject(fmt.Errorf("get project %s: %w", normalized.Name, err), "stats", normalized.Name, composePath)
 	}
 	output, err := composeProjectStatsOutputFromProject(cmd.Context(), clients, project.Msg.GetProject())
 	if err != nil {
@@ -1718,7 +1718,7 @@ func composeExecArgs(cmd *cobra.Command, args []string) error {
 }
 
 func runComposePSCommand(cmd *cobra.Command, cli cliOptions, options composePSOptions) error {
-	_, normalized, projectID, err := resolveComposeProject(cli)
+	composePath, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
 		return err
 	}
@@ -1730,7 +1730,7 @@ func runComposePSCommand(cmd *cobra.Command, cli cliOptions, options composePSOp
 		Project: &agentcomposev2.ProjectRef{ProjectId: projectID},
 	}))
 	if err != nil {
-		return commandExitErrorForConnect(fmt.Errorf("get project %s: %w", normalized.Name, err))
+		return commandExitErrorForComposeProject(fmt.Errorf("get project %s: %w", normalized.Name, err), "ps", normalized.Name, composePath)
 	}
 	output, err := composePSOutputFromProject(cmd.Context(), clients, project.Msg.GetProject(), options)
 	if err != nil {
@@ -2111,7 +2111,7 @@ func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string)
 		}
 		return runComposeImageInspectCommand(cmd, cli, target)
 	}
-	_, normalized, projectID, err := resolveComposeProject(cli)
+	composePath, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
 		return err
 	}
@@ -2127,7 +2127,7 @@ func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string)
 			IncludeSpec: true,
 		}))
 		if err != nil {
-			return commandExitErrorForConnect(fmt.Errorf("inspect project %s: %w", normalized.Name, err))
+			return commandExitErrorForComposeProject(fmt.Errorf("inspect project %s: %w", normalized.Name, err), "inspect project", normalized.Name, composePath)
 		}
 		output = composeProjectOutputFromProject(project.Msg.GetProject())
 	case "agent":
@@ -2139,7 +2139,7 @@ func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string)
 			IncludeSpec: true,
 		}))
 		if err != nil {
-			return commandExitErrorForConnect(fmt.Errorf("inspect agent %s in project %s: %w", target, normalized.Name, err))
+			return commandExitErrorForComposeProject(fmt.Errorf("inspect agent %s in project %s: %w", target, normalized.Name, err), "inspect agent", normalized.Name, composePath)
 		}
 		agent, err := composeAgentInspectOutputFor(cmd.Context(), clients, project.Msg.GetProject(), target)
 		if err != nil {
@@ -3950,6 +3950,21 @@ func commandExitErrorForConnect(err error) error {
 	default:
 		return err
 	}
+}
+
+func commandExitErrorForComposeProject(err error, command, projectName, composePath string) error {
+	if connect.CodeOf(err) == connect.CodeNotFound {
+		return commandExitError{
+			Code: exitCodeUsage,
+			Err: fmt.Errorf(
+				"project %q has not been started on this daemon or was removed by `agent-compose down`; run `agent-compose up --file %s` before `agent-compose %s`",
+				projectName,
+				composePath,
+				command,
+			),
+		}
+	}
+	return commandExitErrorForConnect(err)
 }
 
 func runDaemon(ctx context.Context) error {

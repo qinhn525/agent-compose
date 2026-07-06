@@ -198,6 +198,7 @@ Rules:
 ## `ps`: List Sandboxes
 
 List sandboxes in the current project. By default, only running sandboxes are shown.
+The project must already exist on the daemon; after `agent-compose down`, run `agent-compose up` again before using `ps`.
 
 ```bash
 agent-compose ps
@@ -229,6 +230,7 @@ Default columns:
 ## `stats`: Show Sandbox Resource Stats
 
 Show resource stats snapshots for running sandboxes. Without a sandbox argument, the command shows all running sandboxes for the current compose project.
+Project-wide stats require the project to already exist on the daemon; after `agent-compose down`, run `agent-compose up` again before using `stats` without a sandbox.
 
 ```bash
 agent-compose stats
@@ -372,6 +374,7 @@ agent-compose logs --run-id run_123 --json
 ## `inspect`: Inspect Resources
 
 Inspect project resources or daemon images.
+`inspect project` and `inspect agent <agent>` require the project to already exist on the daemon; after `agent-compose down`, run `agent-compose up` again before using them.
 
 ```bash
 agent-compose inspect project
