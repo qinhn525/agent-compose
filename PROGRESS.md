@@ -540,7 +540,7 @@
 
 参考文档：[TESTING.md](TESTING.md)、[Taskfile.yml](Taskfile.yml)、[.github/workflows/ci.yml](.github/workflows/ci.yml)
 
-- [ ] 6.1 全仓旧字段、marker callsite 和首版范围审计
+- [x] 6.1 全仓旧字段、marker callsite 和首版范围审计
   - 依赖：4.4、5.2。
   - 工作内容：
     - 搜索并分类剩余 `IsStderr`、`is_stderr`、`isStderr`、`GetIsStderr`、`TranscriptEvent{Kind` 命中。
@@ -548,10 +548,10 @@
     - 确认未误实现 `chunk_type`、`payload_kind`、typed payload event、stdin 转发、CLI 参数或 JSON schema 变更。
     - 确认 `BoxRuntime.ExecStream` 方法签名未改变。
   - 可并行子任务：
-    - [ ] 可并行：旧字段搜索审计。
-    - [ ] 可并行：marker helper callsite 审计。
-    - [ ] 可并行：首版不做事项审计。
-    - [ ] 可并行：coverage shape 测试命名审计。
+    - [x] 可并行：旧字段搜索审计。
+    - [x] 可并行：marker helper callsite 审计。
+    - [x] 可并行：首版不做事项审计。
+    - [x] 可并行：coverage shape 测试命名审计。
   - 测试方案：
     - `rg -n "IsStderr|is_stderr|isStderr|GetIsStderr|TranscriptEvent\\{Kind" cmd pkg proto runtime proto-client docs -g '!**/node_modules/**'`
     - `rg -n "__AGENT_RESULT__|__COMMAND_RESULT__|StripAgentResultPayload|StripCommandResultPayload|FilterAgentStreamChunk|FilterCommandStreamChunk" cmd pkg runtime docs`
@@ -561,10 +561,23 @@
     - host streaming path 不再手写 strip 或 stream 可见性判断。
     - 首版范围未漂移。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - 本任务为只读审计；未修改 runtime behavior、proto schema、CLI 参数、JSON schema 或测试代码。
+      - 更新 `PROGRESS.md` 记录旧字段、marker helper、首版范围和 coverage shape 命名的审计结论。
+    - 验证：
+      - `rg -n "IsStderr|is_stderr|isStderr|GetIsStderr|TranscriptEvent\\{Kind" cmd pkg proto runtime proto-client docs -g '!**/node_modules/**'`：无 suspicious 命中；剩余项分类为 `proto/agentcompose/v1` 历史字段/生成代码、spec/plan 历史迁移文字、v1 兼容映射，以及 filtered stream 后用于 stdout/stderr 分流的本地变量。
+      - `rg -n "__AGENT_RESULT__|__COMMAND_RESULT__|StripAgentResultPayload|StripCommandResultPayload|FilterAgentStreamChunk|FilterCommandStreamChunk" cmd pkg runtime docs`：host streaming callsite 使用 centralized filter；`pkg/agentcompose/adapters/agent_executor.go` 使用 `FilterAgentStreamChunk`，`pkg/agentcompose/api/exec.go`、`pkg/runs/controller.go`、`pkg/agentcompose/adapters/loader_command_executor.go` 使用 `FilterCommandStreamChunk`。
+      - `rg -n "StripAgentResultPayload|StripCommandResultPayload" cmd pkg -g '*.go'`：production direct strip 使用限制在 `pkg/execution` sanitizer/filter helper 内；host streaming path 未手写 strip。
+      - `rg -n "chunk_type|payload_kind|typed payload|typed payload event|stdin passthrough|stdin 转发|stdin forwarding|stdin forward" cmd pkg proto runtime docs`：无实现侧范围漂移；仅剩 spec/plan 首版不做事项和 `docs/command-line-manual.md` 中说明 REPL 不是 stdin passthrough 的既有文字。
+      - `rg -n "func \\(.*\\) ExecStream|func .* ExecStream|ExecStream\\(" pkg/driver pkg -g '*.go'`：`pkg/driver/types.go` 的 `BoxRuntime.ExecStream(context.Context, *Session, VMState, ExecSpec, ExecStreamWriter) (ExecResult, error)` 签名未变；docker、boxlite、microsandbox 实现和 adapter fake 仍匹配。
+      - `rg -n "func Test.*(Stream|Stdio|Command|Agent|Transcript|Exec).*" pkg/execution pkg/driver pkg/agentcompose cmd/agent-compose -g '*test.go'`：本目标相关新增/修改 Go tests 为 unit 或既有 `Integration`/`E2E` 命名；未发现因命名导致 coverage shape 误归类的测试。
+    - 审计与例外：
+      - `proto/agentcompose/v1` 的 `is_stderr` proto/generated code 保留，符合首版不迁移 v1 的约束。
+      - `pkg/agentcompose/api/kernel.go`、`pkg/agentcompose/api/session_model.go`、`pkg/agentcompose/api/agent_handler.go` 中 `IsStderr` 仅用于 v1 response 兼容映射。
+      - `pkg/agentcompose/adapters/agent_executor.go` 和 `pkg/agentcompose/adapters/loader_command_executor.go` 中 `isStderr` 仅在 marker filter 之后按 stream 写入 cell stdout/stderr 字段，不控制 visibility。
+      - `pkg/agentcompose/adapters/cell_executor.go` 为 raw notebook cell execution stream，不属于 agent/command protocol marker path。
+      - 未发现 `chunk_type`、`payload_kind`、typed payload event、stdin 转发、新 CLI 参数或输出协议 JSON schema 变更。
     - 下一目标：6.2 运行完整 harness 和 CI 对齐门禁。
 
 - [ ] 6.2 运行完整 harness 和 CI 对齐门禁
