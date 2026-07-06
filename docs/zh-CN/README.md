@@ -128,7 +128,7 @@ docker compose --profile with-ui up -d
 
 - `agent-compose` 和 `agent-compose-ui` 需要一起升级。daemon 不再提供浏览器 auth/OAuth 路由；新的 UI 镜像内置 Go UI server，由它处理这些路由，并代理 daemon API/Jupyter 流量。
 - 浏览器登录配置（`AUTH_USERNAME`、`AUTH_PASSWORD`、`AUTH_SECRET`、`AUTH_SESSION_TTL`、`OAUTH_*`）归属 UI service 环境。启用 `with-ui` profile 时，Docker Compose 已经把 `.env` 传给 `agent-compose-frontend`。
-- 不要把 daemon TCP API 当作浏览器入口直接暴露。如果远程 daemon HTTP 端点需要脱离 UI 单独保护，应配置 daemon 侧 `HTTP_BASIC_AUTH`；浏览器 cookie/OAuth 配置不再被 daemon 消费。
+- 不要把 daemon TCP API 当作浏览器入口直接暴露。浏览器 cookie/OAuth 配置不再被 daemon 消费；直接访问 daemon TCP 只适用于可信网络或机器客户端，启用时应独立做好访问保护。
 - 修改 runtime 内可访问地址或 capability proxy 配置后，例如 `AGENT_COMPOSE_RUNTIME_BASE_URL`、`CAP_GRPC_LISTEN`、`CAP_GRPC_TARGET`，需要重启 daemon 并新建 agent session，让 guest 容器拿到更新后的 facade/capability 环境。
 
 ## 配置

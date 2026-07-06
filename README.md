@@ -266,10 +266,10 @@ Upgrade notes for the UI server split:
   `AUTH_SECRET`, `AUTH_SESSION_TTL`, `OAUTH_*`) to the UI service environment.
   Docker Compose already passes `.env` to `agent-compose-frontend` when the
   `with-ui` profile is enabled.
-- Do not expose the daemon TCP API as the browser entrypoint. If a remote daemon
-  HTTP endpoint must be protected independently of the UI, configure daemon-side
-  `HTTP_BASIC_AUTH`; browser cookie/OAuth settings are not consumed by the
-  daemon anymore.
+- Do not expose the daemon TCP API as the browser entrypoint. Browser
+  cookie/OAuth settings are not consumed by the daemon anymore; direct daemon
+  TCP access is for trusted networks or machine clients and should be protected
+  separately if enabled.
 - After changing runtime-reachable URLs or capability proxy settings such as
   `AGENT_COMPOSE_RUNTIME_BASE_URL`, `CAP_GRPC_LISTEN`, or `CAP_GRPC_TARGET`,
   restart the daemon and create new agent sessions so guest containers receive
