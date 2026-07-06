@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net"
@@ -42,24 +41,10 @@ type Config struct {
 	HttpListen                 string
 	AgentComposeSocket         string
 	AgentComposeHost           string
-	HTTPBasicAuth              string
-	HttpBasicAuth              string
 	WebhookBodyLimitBytes      int64
 	WebhookQueueRulesJSON      string
 	WebhookQueueDefaultWorkers int
 	WorkspaceUploadLimitBytes  int64
-	AuthUsername               string
-	AuthPassword               string
-	AuthSecret                 string
-	AuthSessionTTL             time.Duration
-	OAuthAPIKey                string
-	OAuthSecret                string
-	OAuthScopes                []string
-	OAuthCallbackURL           string
-	OAuthAuthURL               string
-	OAuthTokenURL              string
-	OAuthUserInfoURL           string
-	OAuthClientAuthMethod      string
 	LLMAPIEndpoint             string
 	LLMAPIProtocol             string
 	LLMAPIKey                  string
@@ -305,15 +290,6 @@ func NewConfig(di do.Injector) (*Config, error) {
 		}
 	}
 
-	basicAuth := ""
-	if raw := os.Getenv("HTTP_BASIC_AUTH"); raw != "" {
-		if decoded, err := base64.StdEncoding.DecodeString(raw); err != nil {
-			logger.Warn("failed to decode HTTP_BASIC_AUTH", "error", err)
-		} else {
-			basicAuth = string(decoded)
-		}
-	}
-
 	webhookBodyLimitBytes := int64(1 << 20)
 	if raw := os.Getenv("WEBHOOK_BODY_LIMIT_BYTES"); raw != "" {
 		var parsed int64
@@ -343,49 +319,7 @@ func NewConfig(di do.Injector) (*Config, error) {
 		}
 	}
 
-	authUsername := os.Getenv("AUTH_USERNAME")
-	if authUsername == "" {
-		authUsername = "admin"
-	}
-	authPassword := os.Getenv("AUTH_PASSWORD")
-	authSecret := os.Getenv("AUTH_SECRET")
-	authSessionTTL := 24 * time.Hour
-	if raw := os.Getenv("AUTH_SESSION_TTL"); raw != "" {
-		if parsed, err := time.ParseDuration(raw); err != nil {
-			logger.Warn("failed to parse AUTH_SESSION_TTL", "value", raw, "error", err)
-		} else if parsed <= 0 {
-			logger.Warn("AUTH_SESSION_TTL must be positive", "value", raw)
-		} else {
-			authSessionTTL = parsed
-		}
-	}
-	oauthAPIKey := os.Getenv("OAUTH_APIKEY")
-	oauthSecret := os.Getenv("OAUTH_SECRET")
-	oauthScopes := splitAndTrimEnv(os.Getenv("OAUTH_SCOPES"))
-	if len(oauthScopes) == 0 {
-		oauthScopes = []string{"profile"}
-	}
-	oauthCallbackURL := os.Getenv("OAUTH_CALLBACK_URL")
-	oauthBaseURL := strings.TrimRight(os.Getenv("OAUTH_BASE_URL"), "/")
-	oauthAuthURL := os.Getenv("OAUTH_AUTH_URL")
-	if oauthAuthURL == "" {
-		oauthAuthURL = oauthBaseURL + "/oauth2/auth"
-	}
-	oauthTokenURL := os.Getenv("OAUTH_TOKEN_URL")
-	if oauthTokenURL == "" {
-		oauthTokenURL = oauthBaseURL + "/oauth2/token"
-	}
-	oauthUserInfoURL := os.Getenv("OAUTH_USERINFO_URL")
-	if oauthUserInfoURL == "" {
-		oauthUserInfoURL = oauthBaseURL + "/userinfo"
-	}
-	oauthClientAuthMethod := strings.ToLower(strings.TrimSpace(os.Getenv("OAUTH_CLIENT_AUTH_METHOD")))
-	if oauthClientAuthMethod == "" {
-		oauthClientAuthMethod = "client_secret_post"
-	}
-	if err := validateHTTPListenAuth(httpListen, authPassword, authSecret, basicAuth, oauthAPIKey, oauthCallbackURL, oauthAuthURL, oauthTokenURL); err != nil {
-		return nil, err
-	}
+	warnPublicHTTPListen(logger, httpListen)
 
 	jupyterProxyBase := strings.TrimSpace(os.Getenv("JUPYTER_PROXY_BASE"))
 	if jupyterProxyBase == "" {
@@ -439,24 +373,10 @@ func NewConfig(di do.Injector) (*Config, error) {
 		HttpListen:                 httpListen,
 		AgentComposeSocket:         agentComposeSocket,
 		AgentComposeHost:           agentComposeHost,
-		HTTPBasicAuth:              basicAuth,
-		HttpBasicAuth:              basicAuth,
 		WebhookBodyLimitBytes:      webhookBodyLimitBytes,
 		WebhookQueueRulesJSON:      webhookQueueRulesJSON,
 		WebhookQueueDefaultWorkers: webhookQueueDefaultWorkers,
 		WorkspaceUploadLimitBytes:  workspaceUploadLimitBytes,
-		AuthUsername:               authUsername,
-		AuthPassword:               authPassword,
-		AuthSecret:                 authSecret,
-		AuthSessionTTL:             authSessionTTL,
-		OAuthAPIKey:                oauthAPIKey,
-		OAuthSecret:                oauthSecret,
-		OAuthScopes:                oauthScopes,
-		OAuthCallbackURL:           oauthCallbackURL,
-		OAuthAuthURL:               oauthAuthURL,
-		OAuthTokenURL:              oauthTokenURL,
-		OAuthUserInfoURL:           oauthUserInfoURL,
-		OAuthClientAuthMethod:      oauthClientAuthMethod,
 		LLMAPIEndpoint:             llmAPIEndpoint,
 		LLMAPIProtocol:             llmAPIProtocol,
 		LLMAPIKey:                  llmAPIKey,
@@ -559,21 +479,13 @@ func validateAgentComposeHost(value string) error {
 	return nil
 }
 
-func validateHTTPListenAuth(httpListen, authPassword, authSecret, basicAuth, oauthAPIKey, oauthCallbackURL, oauthAuthURL, oauthTokenURL string) error {
+func warnPublicHTTPListen(logger *slog.Logger, httpListen string) {
 	if httpListen == "" || isLoopbackListenAddress(httpListen) {
-		return nil
+		return
 	}
-	oauthEnabled := oauthAPIKey != "" && oauthCallbackURL != "" && oauthAuthURL != "" && oauthTokenURL != ""
-	switch {
-	case basicAuth != "":
-		return nil
-	case authPassword != "" && authSecret != "":
-		return nil
-	case oauthEnabled && authSecret != "":
-		return nil
-	default:
-		return fmt.Errorf("HTTP_LISTEN %q exposes the daemon on a non-loopback address; set AUTH_PASSWORD with AUTH_SECRET, configure OAuth with AUTH_SECRET, or set HTTP_BASIC_AUTH", httpListen)
-	}
+	logger.Warn("HTTP_LISTEN exposes the daemon on a non-loopback address; expose it only on a trusted network or behind the agent-compose-ui server",
+		"http_listen", httpListen,
+	)
 }
 
 func isLoopbackListenAddress(value string) bool {

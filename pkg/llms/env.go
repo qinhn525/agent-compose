@@ -7,6 +7,8 @@ import (
 	domain "agent-compose/pkg/model"
 )
 
+const RuntimeBaseURLEnvName = "AGENT_COMPOSE_RUNTIME_BASE_URL"
+
 func LoaderCommandFacadeAgentModel(env map[string]string) (string, string) {
 	if env == nil {
 		return domain.DefaultAgentProvider, ""
@@ -43,7 +45,7 @@ func ProviderKeyName(name string) bool {
 func FilterPersistedRuntimeEnv(items []domain.SessionEnvVar) []domain.SessionEnvVar {
 	result := make([]domain.SessionEnvVar, 0, len(items))
 	for _, item := range domain.NormalizeEnvItems(items) {
-		if ProviderKeyName(item.Name) {
+		if ProviderKeyName(item.Name) || strings.EqualFold(strings.TrimSpace(item.Name), RuntimeBaseURLEnvName) {
 			continue
 		}
 		result = append(result, item)

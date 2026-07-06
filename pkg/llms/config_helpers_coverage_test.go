@@ -42,8 +42,11 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 		t.Fatalf("configured base = %q", base)
 	}
 	session.ProviderEnvItems = []domain.SessionEnvVar{{Name: "AGENT_COMPOSE_RUNTIME_BASE_URL", Value: "http://provider"}}
-	if base := GuestRuntimeBaseURL(&appconfig.Config{RuntimeBaseURL: "http://configured"}, session); base != "http://provider" {
-		t.Fatalf("provider base = %q", base)
+	if base := GuestRuntimeBaseURL(&appconfig.Config{RuntimeBaseURL: "http://configured"}, session); base != "http://configured" {
+		t.Fatalf("configured base with provider override = %q", base)
+	}
+	if base := GuestRuntimeBaseURL(&appconfig.Config{}, session); base != "http://provider" {
+		t.Fatalf("provider fallback base = %q", base)
 	}
 	session.ProviderEnvItems = nil
 	if base := GuestRuntimeBaseURL(&appconfig.Config{HttpListen: "0.0.0.0:7410"}, session); base != "http://127.0.0.1:7410" {
@@ -60,7 +63,7 @@ func TestRuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	if provider, model := LoaderCommandFacadeAgentModel(map[string]string{"AGENT_PROVIDER": "opencode"}); provider != "" || model != "" {
 		t.Fatalf("opencode missing model provider=%q model=%q", provider, model)
 	}
-	filtered := FilterPersistedRuntimeEnv([]domain.SessionEnvVar{{Name: "OPENAI_API_KEY", Value: "secret"}, {Name: "VISIBLE", Value: "1"}})
+	filtered := FilterPersistedRuntimeEnv([]domain.SessionEnvVar{{Name: "OPENAI_API_KEY", Value: "secret"}, {Name: "AGENT_COMPOSE_RUNTIME_BASE_URL", Value: "http://runtime"}, {Name: "VISIBLE", Value: "1"}})
 	if len(filtered) != 1 || filtered[0].Name != "VISIBLE" {
 		t.Fatalf("filtered = %#v", filtered)
 	}

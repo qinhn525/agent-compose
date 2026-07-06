@@ -94,6 +94,9 @@ func BuildSessionExecEnv(config *appconfig.Config, session *domain.Session, home
 	for key, value := range managedRuntimeEnvMap(session.RuntimeEnvItems) {
 		env[key] = value
 	}
+	if base := strings.TrimRight(strings.TrimSpace(config.RuntimeBaseURL), "/"); base != "" {
+		env["AGENT_COMPOSE_RUNTIME_BASE_URL"] = base
+	}
 	env["GOPATH"] = "/usr/local/go"
 	env["PATH"] = "/root/.local/bin:/usr/local/go/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 	env["SESSION_ID"] = session.Summary.ID

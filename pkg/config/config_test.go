@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/base64"
 	"errors"
 	"log/slog"
 	"os"
@@ -117,19 +116,10 @@ func testNewConfigParsesEnvironment(t *testing.T) {
 	t.Setenv("JUPYTER_PROXY_BASE", "/agent-compose/jupyter/")
 	t.Setenv("SESSION_START_TIMEOUT", "9s")
 	t.Setenv("SESSION_STOP_TIMEOUT", "10s")
-	t.Setenv("HTTP_BASIC_AUTH", base64.StdEncoding.EncodeToString([]byte("user:pass")))
 	t.Setenv("WEBHOOK_BODY_LIMIT_BYTES", "1234")
 	t.Setenv("WEBHOOK_QUEUE_RULES_JSON", `[{"name":"repo-a","workers":2,"match":{"topic":"webhook.github.push"}}]`)
 	t.Setenv("WEBHOOK_QUEUE_DEFAULT_WORKERS", "6")
 	t.Setenv("WORKSPACE_UPLOAD_LIMIT_BYTES", "4321")
-	t.Setenv("AUTH_USERNAME", "root")
-	t.Setenv("AUTH_PASSWORD", "secret")
-	t.Setenv("AUTH_SECRET", "auth-secret")
-	t.Setenv("AUTH_SESSION_TTL", "3h")
-	t.Setenv("OAUTH_APIKEY", "oauth-client")
-	t.Setenv("OAUTH_SECRET", "oauth-secret")
-	t.Setenv("OAUTH_SCOPES", "profile,email")
-	t.Setenv("OAUTH_CALLBACK_URL", "http://localhost:7410/oauth/callback")
 
 	di := do.New()
 	do.ProvideValue(di, slog.Default())
@@ -165,32 +155,14 @@ func testNewConfigParsesEnvironment(t *testing.T) {
 	if config.GuestWorkspacePath != "/workspace" || config.GuestHomePath != "/root" || config.GuestStateRoot != "/state" || config.GuestRuntimeRoot != "/runtime" || config.GuestLogRoot != "/logs" {
 		t.Fatalf("guest paths = %#v", config)
 	}
-	if config.HTTPBasicAuth != "user:pass" {
-		t.Fatalf("auth = %q", config.HTTPBasicAuth)
-	}
 	if config.WebhookBodyLimitBytes != 1234 || config.WorkspaceUploadLimitBytes != 4321 {
 		t.Fatalf("limits = %d/%d", config.WebhookBodyLimitBytes, config.WorkspaceUploadLimitBytes)
 	}
 	if config.WebhookQueueRulesJSON == "" || config.WebhookQueueDefaultWorkers != 6 {
 		t.Fatalf("webhook queue config = %q/%d", config.WebhookQueueRulesJSON, config.WebhookQueueDefaultWorkers)
 	}
-	if config.AuthUsername != "root" || config.AuthPassword != "secret" || config.AuthSecret != "auth-secret" || config.AuthSessionTTL != 3*time.Hour {
-		t.Fatalf("auth config = %#v", config)
-	}
-	if config.OAuthAPIKey != "oauth-client" || config.OAuthSecret != "oauth-secret" || config.OAuthCallbackURL != "http://localhost:7410/oauth/callback" {
-		t.Fatalf("oauth config = %#v", config)
-	}
-	if config.OAuthAuthURL != "/oauth2/auth" || config.OAuthTokenURL != "/oauth2/token" || config.OAuthUserInfoURL != "/userinfo" {
-		t.Fatalf("oauth endpoint config = %#v", config)
-	}
 	if config.JupyterProxyBasePath != "/agent-compose/jupyter" {
 		t.Fatalf("jupyter proxy base path = %q", config.JupyterProxyBasePath)
-	}
-	if config.OAuthClientAuthMethod != "client_secret_post" {
-		t.Fatalf("oauth client auth method = %q", config.OAuthClientAuthMethod)
-	}
-	if got := strings.Join(config.OAuthScopes, "|"); got != "profile|email" {
-		t.Fatalf("oauth scopes = %q", got)
 	}
 	if got := strings.Join(config.MicrosandboxInsecure, "|"); got != "one.example|two.example|three.example" {
 		t.Fatalf("microsandbox insecure = %q", got)
@@ -314,27 +286,27 @@ func testNewConfigEnablesTCPOnlyWhenHTTPListenIsExplicit(t *testing.T) {
 	}
 }
 
-func TestNewConfigRequiresAuthForPublicHTTPListen(t *testing.T) {
-	testNewConfigRequiresAuthForPublicHTTPListen(t)
+func TestNewConfigWarnsForPublicHTTPListen(t *testing.T) {
+	testNewConfigWarnsForPublicHTTPListen(t)
 }
 
-func testNewConfigRequiresAuthForPublicHTTPListen(t *testing.T) {
+func testNewConfigWarnsForPublicHTTPListen(t *testing.T) {
 	t.Helper()
 	for _, tc := range []struct {
-		name      string
-		listen    string
-		env       map[string]string
-		wantError bool
+		name     string
+		listen   string
+		env      map[string]string
+		wantWarn bool
 	}{
 		{
-			name:      "public listen without auth fails",
-			listen:    "0.0.0.0:7410",
-			wantError: true,
+			name:     "public listen without auth warns",
+			listen:   "0.0.0.0:7410",
+			wantWarn: true,
 		},
 		{
-			name:      "all IPv6 listen without auth fails",
-			listen:    "[::]:7410",
-			wantError: true,
+			name:     "all IPv6 listen without auth warns",
+			listen:   "[::]:7410",
+			wantWarn: true,
 		},
 		{
 			name:   "loopback listen without auth is allowed",
@@ -345,45 +317,22 @@ func testNewConfigRequiresAuthForPublicHTTPListen(t *testing.T) {
 			listen: "localhost:7410",
 		},
 		{
-			name:   "password auth requires secret",
-			listen: "0.0.0.0:7410",
-			env: map[string]string{
-				"AUTH_PASSWORD": "secret",
-			},
-			wantError: true,
-		},
-		{
-			name:   "password auth with secret is allowed",
+			name:   "browser auth env no longer secures daemon listen",
 			listen: "0.0.0.0:7410",
 			env: map[string]string{
 				"AUTH_PASSWORD": "secret",
 				"AUTH_SECRET":   "auth-secret",
 			},
+			wantWarn: true,
 		},
 		{
-			name:   "basic auth is allowed",
-			listen: "0.0.0.0:7410",
-			env: map[string]string{
-				"HTTP_BASIC_AUTH": base64.StdEncoding.EncodeToString([]byte("user:pass")),
-			},
-		},
-		{
-			name:   "oauth requires auth secret",
+			name:   "oauth env no longer secures daemon listen",
 			listen: "0.0.0.0:7410",
 			env: map[string]string{
 				"OAUTH_APIKEY":       "client-id",
 				"OAUTH_CALLBACK_URL": "http://localhost:7410/oauth/callback",
 			},
-			wantError: true,
-		},
-		{
-			name:   "oauth with auth secret is allowed",
-			listen: "0.0.0.0:7410",
-			env: map[string]string{
-				"AUTH_SECRET":        "auth-secret",
-				"OAUTH_APIKEY":       "client-id",
-				"OAUTH_CALLBACK_URL": "http://localhost:7410/oauth/callback",
-			},
+			wantWarn: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -394,20 +343,17 @@ func testNewConfigRequiresAuthForPublicHTTPListen(t *testing.T) {
 				t.Setenv(key, value)
 			}
 
+			var logs strings.Builder
+			logger := slog.New(slog.NewTextHandler(&logs, nil))
 			di := do.New()
-			do.ProvideValue(di, slog.Default())
+			do.ProvideValue(di, logger)
 			_, err := NewConfig(di)
-			if tc.wantError {
-				if err == nil {
-					t.Fatal("NewConfig returned nil error, want auth requirement error")
-				}
-				if !strings.Contains(err.Error(), "HTTP_LISTEN") || !strings.Contains(err.Error(), "AUTH_PASSWORD") {
-					t.Fatalf("error = %q, want HTTP_LISTEN auth guidance", err.Error())
-				}
-				return
-			}
 			if err != nil {
 				t.Fatalf("NewConfig returned error: %v", err)
+			}
+			hasWarning := strings.Contains(logs.String(), "HTTP_LISTEN exposes the daemon")
+			if hasWarning != tc.wantWarn {
+				t.Fatalf("warning present = %t, want %t, logs = %q", hasWarning, tc.wantWarn, logs.String())
 			}
 		})
 	}

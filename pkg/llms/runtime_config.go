@@ -148,10 +148,10 @@ func GuestRuntimeBaseURL(config *appconfig.Config, session *domain.Session) stri
 	if config == nil {
 		return ""
 	}
-	if base := strings.TrimRight(strings.TrimSpace(LookupRuntimeBaseURLEnv(session)), "/"); base != "" {
+	if base := strings.TrimRight(strings.TrimSpace(config.RuntimeBaseURL), "/"); base != "" {
 		return base
 	}
-	if base := strings.TrimRight(strings.TrimSpace(config.RuntimeBaseURL), "/"); base != "" {
+	if base := strings.TrimRight(strings.TrimSpace(LookupRuntimeBaseURLEnv(session)), "/"); base != "" {
 		return base
 	}
 	listen := strings.TrimSpace(config.HttpListen)
@@ -177,7 +177,7 @@ func LookupRuntimeBaseURLEnv(session *domain.Session) string {
 		return ""
 	}
 	for _, items := range [][]domain.SessionEnvVar{session.ProviderEnvItems, session.RuntimeEnvItems, session.EnvItems} {
-		if value := EnvItemValue(items, "AGENT_COMPOSE_RUNTIME_BASE_URL"); strings.TrimSpace(value) != "" {
+		if value := EnvItemValue(items, RuntimeBaseURLEnvName); strings.TrimSpace(value) != "" {
 			return value
 		}
 	}
