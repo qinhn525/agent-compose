@@ -1,0 +1,363 @@
+# Runtime cache lifecycle Progress
+
+本文档把 runtime cache lifecycle 设计和实施计划拆成可独立执行、独立验收的任务清单。任务按依赖顺序排列；标记为“可并行”的子任务可以在同一父任务内并行推进，但 subagent 并发度最高不超过 5。
+
+## 文档索引
+
+- 技术方案：[docs/spec/runtime-cache-lifecycle-spec.md](docs/spec/runtime-cache-lifecycle-spec.md)
+- 实施计划：[docs/plan/runtime-cache-lifecycle-implementation-plan.md](docs/plan/runtime-cache-lifecycle-implementation-plan.md)
+- Harness：[AGENTS.md](AGENTS.md)
+- 测试标准：[TESTING.md](TESTING.md)
+- Task runner：[Taskfile.yml](Taskfile.yml)
+- 当前架构设计：[docs/design/agent-compose_design.md](docs/design/agent-compose_design.md)
+- CLI 当前设计：[docs/zh-CN/design/agent-compose-cli-improvement-plan.md](docs/zh-CN/design/agent-compose-cli-improvement-plan.md)
+- Runtime mount 设计：[docs/design/runtime_mount_manifest_driver_specific_design.md](docs/design/runtime_mount_manifest_driver_specific_design.md)
+
+## 执行规则
+
+- [ ] 每个任务完成时必须同时完成对应测试方案和验收标准。
+- [ ] 不跨阶段提前合并依赖未满足的功能；可以先做可并行调研或测试设计，但不能绕过父任务依赖。
+- [ ] 涉及 proto、生成代码、CLI 参数、质量门禁、coverage 范围、package 脚本或文档时，必须同步更新相关生成物、测试和文档。
+- [ ] 每个新增功能、命令和参数都必须有明确测试覆盖；缺少测试覆盖时任务不得标记完成。
+- [ ] 每个任务合并前至少运行该任务要求的最小测试；阶段收口和最终收口必须运行 harness 定义的 `task lint`、`task build`、`task test`。
+- [ ] 真实 BoxLite/Microsandbox smoke 属于 opt-in 验证；无法运行时必须在完成总结中写明原因和补跑命令。
+- [ ] 每个任务完成后必须把完成总结写成 `状态`、`变更`、`验证`、`审计与例外`、`下一目标` 五组；无内容写“无”。
+
+## 阶段 1：协议模型和生成物
+
+参考文档：[实施计划 阶段 1](docs/plan/runtime-cache-lifecycle-implementation-plan.md#阶段-1协议模型和生成物)
+
+- [x] 1.1 新增 v2 CacheService proto contract
+  - 依赖：无。
+  - 工作内容：在 `proto/agentcompose/v2/agentcompose.proto` 新增 `CacheService`、`CacheDomain`、`CacheStatus`、`CacheReference`、`CacheItem`、filter/request/response messages；保持 `ImageService` 和 `RemoveImageRequest.prune_children` 兼容不变。
+  - 可并行子任务：
+    - [x] 可并行：审计现有 v2 service/message 命名、字段编号和 enum 风格。
+    - [x] 可并行：设计 request/response 测试样例，覆盖 list/inspect/prune/remove。
+  - 测试方案：运行 `go test ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect`；后续任务补充 API handler 行为测试。
+  - 验收标准：proto 中存在四个 RPC；request 覆盖 `driver`、`domain/type`、`status`、`older_than_seconds`、`include_referenced`、`force`、`cache_id`；response 覆盖 matched/removed/skipped/warnings。
+  - 完成总结：
+    - 状态：已完成。
+    - 变更：
+      - 在 `proto/agentcompose/v2/agentcompose.proto` 新增 `CacheService`，包含 `ListCaches`、`InspectCache`、`PruneCaches`、`RemoveCache` 四个 RPC。
+      - 新增 `CacheDomain`、`CacheStatus`、`CacheFilter`、`CacheReference`、`CacheItem` 和 list/inspect/prune/remove request/response messages。
+      - `CacheFilter` 覆盖 `driver`、`domain`、`type`、`status`、`older_than_seconds`、`cache_id`；prune request 覆盖 `include_referenced` 和 `force`；remove request 覆盖 `cache_id` 和 `force`。
+      - prune/remove response 覆盖 `dry_run`、`matched`、`removed`、`skipped`、`warnings`。
+    - 验证：
+      - `protoc -I proto --descriptor_set_out=/tmp/agentcompose-v2-cache.pb proto/agentcompose/v2/agentcompose.proto`
+      - `./scripts/with-go-toolchain.sh go test ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect`
+    - 审计与例外：
+      - `ImageService` 和 `RemoveImageRequest.prune_children` 未修改。
+      - Go proto、Connect Go 和 TypeScript client 生成物按任务 1.2 更新，本任务只落 proto contract。
+    - 下一目标：1.2 生成 Go 和 TypeScript client 产物。
+
+- [ ] 1.2 同步生成 Go/Connect Go/TypeScript client
+  - 依赖：1.1。
+  - 工作内容：更新 `proto/agentcompose/v2/agentcompose.pb.go`、`proto/agentcompose/v2/agentcomposev2connect/agentcompose.connect.go`、`proto-client/src/**`；记录实际使用的 Go proto 生成命令和 `proto-client` npm 命令。
+  - 可并行子任务：
+    - [ ] 可并行：准备本地 protoc/protoc-gen-go/protoc-gen-connect-go/proto-client npm 依赖。
+    - [ ] 可并行：检查 CI `proto-client` workflow 期望的生成和构建命令。
+  - 测试方案：运行 `go test ./proto/agentcompose/v2 ./proto/agentcompose/v2/agentcomposev2connect`、`cd proto-client && npm ci && npm run gen && npm run build`、`task build`。
+  - 验收标准：`agentcomposev2connect` 暴露 `CacheServiceClient` 和 `CacheServiceHandler`；`proto-client` 构建通过；`task build` 能编译新增 proto 包。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：2.1 建立 runtimecache 核心模型。
+
+## 阶段 2：runtime cache 领域包
+
+参考文档：[实施计划 阶段 2](docs/plan/runtime-cache-lifecycle-implementation-plan.md#阶段-2runtime-cache-领域包)
+
+- [ ] 2.1 建立 `pkg/runtimecache` 核心模型和 filter
+  - 依赖：1.2。
+  - 工作内容：新增 `pkg/runtimecache`，定义 domain/status/item/reference/filter/list/prune/remove/result；实现 driver、domain/type、status、older-than、cache-id filter。
+  - 可并行子任务：
+    - [ ] 可并行：梳理 `pkg/images`、`pkg/sessions` 现有 owner package 风格。
+    - [ ] 可并行：为 filter 和 enum 设计 table-driven test cases。
+  - 测试方案：`go test ./pkg/runtimecache`，覆盖每个 filter 参数、组合 filter、空 filter、无匹配项、非法枚举或非法 duration。
+  - 验收标准：核心包不导入 `connectrpc.com/connect`；filter 结果稳定；未知值不会导致误删。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：2.2 实现 cache_id 和安全删除基础。
+
+- [ ] 2.2 实现 `cache_id`、path safety 和 size/warning 机制
+  - 依赖：2.1。
+  - 工作内容：实现稳定 `cache_id` 生成/解析、canonical root 检查、symlink escape 防护、root deletion 防护、size walk、warning 聚合。
+  - 可并行子任务：
+    - [ ] 可并行：实现并审计 path traversal、symlink、broken symlink 测试夹具。
+    - [ ] 可并行：实现 size walk 和 permission/stat failure warning 测试夹具。
+  - 测试方案：`go test ./pkg/runtimecache`，覆盖 ID 稳定性、非法 ID、path 注入、symlink escape、root deletion、stat/read/walk 失败 warning。
+  - 验收标准：删除逻辑只能作用于 inventory 生成出的 item path；无法证明安全时返回 `unknown` 或不可删。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：2.3 实现保护状态和 dry-run/prune。
+
+- [ ] 2.3 实现保护规则、dry-run 和 prune/remove 核心
+  - 依赖：2.2。
+  - 工作内容：实现 active、referenced、unused、expired、orphaned、unknown 的 removable 计算；实现 `force=false` dry-run、`force=true` 删除、`include_referenced` 语义。
+  - 可并行子任务：
+    - [ ] 可并行：构建 fake reference source，模拟 running/resuming/stopped session、project image refs、image metadata refs、driver active state。
+    - [ ] 可并行：构建 prune/remove table tests，覆盖 matched/removed/skipped/warnings。
+  - 测试方案：`go test ./pkg/runtimecache`，覆盖所有 status、force/dry-run、include-referenced、active/unknown force 下仍不删除。
+  - 验收标准：保护规则保守优先；unknown 永不可删；dry-run 不改文件系统。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：3.1 materialized image cache inventory。
+
+## 阶段 3：materialized image cache inventory 和 prune
+
+参考文档：[实施计划 阶段 3](docs/plan/runtime-cache-lifecycle-implementation-plan.md#阶段-3materialized-image-cache-inventory-和-prune)
+
+- [ ] 3.1 实现 materialized cache scanner
+  - 依赖：2.3。
+  - 工作内容：扫描 `pkg/imagecache.Cache.MaterializationRoot()`；读取 `IMAGE_CACHE_ROOT/metadata.json`；关联 `layout_cache_path`、`rootfs_cache_path`、digest、repo tags/digests；识别 layout/rootfs/ready flag/temp dir。
+  - 可并行子任务：
+    - [ ] 可并行：构造 metadata 和磁盘目录测试 fixture。
+    - [ ] 可并行：审计 `pkg/imagecache` ready flag、lock、materialize helper 的当前行为。
+  - 测试方案：`go test ./pkg/runtimecache ./pkg/imagecache`，覆盖 metadata 存在/缺失、layout/rootfs 存在/缺失、orphaned image dir、ready flag 和 temp dir。
+  - 验收标准：每个 materialized item 都能解释 image id/ref 或 orphaned 原因；读取失败时 warning 清晰。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：3.2 materialized cache 删除和 image remove 非回归。
+
+- [ ] 3.2 实现 materialized cache prune/remove 和非回归测试
+  - 依赖：3.1。
+  - 工作内容：使用 `imagecache.Lock` 或同级 lock 保护删除；删除 layout/rootfs 时同步移除对应 ready flag；删除 temp dir 不影响完整 cache；保持 `pkg/imagecache.Cache.Remove` 和 `agent-compose rmi` 不删除 materialized/runtime cache。
+  - 可并行子任务：
+    - [ ] 可并行：实现删除一致性测试。
+    - [ ] 可并行：实现 `Cache.Remove(PruneChildren=true)` 非回归测试。
+  - 测试方案：`go test ./pkg/runtimecache ./pkg/imagecache`，覆盖 referenced 默认不可删、include-referenced 可删、orphaned/temp/expired force 删除、ready flag 同步删除。
+  - 验收标准：不会误删 OCI image store root 或其他 image 的完整 cache；image domain 与 runtime cache domain 分离。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：4.1 BoxLite cache adapter。
+
+## 阶段 4：BoxLite 和 Microsandbox driver cache adapter
+
+参考文档：[实施计划 阶段 4](docs/plan/runtime-cache-lifecycle-implementation-plan.md#阶段-4boxlite-和-microsandbox-driver-cache-adapter)
+
+- [ ] 4.1 实现 BoxLite runtime-derived inventory 和安全删除
+  - 依赖：3.2。
+  - 工作内容：识别 `BOXLITE_HOME/images/local`、`BOXLITE_HOME/images/disk-images` 和可安全发现的 box/runtime state；将 legacy cleanup 纳入 inventory-aware removal；BoxLite DB/schema 不确定时标记 unknown。
+  - 可并行子任务：
+    - [ ] 可并行：审计 `pkg/driver/boxlite_cache_gc.go` 和现有 boxlite cgo tests。
+    - [ ] 可并行：构造 BoxLite home/DB fixture，覆盖 active/stopped/orphaned/unknown。
+  - 测试方案：`go test -tags boxlitecgo ./pkg/driver` 和相关 `pkg/runtimecache` tests，覆盖 active 引用阻止删除、stopped/orphaned dry-run/force、DB 表缺失或查询失败为 unknown。
+  - 验收标准：BoxLite cache 删除不再按固定目录无条件清空；无法证明安全时不可删。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：4.2 移除 BoxLite 启动热路径隐式清理。
+
+- [ ] 4.2 移除 BoxLite 启动热路径 materialized cache GC
+  - 依赖：4.1。
+  - 工作内容：从 `resolveRootfsPath()` 或等价 image resolution 热路径迁出 `maybeRunCacheGC()`；保留过期 materialized cache 判断能力给显式 prune 使用。
+  - 可并行子任务：
+    - [ ] 可并行：补充回归测试证明 `EnsureSession` 和 image resolution 不触发 cleanup。
+    - [ ] 可并行：审计 `BOX_CACHE_TTL` 相关文档和配置引用。
+  - 测试方案：`go test -tags boxlitecgo ./pkg/driver`，覆盖 `EnsureSession` 不调用 legacy cleanup、`resolveRootfsPath()` 不触发 `maybeRunCacheGC()`、当前 image cache 不被启动路径删除。
+  - 验收标准：BoxLite session start/resume 不删除其他 image 或全局 cache 项。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：4.3 Microsandbox session-ephemeral adapter。
+
+- [ ] 4.3 实现 Microsandbox session-ephemeral inventory 和移除 startup sweep
+  - 依赖：3.2。
+  - 工作内容：识别 `MICROSANDBOX_HOME/docker-disks/*.raw`、`MICROSANDBOX_HOME/sandboxes/*`；从 `prepareEnvironment()` 移除 `gcDockerDisks()`；保留 `createSandbox` 失败 rollback 和 `StopSession` 当前 session 清理。
+  - 可并行子任务：
+    - [ ] 可并行：构造 Microsandbox home fixture，覆盖 running/stopped/orphaned/unknown。
+    - [ ] 可并行：补充 session 创建失败和 StopSession cleanup 回归测试。
+  - 测试方案：`go test ./pkg/driver` 和相关 `pkg/runtimecache` tests，覆盖 prepareEnvironment 不删除已有 `.raw`、创建失败只删除当前 disk、StopSession 删除当前 disk、orphaned disk 可显式 prune。
+  - 验收标准：Microsandbox startup 不再全量删除其他 session `.raw`；显式 prune 才清理 orphaned/stopped state。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：5.1 API handler。
+
+## 阶段 5：daemon CacheService 和 route 注册
+
+参考文档：[实施计划 阶段 5](docs/plan/runtime-cache-lifecycle-implementation-plan.md#阶段-5daemon-cacheservice-和-route-注册)
+
+- [ ] 5.1 实现 `pkg/agentcompose/api` CacheService handler
+  - 依赖：1.2、2.3、3.2、4.1、4.3。
+  - 工作内容：新增 `pkg/agentcompose/api/cache.go`；实现 proto/domain 映射、参数校验、Connect code 映射、List/Inspect/Prune/Remove RPC。
+  - 可并行子任务：
+    - [ ] 可并行：实现 enum 和 filter 映射 table tests。
+    - [ ] 可并行：实现 fake controller，覆盖四个 RPC 的成功和错误路径。
+  - 测试方案：`go test ./pkg/agentcompose/api ./pkg/runtimecache`，覆盖四个 RPC、invalid argument、not found、active/unknown protected、referenced without include、dry-run、force delete。
+  - 验收标准：handler 返回 warnings/blocked reasons；错误码稳定；unknown enum 不导致误删。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：5.2 app 注册和集成。
+
+- [ ] 5.2 注册 daemon CacheService 并接入事实源
+  - 依赖：5.1。
+  - 工作内容：在 `pkg/agentcompose/app/app.go` 构造 runtimecache controller，注入 config、sessionstore、configstore、imagecache、driver adapters；注册 `agentcomposev2connect.NewCacheServiceHandler`。
+  - 可并行子任务：
+    - [ ] 可并行：更新 app route test 期望路径。
+    - [ ] 可并行：准备临时 DATA_ROOT/SESSION_ROOT/fake runtime homes 集成 fixture。
+  - 测试方案：`go test ./pkg/agentcompose/app ./pkg/agentcompose/api ./pkg/runtimecache`，覆盖 `/agentcompose.v2.CacheService/*` route 注册和 generated Connect client 调用四个 RPC。
+  - 验收标准：daemon 是唯一删除执行者；CLI 无需本地路径权限；`ImageService.RemoveImage` 相关测试仍通过。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：6.1 CLI cache ls/inspect。
+
+## 阶段 6：CLI cache 命令组
+
+参考文档：[实施计划 阶段 6](docs/plan/runtime-cache-lifecycle-implementation-plan.md#阶段-6cli-cache-命令组)
+
+- [ ] 6.1 实现 CLI cache client、`cache ls` 和 `cache inspect`
+  - 依赖：5.2。
+  - 工作内容：`newCLIServiceClients` 增加 CacheService client；新增 `cache` 命令组；实现 `cache ls`、`cache inspect <cache-id>`；实现通用 `--driver`、`--type`、`--status`、`--json`。
+  - 可并行子任务：
+    - [ ] 可并行：扩展 CLI stub server 和 cache service stub。
+    - [ ] 可并行：实现文本输出和 JSON output structs。
+  - 测试方案：`go test ./cmd/agent-compose`，覆盖 `cache ls` 文本/JSON/空结果，`--driver` 所有值和非法值，`--type` 所有值和非法值，`--status` 所有值和非法值，`cache inspect` 文本/JSON/NotFound/missing arg/extra arg。
+  - 验收标准：每个命令和每个参数均有测试；JSON stdout 可 `json.Unmarshal`；CLI 不读写 daemon cache path。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：6.2 CLI cache prune/rm。
+
+- [ ] 6.2 实现 CLI `cache prune` 和 `cache rm`
+  - 依赖：6.1。
+  - 工作内容：实现 `cache prune`、`cache rm <cache-id>`；实现 `--unused`、`--orphaned`、`--expired`、`--older-than`、`--include-referenced`、`--force`；定义互斥/组合规则和退出码。
+  - 可并行子任务：
+    - [ ] 可并行：实现 prune/rm request mapping tests。
+    - [ ] 可并行：实现文本输出和 JSON output tests。
+  - 测试方案：`go test ./cmd/agent-compose`，覆盖默认 dry-run、`--force`、`--unused`、`--orphaned`、`--expired`、`--older-than 7d`、`--include-referenced`、非法 duration、负数/零 duration、active/unknown protected error、missing/extra args。
+  - 验收标准：无可删项返回 0；usage error 和 Connect error 映射符合现有 CLI；dry-run 中 protected skipped 不失败；JSON 不被 warning/deprecated 文案污染。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：7.1 端到端 workflow。
+
+## 阶段 7：端到端集成和非回归
+
+参考文档：[实施计划 阶段 7](docs/plan/runtime-cache-lifecycle-implementation-plan.md#阶段-7端到端集成和非回归)
+
+- [ ] 7.1 覆盖完整 cache lifecycle workflow
+  - 依赖：6.2。
+  - 工作内容：增加 in-process daemon/Connect/CLI integration tests，使用临时 `DATA_ROOT`、`SESSION_ROOT`、`IMAGE_CACHE_ROOT`、`BOXLITE_HOME`、`MICROSANDBOX_HOME` 构造完整文件树。
+  - 可并行子任务：
+    - [ ] 可并行：构造 image metadata + materialized layout/rootfs fixture。
+    - [ ] 可并行：构造 BoxLite legacy dirs fixture。
+    - [ ] 可并行：构造 Microsandbox docker disk/sandbox state fixture。
+  - 测试方案：`go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runtimecache ./pkg/driver ./pkg/imagecache`，覆盖 dry-run 不删除、force 仅删除目标、running session active 不可删、stopped referenced 默认不可删但 include-referenced 可删、unknown warning。
+  - 验收标准：完整 workflow 能证明 dry-run、force、保护、warnings 和删除边界。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：7.2 image/session 非回归。
+
+- [ ] 7.2 覆盖 `rmi` 和 session lifecycle 非回归
+  - 依赖：7.1。
+  - 工作内容：验证 `agent-compose rmi` 不删除 materialized/runtime cache；验证 Microsandbox startup 不删除其他 `.raw`；验证 BoxLite image resolution 不触发 TTL prune。
+  - 可并行子任务：
+    - [ ] 可并行：实现 `rmi` 非回归集成测试。
+    - [ ] 可并行：实现 BoxLite/Microsandbox startup 非回归测试。
+  - 测试方案：`go test ./cmd/agent-compose ./pkg/driver ./pkg/imagecache ./pkg/runtimecache`，断言 `image-cache/<image-id>/oci`、`rootfs`、`BOXLITE_HOME/images/*`、`MICROSANDBOX_HOME/docker-disks/*.raw` 未被非 cache 命令删除。
+  - 验收标准：image domain 与 runtime cache domain 分离；启动路径不做隐藏全局 GC。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：8.1 文档和质量门禁。
+
+## 阶段 8：文档、质量门禁和真实 runtime smoke
+
+参考文档：[实施计划 阶段 8](docs/plan/runtime-cache-lifecycle-implementation-plan.md#阶段-8文档质量门禁和真实-runtime-smoke)
+
+- [ ] 8.1 更新用户和设计文档
+  - 依赖：7.2。
+  - 工作内容：更新 `docs/command-line-manual.md`、`docs/zh-CN/command-line-manual.md`、`docs/design/agent-compose_design.md`、中文对应设计文档；说明 `CacheService`、`cache` 命令、dry-run 默认、`--force`、保护状态、`BOX_CACHE_TTL` 新语义。
+  - 可并行子任务：
+    - [ ] 可并行：更新 CLI 使用文档。
+    - [ ] 可并行：更新架构/API 设计文档。
+    - [ ] 可并行：审计 `.env.example` 和部署文档是否提到 `BOX_CACHE_TTL`。
+  - 测试方案：运行 `task docs` 如仍为 placeholder 则记录；运行 focused grep 检查旧语义；最终运行 `task lint`、`task build`、`task test`。
+  - 验收标准：文档与实现一致；不新增无必要环境变量；dry-run/force 行为清晰。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：8.2 全量门禁和 smoke。
+
+- [ ] 8.2 运行全量质量门禁和 runtime smoke
+  - 依赖：8.1。
+  - 工作内容：检查所有生成物已提交；运行局部和全量质量门禁；具备依赖时运行 BoxLite/Microsandbox runtime smoke。
+  - 可并行子任务：
+    - [ ] 可并行：执行 proto-client 生成和 build 验证。
+    - [ ] 可并行：执行 Go focused test 和 full task gates。
+    - [ ] 可并行：在具备 runtime 依赖环境执行 smoke。
+  - 测试方案：
+    - `go test ./cmd/agent-compose ./pkg/agentcompose/api ./pkg/agentcompose/app ./pkg/runtimecache ./pkg/driver ./pkg/imagecache`
+    - `cd proto-client && npm ci && npm run gen && npm run build`
+    - `task build`
+    - `task lint`
+    - `task test`
+    - `SMOKE_RUNTIME_DRIVERS=boxlite task test:runtime-smoke`
+    - `SMOKE_RUNTIME_DRIVERS=microsandbox task test:runtime-smoke`
+  - 验收标准：`task lint`、`task build`、`task test` 通过；coverage 满足 `TESTING.md` baseline；无法运行的 smoke 有明确原因和补跑命令。
+  - 完成总结：
+    - 状态：待完成。
+    - 变更：待完成。
+    - 验证：待完成。
+    - 审计与例外：待完成。
+    - 下一目标：无。
+
+## 停止条件
+
+- 新增 proto 后无法稳定生成 Go Connect 或 TS client：停止在阶段 1。
+- 删除路径无法证明 canonical path 位于对应 root 下：停止实现删除，只允许 list/inspect dry-run。
+- BoxLite DB schema 与假设不一致：对应 item 标记 `unknown`，不得删除。
+- Microsandbox SDK/daemon 无法可靠区分 running/draining/stopped：对应 sandbox state 标记 `unknown` 或 `active`，不得删除。
+- 任一 CLI 命令或参数缺少测试覆盖：对应任务不得完成。
+- `task test` coverage 低于 baseline：必须补测试，不得只调整 coverage 排除规则。
+
+## 首版不做事项
+
+- 不实现自动后台周期性 GC。
+- 不实现跨节点或多 daemon cache 协调。
+- 不提供 UI 页面。
+- 不让 `rmi` 默认删除 runtime/materialized cache。
+- 不删除 Docker daemon image/container/volume cache。
+- 不支持按任意 filesystem path 删除 cache。
+- 不优化 `run --command` 跳过 Jupyter readiness。
