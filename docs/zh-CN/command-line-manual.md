@@ -201,6 +201,7 @@ agent-compose run reviewer --jupyter --jupyter-expose --prompt "Inspect the note
 ## `ps`：查看 sandbox
 
 查看当前 project 下的 sandbox。默认只显示运行中的 sandbox。
+该 project 必须已经存在于 daemon 中；执行 `agent-compose down` 后，需要先重新执行 `agent-compose up`，再使用 `ps`。
 
 ```bash
 agent-compose ps
@@ -234,6 +235,7 @@ agent-compose ps --json
 ## `stats`：查看 sandbox 资源统计
 
 查看运行中 sandbox 的资源统计快照。未指定 sandbox 参数时，显示当前 compose project 下所有 running sandbox 的统计。
+project 级 stats 要求该 project 已存在于 daemon 中；执行 `agent-compose down` 后，需要先重新执行 `agent-compose up`，再使用不带 sandbox 参数的 `stats`。
 
 ```bash
 agent-compose stats
@@ -383,6 +385,7 @@ agent-compose logs --run-id run_123 --json
 ## `inspect`：查看资源详情
 
 查看 project 下资源或 daemon image 的详细信息。
+`inspect project` 和 `inspect agent <agent>` 要求该 project 已存在于 daemon 中；执行 `agent-compose down` 后，需要先重新执行 `agent-compose up`，再使用它们。
 
 ```bash
 agent-compose inspect project
