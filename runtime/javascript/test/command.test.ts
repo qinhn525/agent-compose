@@ -50,7 +50,7 @@ describe("runtime command execution", () => {
     });
   });
 
-  it("emits a command transcript without polluting raw artifacts", async () => {
+  it("mirrors command stdout without adding a command echo", async () => {
     await withTempSession(async (root) => {
       const artifactDir = path.join(root, "artifacts");
       const requestFile = await writeRequest(root, {
@@ -64,8 +64,7 @@ describe("runtime command execution", () => {
         const result = await runExecCommand({ requestFile, workspace: root });
         expect(result.stdout).toBe("raw-out");
         expect(result.output).toBe("raw-out");
-        expect(stdio.stdout).toContain("$ node -e");
-        expect(stdio.stdout).toContain("raw-out");
+        expect(stdio.stdout).toBe("raw-out");
         expect(await fs.readFile(result.artifacts.stdout, "utf8")).toBe("raw-out");
         expect(await fs.readFile(result.artifacts.output, "utf8")).toBe("raw-out");
       } finally {

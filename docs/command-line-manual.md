@@ -329,7 +329,7 @@ agent-compose exec sandbox_123 --command "git status --short"
 agent-compose exec sandbox_123 --cwd /workspace --command "pwd"
 ```
 
-`exec` and `run --command` use the same guest `agent-compose-runtime exec` command transcript. Text mode streams stdout to local stdout and stderr to local stderr after host-side marker filtering; `--json` suppresses streaming transcript output and prints only the final result. `exec` does not create a `ProjectRun`; use `run --command` when run audit, `logs`, or run artifacts are required.
+`exec` and `run --command` use the same guest `agent-compose-runtime exec` command output path. Text mode streams command stdout to local stdout and command stderr to local stderr after host-side marker filtering; it does not echo the host wrapper command. `--json` suppresses streaming output and prints only the final result. `exec` does not create a `ProjectRun`; use `run --command` when run audit, `logs`, or run artifacts are required.
 
 ## `logs`: Show Logs
 
