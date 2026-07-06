@@ -4,13 +4,39 @@ import (
 	"context"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 
 	appconfig "agent-compose/pkg/config"
 	"agent-compose/pkg/llms"
 	domain "agent-compose/pkg/model"
-	"agent-compose/pkg/storage/configstore"
 )
+
+// isNilStore reports whether store is absent, treating a nil concrete pointer
+// wrapped in the interface as nil too. Callers such as the adapters hold a
+// *configstore.ConfigStore that can be nil (e.g. in tests without an LLM store);
+// a plain store == nil check would miss that typed-nil and panic on first use.
+func isNilStore(store FacadeStore) bool {
+	if store == nil {
+		return true
+	}
+	rv := reflect.ValueOf(store)
+	switch rv.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		return rv.IsNil()
+	default:
+		return false
+	}
+}
+
+// FacadeStore is the persistence surface the runtime LLM facade needs: the LLM
+// resolution / provider-bootstrap surface plus facade-token persistence.
+// *configstore.ConfigStore satisfies it; depending on this interface keeps the
+// facade off a direct configstore import.
+type FacadeStore interface {
+	llms.LLMResolverStore
+	SaveLLMFacadeToken(ctx context.Context, token llms.FacadeToken) error
+}
 
 const (
 	TokenSourceAgent         = "agent"
@@ -21,7 +47,7 @@ type AgentRuntimeConfig struct {
 	Env map[string]string
 }
 
-func EnsureSessionLLMFacadeConfig(ctx context.Context, config *appconfig.Config, store *configstore.ConfigStore, session *domain.Session, agent, model, source, runID string) (map[string]string, error) {
+func EnsureSessionLLMFacadeConfig(ctx context.Context, config *appconfig.Config, store FacadeStore, session *domain.Session, agent, model, source, runID string) (map[string]string, error) {
 	runtimeConfig, err := EnsureSessionAgentRuntimeConfig(ctx, config, store, session, agent, model, source, runID)
 	if err != nil {
 		return nil, err
@@ -29,8 +55,8 @@ func EnsureSessionLLMFacadeConfig(ctx context.Context, config *appconfig.Config,
 	return runtimeConfig.Env, nil
 }
 
-func EnsureSessionAgentRuntimeConfig(ctx context.Context, config *appconfig.Config, store *configstore.ConfigStore, session *domain.Session, agent, model, source, runID string) (AgentRuntimeConfig, error) {
-	if config == nil || store == nil || session == nil {
+func EnsureSessionAgentRuntimeConfig(ctx context.Context, config *appconfig.Config, store FacadeStore, session *domain.Session, agent, model, source, runID string) (AgentRuntimeConfig, error) {
+	if config == nil || isNilStore(store) || session == nil {
 		return AgentRuntimeConfig{}, nil
 	}
 	switch domain.NormalizeAgentKind(agent) {
@@ -48,8 +74,8 @@ func EnsureSessionAgentRuntimeConfig(ctx context.Context, config *appconfig.Conf
 	}
 }
 
-func ensureSessionCodexConfig(ctx context.Context, config *appconfig.Config, store *configstore.ConfigStore, session *domain.Session, model, source, runID string) (map[string]string, error) {
-	target, err := configstore.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, session.Summary.ID, llms.ProviderFamilyOpenAI, model, "", sessionProviderEnvItems(session))
+func ensureSessionCodexConfig(ctx context.Context, config *appconfig.Config, store FacadeStore, session *domain.Session, model, source, runID string) (map[string]string, error) {
+	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, session.Summary.ID, llms.ProviderFamilyOpenAI, model, "", sessionProviderEnvItems(session))
 	if err != nil {
 		if isOptionalConfigError(err) {
 			return nil, nil
@@ -82,13 +108,13 @@ func ensureSessionCodexConfig(ctx context.Context, config *appconfig.Config, sto
 	}, nil
 }
 
-func ensureSessionClaudeConfig(ctx context.Context, config *appconfig.Config, store *configstore.ConfigStore, session *domain.Session, model, source, runID string) (map[string]string, error) {
+func ensureSessionClaudeConfig(ctx context.Context, config *appconfig.Config, store FacadeStore, session *domain.Session, model, source, runID string) (map[string]string, error) {
 	baseURL := llms.GuestRuntimeBaseURL(config, session)
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, nil
 	}
 	providerEnv := sessionProviderEnvItems(session)
-	target, err := configstore.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, session.Summary.ID, llms.ProviderFamilyAnthropic, model, "", providerEnv)
+	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, session.Summary.ID, llms.ProviderFamilyAnthropic, model, "", providerEnv)
 	tokenModel := ""
 	tokenProvider := ""
 	if err != nil {
@@ -123,7 +149,7 @@ func ensureSessionClaudeConfig(ctx context.Context, config *appconfig.Config, st
 	return env, nil
 }
 
-func ensureSessionOpenCodeConfig(ctx context.Context, config *appconfig.Config, store *configstore.ConfigStore, session *domain.Session, model, source, runID string) (map[string]string, error) {
+func ensureSessionOpenCodeConfig(ctx context.Context, config *appconfig.Config, store FacadeStore, session *domain.Session, model, source, runID string) (map[string]string, error) {
 	providerID, modelName, err := llms.SplitOpenCodeModel(model)
 	if err != nil {
 		return nil, err
@@ -144,12 +170,12 @@ func ensureSessionOpenCodeConfig(ctx context.Context, config *appconfig.Config, 
 	}
 }
 
-func ensureOpenCodeAnthropicConfig(ctx context.Context, config *appconfig.Config, store *configstore.ConfigStore, session *domain.Session, model, source, runID string) (map[string]string, error) {
+func ensureOpenCodeAnthropicConfig(ctx context.Context, config *appconfig.Config, store FacadeStore, session *domain.Session, model, source, runID string) (map[string]string, error) {
 	baseURL := llms.GuestRuntimeBaseURL(config, session)
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, nil
 	}
-	target, err := configstore.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, session.Summary.ID, llms.ProviderFamilyAnthropic, model, "", sessionProviderEnvItems(session))
+	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, session.Summary.ID, llms.ProviderFamilyAnthropic, model, "", sessionProviderEnvItems(session))
 	if err != nil {
 		return nil, err
 	}
@@ -176,8 +202,8 @@ func ensureOpenCodeAnthropicConfig(ctx context.Context, config *appconfig.Config
 	}, nil
 }
 
-func ensureOpenCodeOpenAIConfig(ctx context.Context, config *appconfig.Config, store *configstore.ConfigStore, session *domain.Session, model, source, runID string) (map[string]string, error) {
-	target, err := configstore.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, session.Summary.ID, llms.ProviderFamilyOpenAI, model, "", sessionProviderEnvItems(session))
+func ensureOpenCodeOpenAIConfig(ctx context.Context, config *appconfig.Config, store FacadeStore, session *domain.Session, model, source, runID string) (map[string]string, error) {
+	target, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, session.Summary.ID, llms.ProviderFamilyOpenAI, model, "", sessionProviderEnvItems(session))
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +233,7 @@ func ensureOpenCodeOpenAIConfig(ctx context.Context, config *appconfig.Config, s
 	}, nil
 }
 
-func ensureOpenCodeCustomProviderConfig(ctx context.Context, config *appconfig.Config, store *configstore.ConfigStore, session *domain.Session, providerID, model, source, runID string) (map[string]string, error) {
+func ensureOpenCodeCustomProviderConfig(ctx context.Context, config *appconfig.Config, store FacadeStore, session *domain.Session, providerID, model, source, runID string) (map[string]string, error) {
 	target, err := resolveOpenCodeCustomProviderTarget(ctx, config, store, session, providerID, model)
 	if err != nil {
 		return nil, err
@@ -238,28 +264,28 @@ func ensureOpenCodeCustomProviderConfig(ctx context.Context, config *appconfig.C
 	}, nil
 }
 
-func resolveOpenCodeCustomProviderTarget(ctx context.Context, config *appconfig.Config, store *configstore.ConfigStore, session *domain.Session, providerID, model string) (llms.ResolvedTarget, error) {
+func resolveOpenCodeCustomProviderTarget(ctx context.Context, config *appconfig.Config, store FacadeStore, session *domain.Session, providerID, model string) (llms.ResolvedTarget, error) {
 	envItems := sessionProviderEnvItems(session)
 	sessionID := ""
 	if session != nil {
 		sessionID = session.Summary.ID
 	}
-	if configstore.HasEnabledLLMProviderID(ctx, store, providerID) {
-		return configstore.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sessionID, llms.ProviderFamilyOpenAI, model, providerID, envItems)
+	if llms.HasEnabledLLMProviderID(ctx, store, providerID) {
+		return llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sessionID, llms.ProviderFamilyOpenAI, model, providerID, envItems)
 	}
 	if sessionID != "" && llms.HasOpenAIEnvProviderInput(envItems) {
-		sessionProviderID, err := configstore.EnsureSessionOpenAIEnvProvider(ctx, store, sessionID, model, envItems)
+		sessionProviderID, err := llms.EnsureSessionOpenAIEnvProvider(ctx, store, sessionID, model, envItems)
 		if err != nil {
 			return llms.ResolvedTarget{}, err
 		}
 		if strings.TrimSpace(sessionProviderID) != "" {
-			return configstore.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sessionID, llms.ProviderFamilyOpenAI, model, sessionProviderID, envItems)
+			return llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sessionID, llms.ProviderFamilyOpenAI, model, sessionProviderID, envItems)
 		}
 	}
-	if _, err := llms.EnsureOpenAIEnvProvider(ctx, store, configstore.DefaultLLMEnvProviderLookup(ctx, config, store), providerID, providerID, llms.ProviderScopeEnvDefault, model, false); err != nil {
+	if _, err := llms.EnsureOpenAIEnvProvider(ctx, store, llms.DefaultLLMEnvProviderLookup(ctx, config, store), providerID, providerID, llms.ProviderScopeEnvDefault, model, false); err != nil {
 		return llms.ResolvedTarget{}, err
 	}
-	return configstore.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sessionID, llms.ProviderFamilyOpenAI, model, providerID, envItems)
+	return llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sessionID, llms.ProviderFamilyOpenAI, model, providerID, envItems)
 }
 
 func isOptionalConfigError(err error) bool {
@@ -273,15 +299,15 @@ func IsOptionalConfigError(err error) bool {
 	return isOptionalConfigError(err)
 }
 
-func HasAnthropicProviderKey(ctx context.Context, config *appconfig.Config, store *configstore.ConfigStore) bool {
+func HasAnthropicProviderKey(ctx context.Context, config *appconfig.Config, store FacadeStore) bool {
 	configKey := ""
 	if config != nil {
 		configKey = config.LLMAPIKey
 	}
 	return strings.TrimSpace(firstNonEmpty(
-		configstore.LookupEnvValue(ctx, store, "ANTHROPIC_API_KEY"),
-		configstore.LookupEnvValue(ctx, store, "ANTHROPIC_AUTH_TOKEN"),
-		configstore.LookupEnvValue(ctx, store, "LLM_API_KEY"),
+		llms.LookupEnvValue(ctx, store, "ANTHROPIC_API_KEY"),
+		llms.LookupEnvValue(ctx, store, "ANTHROPIC_AUTH_TOKEN"),
+		llms.LookupEnvValue(ctx, store, "LLM_API_KEY"),
 		os.Getenv("ANTHROPIC_API_KEY"),
 		os.Getenv("ANTHROPIC_AUTH_TOKEN"),
 		os.Getenv("LLM_API_KEY"),

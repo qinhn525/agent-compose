@@ -33,7 +33,7 @@ func (c *LLMClient) Generate(ctx context.Context, prompt, model, outputSchemaJSO
 	if c == nil {
 		return llms.GenerateResult{}, fmt.Errorf("llm client is unavailable")
 	}
-	target, err := configstore.ResolveLLMTarget(ctx, c.config, c.store, model)
+	target, err := llms.ResolveLLMTarget(ctx, c.config, c.store, model)
 	if err != nil {
 		return llms.GenerateResult{}, err
 	}

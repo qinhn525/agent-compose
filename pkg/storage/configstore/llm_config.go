@@ -1,7 +1,6 @@
 package configstore
 
 import (
-	appconfig "agent-compose/pkg/config"
 	"agent-compose/pkg/llms"
 	domain "agent-compose/pkg/model"
 	"context"
@@ -244,36 +243,4 @@ func (s *ConfigStore) RevokeLLMFacadeTokensForSession(ctx context.Context, sessi
 		return fmt.Errorf("prune llm facade tokens: %w", err)
 	}
 	return nil
-}
-
-// The LLM target-resolution and provider-bootstrap logic now lives in pkg/llms.
-// These thin wrappers keep the existing configstore call sites compiling; they
-// are removed in the follow-up once callers depend on llms directly.
-
-func DefaultLLMEnvProviderLookup(ctx context.Context, config *appconfig.Config, store *ConfigStore) llms.EnvProviderLookup {
-	return llms.DefaultLLMEnvProviderLookup(ctx, config, store)
-}
-
-func ResolveLLMTarget(ctx context.Context, config *appconfig.Config, store *ConfigStore, requestedModel string) (llms.ResolvedTarget, error) {
-	return llms.ResolveLLMTarget(ctx, config, store, requestedModel)
-}
-
-func ResolveRuntimeLLMTarget(ctx context.Context, config *appconfig.Config, store *ConfigStore, requestedModel, providerID string) (llms.ResolvedTarget, error) {
-	return llms.ResolveRuntimeLLMTarget(ctx, config, store, requestedModel, providerID)
-}
-
-func ResolveRuntimeLLMTargetWithEnv(ctx context.Context, config *appconfig.Config, store *ConfigStore, sessionID, preferredProviderFamily, requestedModel, providerID string, envItems []domain.SessionEnvVar) (llms.ResolvedTarget, error) {
-	return llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, sessionID, preferredProviderFamily, requestedModel, providerID, envItems)
-}
-
-func EnsureSessionOpenAIEnvProvider(ctx context.Context, store *ConfigStore, sessionID, requestedModel string, envItems []domain.SessionEnvVar) (string, error) {
-	return llms.EnsureSessionOpenAIEnvProvider(ctx, store, sessionID, requestedModel, envItems)
-}
-
-func HasEnabledLLMProviderID(ctx context.Context, store *ConfigStore, providerID string) bool {
-	return llms.HasEnabledLLMProviderID(ctx, store, providerID)
-}
-
-func LookupEnvValue(ctx context.Context, store *ConfigStore, key string) string {
-	return llms.LookupEnvValue(ctx, store, key)
 }
