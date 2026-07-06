@@ -452,19 +452,30 @@
       - 真实 BoxLite/Microsandbox smoke 为 opt-in，本任务未运行；补跑命令：`SMOKE_RUNTIME_DRIVERS=all task test:runtime-smoke`。
     - 下一目标：7.2 image/session 非回归。
 
-- [ ] 7.2 覆盖 `rmi` 和 session lifecycle 非回归
+- [x] 7.2 覆盖 `rmi` 和 session lifecycle 非回归
   - 依赖：7.1。
   - 工作内容：验证 `agent-compose rmi` 不删除 materialized/runtime cache；验证 Microsandbox startup 不删除其他 `.raw`；验证 BoxLite image resolution 不触发 TTL prune。
   - 可并行子任务：
-    - [ ] 可并行：实现 `rmi` 非回归集成测试。
-    - [ ] 可并行：实现 BoxLite/Microsandbox startup 非回归测试。
+    - [x] 可并行：实现 `rmi` 非回归集成测试。
+    - [x] 可并行：实现 BoxLite/Microsandbox startup 非回归测试。
   - 测试方案：`go test ./cmd/agent-compose ./pkg/driver ./pkg/imagecache ./pkg/runtimecache`，断言 `image-cache/<image-id>/oci`、`rootfs`、`BOXLITE_HOME/images/*`、`MICROSANDBOX_HOME/docker-disks/*.raw` 未被非 cache 命令删除。
   - 验收标准：image domain 与 runtime cache domain 分离；启动路径不做隐藏全局 GC。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - 新增 CLI in-process daemon `rmi --force --prune-children` regression test，使用 `IMAGE_STORE_MODE=oci` 和真实 v2 `ImageService`/OCI image backend。
+      - 构造 OCI image metadata、materialized OCI layout/rootfs sentinel、`BOXLITE_HOME/images/local` sentinel 和 `MICROSANDBOX_HOME/docker-disks/*.raw` sentinel。
+      - 断言 `agent-compose rmi` 只删除 image metadata/ref，保留 materialized cache、BoxLite runtime-derived cache sentinel 和 Microsandbox docker disk sentinel。
+      - 复用并重新验证已有 BoxLite image resolution 和 Microsandbox startup 非回归测试，证明启动路径不触发隐藏全局 GC。
+    - 验证：
+      - `./scripts/with-go-toolchain.sh go test -count=1 ./cmd/agent-compose -run 'TestIntegrationCLI(CacheLifecycleWithInProcessDaemon|RemoveImageDoesNotDeleteRuntimeCachesWithInProcessDaemon)' -v`
+      - `./scripts/with-go-toolchain.sh go test -count=1 ./cmd/agent-compose ./pkg/driver ./pkg/imagecache ./pkg/runtimecache`
+      - `./scripts/with-go-toolchain.sh go test -count=1 -tags boxlitecgo ./pkg/driver`
+      - `git diff --check`
+    - 审计与例外：
+      - `rmi` regression 走真实 in-process daemon HTTP handler和 OCI backend，不依赖 Docker daemon 或真实 runtime。
+      - Microsandbox startup 非回归在默认 `./pkg/driver` 测试中覆盖；BoxLite image resolution 非回归在 `-tags boxlitecgo ./pkg/driver` 中覆盖。
+      - 真实 BoxLite/Microsandbox smoke 为 opt-in，本任务未运行；补跑命令：`SMOKE_RUNTIME_DRIVERS=all task test:runtime-smoke`。
     - 下一目标：8.1 文档和质量门禁。
 
 ## 阶段 8：文档、质量门禁和真实 runtime smoke

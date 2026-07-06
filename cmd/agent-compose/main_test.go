@@ -4183,6 +4183,77 @@ func TestIntegrationCLICacheLifecycleWithInProcessDaemon(t *testing.T) {
 	assertLocalPathMissing(t, referencedReady)
 }
 
+func TestIntegrationCLIRemoveImageDoesNotDeleteRuntimeCachesWithInProcessDaemon(t *testing.T) {
+	t.Setenv("IMAGE_STORE_MODE", config.ImageStoreModeOCI)
+	app, cancel := newTestDaemonApp(t, "127.0.0.1:0", nil)
+	defer cancel()
+	server := httptest.NewServer(app.Echo)
+	defer server.Close()
+
+	cache, err := imagecache.New(imagecache.Config{Root: app.Config.ImageCacheRoot})
+	if err != nil {
+		t.Fatalf("imagecache.New returned error: %v", err)
+	}
+	imageID := "sha256:cli-rmi"
+	layoutPath := cache.MaterializedOCILayoutPath(imageID)
+	rootfsPath := cache.MaterializedRootFSPath(imageID)
+	boxliteCachePath := filepath.Join(app.Config.BoxliteHome, "images", "local", "keep")
+	microsandboxDiskPath := filepath.Join(app.Config.MicrosandboxHome, "docker-disks", "keep.raw")
+	for _, dir := range []string{
+		layoutPath,
+		rootfsPath,
+		boxliteCachePath,
+		filepath.Dir(microsandboxDiskPath),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	for path, data := range map[string]string{
+		filepath.Join(layoutPath, "sentinel"):   "layout",
+		filepath.Join(rootfsPath, "sentinel"):   "rootfs",
+		filepath.Join(boxliteCachePath, "disk"): "boxlite",
+		microsandboxDiskPath:                    "microsandbox",
+	} {
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	if err := cache.SaveMetadata(imagecache.MetadataFile{Images: []imagecache.ImageMetadata{{
+		CacheKey:        imageID,
+		RequestedRef:    "registry.example/rmi:1.0",
+		NormalizedRef:   "registry.example/rmi:1.0",
+		RepoTags:        []string{"registry.example/rmi:1.0"},
+		RepoDigests:     []string{"registry.example/rmi@sha256:cli-rmi"},
+		ManifestDigest:  "sha256:manifest-cli-rmi",
+		ConfigDigest:    imageID,
+		LayoutCachePath: layoutPath,
+		RootFSCachePath: rootfsPath,
+	}}}); err != nil {
+		t.Fatalf("SaveMetadata returned error: %v", err)
+	}
+
+	stdout, stderr, runCount, exitCode := executeCLICommand("rmi", "--host", server.URL, "--json", "--force", "--prune-children", "registry.example/rmi:1.0")
+	if exitCode != 0 || stderr != "" || runCount != 0 {
+		t.Fatalf("rmi code/stderr/runs = %d / %q / %d", exitCode, stderr, runCount)
+	}
+	var removed composeImageRemoveOutput
+	if err := json.Unmarshal([]byte(stdout), &removed); err != nil {
+		t.Fatalf("rmi JSON decode failed: %v\n%s", err, stdout)
+	}
+	if len(removed.DeletedIDs) != 1 || removed.DeletedIDs[0] != imageID || len(removed.Warnings) == 0 {
+		t.Fatalf("rmi output = %#v", removed)
+	}
+	for _, path := range []string{
+		filepath.Join(layoutPath, "sentinel"),
+		filepath.Join(rootfsPath, "sentinel"),
+		filepath.Join(boxliteCachePath, "disk"),
+		microsandboxDiskPath,
+	} {
+		assertLocalPathExists(t, path)
+	}
+}
+
 func TestIntegrationCLIImagePullAliasesAndJSON(t *testing.T) {
 	calls := 0
 	server := newComposeServiceStubServer(t, composeServiceStubs{
