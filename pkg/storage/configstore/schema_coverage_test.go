@@ -79,7 +79,7 @@ func TestE2EConfigStoreProjectCRUDCoverageWorkflows(t *testing.T) {
 func testConfigStoreProjectCRUDCoverageWorkflows(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	store := &ConfigStore{db: newMemoryDB(t)}
+	store := FromDB(newMemoryDB(t))
 	if err := store.initSchema(ctx); err != nil {
 		t.Fatalf("initSchema returned error: %v", err)
 	}
@@ -219,7 +219,7 @@ func testConfigStoreProjectCRUDCoverageWorkflows(t *testing.T) {
 func testConfigStoreTopicEventCoverageWorkflows(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	store := &ConfigStore{db: newMemoryDB(t)}
+	store := FromDB(newMemoryDB(t))
 	if err := store.initSchema(ctx); err != nil {
 		t.Fatalf("initSchema returned error: %v", err)
 	}
@@ -362,7 +362,7 @@ func testConfigStoreTopicEventCoverageWorkflows(t *testing.T) {
 func testConfigStoreCRUDCoverageWorkflows(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	store := &ConfigStore{db: newMemoryDB(t)}
+	store := FromDB(newMemoryDB(t))
 	if err := store.initSchema(ctx); err != nil {
 		t.Fatalf("initSchema returned error: %v", err)
 	}
@@ -596,12 +596,12 @@ func testConfigStoreCRUDCoverageWorkflows(t *testing.T) {
 
 func testConfigStoreLLMBootstrapResolveCoverage(t *testing.T, ctx context.Context) {
 	t.Helper()
-	store := &ConfigStore{db: newMemoryDB(t)}
+	store := FromDB(newMemoryDB(t))
 	if err := store.initSchema(ctx); err != nil {
 		t.Fatalf("initSchema for LLM bootstrap returned error: %v", err)
 	}
 	config := &appconfig.Config{LLMAPIEndpoint: "https://config.example/v1", LLMAPIProtocol: "chat_completions", LLMAPIKey: "config-key", LLMModel: "config-model"}
-	if lookup := DefaultLLMEnvProviderLookup(ctx, config, store); lookup("LLM_API_ENDPOINT") != "https://config.example/v1" {
+	if lookup := llms.DefaultLLMEnvProviderLookup(ctx, config, store); lookup("LLM_API_ENDPOINT") != "https://config.example/v1" {
 		t.Fatalf("config LLM lookup failed")
 	}
 	if _, err := store.ReplaceGlobalEnv(ctx, []domain.SessionEnvVar{
@@ -612,14 +612,14 @@ func testConfigStoreLLMBootstrapResolveCoverage(t *testing.T, ctx context.Contex
 	}); err != nil {
 		t.Fatalf("ReplaceGlobalEnv for LLM returned error: %v", err)
 	}
-	target, err := ResolveLLMTarget(ctx, config, store, "")
+	target, err := llms.ResolveLLMTarget(ctx, config, store, "")
 	if err != nil {
 		t.Fatalf("ResolveLLMTarget returned error: %v", err)
 	}
 	if target.Provider.ID != llms.ProviderIDDefaultOpenAI || target.Provider.APIKey != "global-key" || target.Model.ID != "global-model" || target.WireAPI != llms.APIProtocolChatCompletions {
 		t.Fatalf("OpenAI resolved target = %#v", target)
 	}
-	runtimeTarget, err := ResolveRuntimeLLMTargetWithEnv(ctx, config, store, "session-1", llms.ProviderFamilyOpenAI, "session-model", "", []SessionEnvVar{
+	runtimeTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, "session-1", llms.ProviderFamilyOpenAI, "session-model", "", []domain.SessionEnvVar{
 		{Name: "LLM_API_ENDPOINT", Value: "https://session.example/v1"},
 		{Name: "LLM_API_KEY", Value: "session-key", Secret: true},
 		{Name: "LLM_MODEL", Value: "session-model"},
@@ -630,32 +630,32 @@ func testConfigStoreLLMBootstrapResolveCoverage(t *testing.T, ctx context.Contex
 	if runtimeTarget.Provider.ID == target.Provider.ID || runtimeTarget.Provider.Scope != llms.ProviderScopeSessionEnv || runtimeTarget.Model.ID != "session-model" {
 		t.Fatalf("session OpenAI target = %#v", runtimeTarget)
 	}
-	if HasEnabledLLMProviderID(ctx, store, runtimeTarget.Provider.ID) != true {
+	if llms.HasEnabledLLMProviderID(ctx, store, runtimeTarget.Provider.ID) != true {
 		t.Fatalf("expected session provider to be enabled")
 	}
-	reusedRuntimeTarget, err := ResolveRuntimeLLMTargetWithEnv(ctx, config, store, "session-1", llms.ProviderFamilyOpenAI, "session-model", "", nil)
+	reusedRuntimeTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, "session-1", llms.ProviderFamilyOpenAI, "session-model", "", nil)
 	if err != nil || reusedRuntimeTarget.Provider.ID != runtimeTarget.Provider.ID {
 		t.Fatalf("reused session OpenAI target=%#v err=%v", reusedRuntimeTarget, err)
 	}
-	if _, err := ResolveRuntimeLLMTarget(ctx, config, store, "missing-model", "missing-provider"); err == nil {
+	if _, err := llms.ResolveRuntimeLLMTarget(ctx, config, store, "missing-model", "missing-provider"); err == nil {
 		t.Fatalf("expected missing runtime LLM target error")
 	}
 
-	anthropicStore := &ConfigStore{db: newMemoryDB(t)}
+	anthropicStore := FromDB(newMemoryDB(t))
 	if err := anthropicStore.initSchema(ctx); err != nil {
 		t.Fatalf("initSchema for Anthropic returned error: %v", err)
 	}
 	t.Setenv("ANTHROPIC_BASE_URL", "https://anthropic.example")
 	t.Setenv("ANTHROPIC_API_KEY", "anthropic-key")
 	t.Setenv("ANTHROPIC_MODEL", "claude-test")
-	anthropicTarget, err := ResolveLLMTargetForProviderFamily(ctx, &appconfig.Config{}, anthropicStore, llms.ProviderFamilyAnthropic, "")
+	anthropicTarget, err := llms.ResolveLLMTargetForProviderFamily(ctx, &appconfig.Config{}, anthropicStore, llms.ProviderFamilyAnthropic, "")
 	if err != nil {
 		t.Fatalf("ResolveLLMTargetForProviderFamily Anthropic returned error: %v", err)
 	}
 	if anthropicTarget.Provider.ProviderType != llms.ProviderFamilyAnthropic || anthropicTarget.WireAPI != llms.APIProtocolMessages || anthropicTarget.Model.ID != "claude-test" {
 		t.Fatalf("Anthropic target = %#v", anthropicTarget)
 	}
-	sessionAnthropicID, err := EnsureSessionAnthropicEnvProvider(ctx, anthropicStore, "session-2", "claude-session", []SessionEnvVar{
+	sessionAnthropicID, err := llms.EnsureSessionAnthropicEnvProvider(ctx, anthropicStore, "session-2", "claude-session", []domain.SessionEnvVar{
 		{Name: "ANTHROPIC_API_KEY", Value: "session-anthropic-key", Secret: true},
 		{Name: "ANTHROPIC_MODEL", Value: "claude-session"},
 	})
@@ -668,7 +668,7 @@ func testConfigStoreMigrationAndTimeParsingWorkflows(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 	db := newMemoryDB(t)
-	store := &ConfigStore{db: db}
+	store := FromDB(db)
 
 	if _, err := store.tableColumnTypes(ctx, " "); err == nil {
 		t.Fatalf("empty table name returned nil error")
@@ -756,7 +756,7 @@ func testConfigStoreProjectSchemaMigrationWorkflows(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 	db := newMemoryDB(t)
-	store := &ConfigStore{db: db}
+	store := FromDB(db)
 
 	if err := store.initSchema(ctx); err != nil {
 		t.Fatalf("initSchema on empty db returned error: %v", err)
@@ -768,7 +768,7 @@ func testConfigStoreProjectSchemaMigrationWorkflows(t *testing.T) {
 	assertProjectSchema(t, store)
 
 	existingDB := newMemoryDB(t)
-	configDB := &ConfigStore{db: existingDB}
+	configDB := FromDB(existingDB)
 	for _, ensure := range []func(context.Context) error{
 		configDB.ensureGlobalEnvSchema,
 		configDB.ensureCapabilityGatewaySchema,

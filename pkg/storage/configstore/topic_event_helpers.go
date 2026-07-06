@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/storage/storeutil"
 )
 
 func normalizeTopicEventRecord(item domain.TopicEventRecord, assignID bool) (domain.TopicEventRecord, error) {
@@ -131,11 +132,11 @@ func scanTopicEvent(scan func(dest ...any) error) (domain.TopicEventRecord, erro
 	); err != nil {
 		return domain.TopicEventRecord{}, fmt.Errorf("scan event: %w", err)
 	}
-	item.ClaimUntil = ParseStoredUnixTimeAuto(claimUntilRaw)
-	item.NextAttemptAt = ParseStoredUnixTimeAuto(nextAttemptAtRaw)
-	item.DeadLetterAt = ParseStoredUnixTimeAuto(deadLetterAtRaw)
-	item.CreatedAt = ParseStoredUnixTimeAuto(createdAtRaw)
-	item.DispatchedAt = ParseStoredUnixTimeAuto(dispatchedAtRaw)
+	item.ClaimUntil = storeutil.ParseStoredUnixTimeAuto(claimUntilRaw)
+	item.NextAttemptAt = storeutil.ParseStoredUnixTimeAuto(nextAttemptAtRaw)
+	item.DeadLetterAt = storeutil.ParseStoredUnixTimeAuto(deadLetterAtRaw)
+	item.CreatedAt = storeutil.ParseStoredUnixTimeAuto(createdAtRaw)
+	item.DispatchedAt = storeutil.ParseStoredUnixTimeAuto(dispatchedAtRaw)
 	return item, nil
 }
 

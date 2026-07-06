@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-func (s *ConfigStore) ensureProjectSchema(ctx context.Context) error {
+func (s *projectStore) ensureProjectSchema(ctx context.Context) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS project (
 			id TEXT PRIMARY KEY,
@@ -110,11 +110,11 @@ func (s *ConfigStore) ensureProjectSchema(ctx context.Context) error {
 	return nil
 }
 
-func (s *ConfigStore) EnsureProjectSchema(ctx context.Context) error {
+func (s *projectStore) EnsureProjectSchema(ctx context.Context) error {
 	return s.ensureProjectSchema(ctx)
 }
 
-func (s *ConfigStore) ensureManagedResourceColumns(ctx context.Context) error {
+func (s *projectStore) ensureManagedResourceColumns(ctx context.Context) error {
 	agentColumns := []struct {
 		name       string
 		definition string

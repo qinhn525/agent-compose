@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	domain "agent-compose/pkg/model"
-	"agent-compose/pkg/storage/configstore"
+	"agent-compose/pkg/storage/storeutil"
 )
 
 func ScanTopicEvents(rows *sql.Rows) ([]domain.TopicEventRecord, error) {
@@ -59,11 +59,11 @@ func ScanTopicEvent(scan func(dest ...any) error) (domain.TopicEventRecord, erro
 	); err != nil {
 		return domain.TopicEventRecord{}, fmt.Errorf("scan event: %w", err)
 	}
-	item.ClaimUntil = configstore.ParseStoredUnixTimeAuto(claimUntilRaw)
-	item.NextAttemptAt = configstore.ParseStoredUnixTimeAuto(nextAttemptAtRaw)
-	item.DeadLetterAt = configstore.ParseStoredUnixTimeAuto(deadLetterAtRaw)
-	item.CreatedAt = configstore.ParseStoredUnixTimeAuto(createdAtRaw)
-	item.DispatchedAt = configstore.ParseStoredUnixTimeAuto(dispatchedAtRaw)
+	item.ClaimUntil = storeutil.ParseStoredUnixTimeAuto(claimUntilRaw)
+	item.NextAttemptAt = storeutil.ParseStoredUnixTimeAuto(nextAttemptAtRaw)
+	item.DeadLetterAt = storeutil.ParseStoredUnixTimeAuto(deadLetterAtRaw)
+	item.CreatedAt = storeutil.ParseStoredUnixTimeAuto(createdAtRaw)
+	item.DispatchedAt = storeutil.ParseStoredUnixTimeAuto(dispatchedAtRaw)
 	return item, nil
 }
 

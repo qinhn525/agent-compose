@@ -11,11 +11,10 @@ import (
 	"github.com/google/uuid"
 
 	domain "agent-compose/pkg/model"
+	"agent-compose/pkg/storage/storeutil"
 )
 
-const StoredUnixMillisecondThreshold int64 = 10_000_000_000
-
-const storedUnixMillisecondThreshold int64 = StoredUnixMillisecondThreshold
+const storedUnixMillisecondThreshold int64 = storeutil.StoredUnixMillisecondThreshold
 
 func EnsureColumn(ctx context.Context, db *sql.DB, table, column, definition string) error {
 	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+table+")")
@@ -109,26 +108,16 @@ func ScanWorkspaceConfig(scan func(dest ...any) error) (domain.WorkspaceConfig, 
 	return item, nil
 }
 
-func ParseStoredUnixTimeAuto(value int64) time.Time {
-	if value <= 0 {
-		return time.Time{}
-	}
-	if value >= StoredUnixMillisecondThreshold {
-		return time.UnixMilli(value).UTC()
-	}
-	return time.Unix(value, 0).UTC()
-}
-
 func ParseStoredLoaderTriggerTime(value any) time.Time {
 	switch typed := value.(type) {
 	case nil:
 		return time.Time{}
 	case int64:
-		return ParseStoredUnixTimeAuto(typed)
+		return storeutil.ParseStoredUnixTimeAuto(typed)
 	case int:
-		return ParseStoredUnixTimeAuto(int64(typed))
+		return storeutil.ParseStoredUnixTimeAuto(int64(typed))
 	case float64:
-		return ParseStoredUnixTimeAuto(int64(typed))
+		return storeutil.ParseStoredUnixTimeAuto(int64(typed))
 	case []byte:
 		return ParseStoredLoaderTriggerTime(string(typed))
 	case string:
@@ -137,7 +126,7 @@ func ParseStoredLoaderTriggerTime(value any) time.Time {
 			return time.Time{}
 		}
 		if unixValue, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
-			return ParseStoredUnixTimeAuto(unixValue)
+			return storeutil.ParseStoredUnixTimeAuto(unixValue)
 		}
 		return ParseStoredTime(trimmed)
 	default:
@@ -150,11 +139,11 @@ func ParseStoredTime(value any) time.Time {
 	case nil:
 		return time.Time{}
 	case int64:
-		return ParseStoredUnixTimeAuto(typed)
+		return storeutil.ParseStoredUnixTimeAuto(typed)
 	case int:
-		return ParseStoredUnixTimeAuto(int64(typed))
+		return storeutil.ParseStoredUnixTimeAuto(int64(typed))
 	case float64:
-		return ParseStoredUnixTimeAuto(int64(typed))
+		return storeutil.ParseStoredUnixTimeAuto(int64(typed))
 	case []byte:
 		return ParseStoredTime(string(typed))
 	case string:
@@ -163,7 +152,7 @@ func ParseStoredTime(value any) time.Time {
 			return time.Time{}
 		}
 		if unixValue, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
-			return ParseStoredUnixTimeAuto(unixValue)
+			return storeutil.ParseStoredUnixTimeAuto(unixValue)
 		}
 		for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000Z"} {
 			if parsed, err := time.Parse(layout, trimmed); err == nil {

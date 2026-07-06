@@ -67,9 +67,27 @@ type TriggerResolverStore interface {
 	GetLoader(context.Context, string) (domain.Loader, error)
 }
 
+// SessionRuntimeStore is the subset of session runtime persistence the run
+// controller needs: session lifecycle plus VM, proxy, and Jupyter-port state.
+// Keeping it narrow decouples the controller from the concrete
+// sessionstore.Store (and its full method set) and lets tests substitute a
+// fake. It is distinct from SessionStore in statuses.go, which exposes only
+// domain-typed lookups for status listing.
+type SessionRuntimeStore interface {
+	CreateSessionWithOptions(ctx context.Context, title, baseWorkspace, driver, guestImage, workspaceID, triggerSource string, workspace *sessionstore.SessionWorkspace, envItems []sessionstore.SessionEnvVar, tags []sessionstore.SessionTag, options sessionstore.CreateSessionOptions) (*sessionstore.Session, error)
+	GetSession(ctx context.Context, id string) (*sessionstore.Session, error)
+	UpdateSession(ctx context.Context, session *sessionstore.Session) error
+	RemoveSession(ctx context.Context, id string) error
+	AddEvent(ctx context.Context, sessionID string, event sessionstore.SessionEvent) error
+	GetVMState(id string) (sessionstore.VMState, error)
+	GetProxyState(id string) (sessionstore.ProxyState, error)
+	SaveProxyState(id string, state sessionstore.ProxyState) error
+	AllocateHostPortForJupyter() (int, error)
+}
+
 type Controller struct {
 	config       *appconfig.Config
-	store        *sessionstore.Store
+	store        SessionRuntimeStore
 	configDB     ControllerStore
 	driver       SessionDriver
 	executor     AgentExecutor
@@ -84,7 +102,7 @@ type Controller struct {
 
 type ControllerDependencies struct {
 	Config       *appconfig.Config
-	Store        *sessionstore.Store
+	Store        SessionRuntimeStore
 	ConfigDB     ControllerStore
 	Driver       SessionDriver
 	Executor     AgentExecutor
@@ -851,7 +869,7 @@ func (c *Controller) stopProjectRunSession(ctx context.Context, session *domain.
 	return nil
 }
 
-func writeCapabilityGuide(ctx context.Context, provider capabilities.Provider, store *sessionstore.Store, streams *sessions.StreamBroker, session *domain.Session, capsetIDs []string) {
+func writeCapabilityGuide(ctx context.Context, provider capabilities.Provider, store SessionRuntimeStore, streams *sessions.StreamBroker, session *domain.Session, capsetIDs []string) {
 	ids := capabilities.NormalizeCapsetIDs(capsetIDs)
 	if len(ids) == 0 || provider == nil || session == nil {
 		return
@@ -893,7 +911,7 @@ func writeCapabilityGuide(ctx context.Context, provider capabilities.Provider, s
 	}
 }
 
-func recordCapabilityGuideWarning(ctx context.Context, store *sessionstore.Store, streams *sessions.StreamBroker, sessionID, message string) {
+func recordCapabilityGuideWarning(ctx context.Context, store SessionRuntimeStore, streams *sessions.StreamBroker, sessionID, message string) {
 	if store == nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
