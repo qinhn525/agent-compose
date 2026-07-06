@@ -101,7 +101,7 @@
 
 参考文档：[docs/spec/output-protocol-contract-spec.md](docs/spec/output-protocol-contract-spec.md)、[AGENTS.md](AGENTS.md)
 
-- [ ] 2.1 迁移 driver `ExecChunk` 和 collector stream 聚合
+- [x] 2.1 迁移 driver `ExecChunk` 和 collector stream 聚合
   - 依赖：1.1。
   - 工作内容：
     - 在 `pkg/driver/types.go` 增加 driver-local `StdioStream` 类型和 stdout/stderr 常量。
@@ -109,9 +109,9 @@
     - 迁移 docker、boxlite、microsandbox collector/writer，使真实 stdout/stderr 映射到 driver stream enum。
     - 保持 `BoxRuntime.ExecStream` 方法签名不变，只改变 chunk 字段类型。
   - 可并行子任务：
-    - [ ] 可并行：迁移 docker collector 和对应测试。
-    - [ ] 可并行：迁移 boxlite collector 和对应测试。
-    - [ ] 可并行：迁移 microsandbox collector 和对应测试。
+    - [x] 可并行：迁移 docker collector 和对应测试。
+    - [x] 可并行：迁移 boxlite collector 和对应测试。
+    - [x] 可并行：迁移 microsandbox collector 和对应测试。
   - 测试方案：
     - `./scripts/with-go-toolchain.sh go test ./pkg/driver`
   - 验收标准：
@@ -119,10 +119,22 @@
     - 三个 runtime driver 只表达 stdio stream，不解析 agent/command marker。
     - focused driver tests 通过。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - `pkg/driver/types.go` 新增 driver-local `StdioStream`、`StdioStdout`、`StdioStderr` 和 `NormalizeStdioStream`。
+      - driver `ExecChunk` 已从 `Text/IsStderr` 迁移为 `Text/Stream`，`BoxRuntime.ExecStream` 方法签名保持不变。
+      - docker、boxlite cgo、microsandbox collector 聚合逻辑改为按 normalized stream 写 stdout/stderr/output。
+      - docker stdcopy writer、boxlite stdout/stderr callback、microsandbox stdout/stderr event 显式映射到 driver stream enum。
+      - `exec_output_filter` 同步改为按 `StdioStderr` 判断 stderr，以保持 driver 包在字段迁移后可编译；专项噪声过滤验收继续由 2.2 收口。
+      - 增加/更新 docker、boxlite cgo、microsandbox collector 测试，覆盖 stdout/stderr stream 映射和 streaming callback chunk 保真。
+    - 验证：
+      - `rg -n "IsStderr|isStderr|GetIsStderr" pkg/driver`：无命中。
+      - `rg -n "__AGENT_RESULT__|__COMMAND_RESULT__|AgentResultPrefix|CommandResultPrefix" pkg/driver`：无命中。
+      - `./scripts/with-go-toolchain.sh go test ./pkg/driver`：通过。
+    - 审计与例外：
+      - boxlite collector 测试位于 `boxlitecgo` build tag 下，默认 `go test ./pkg/driver` 不会编译运行；本任务已迁移 cgo callback 构造与 collector 聚合逻辑，后续如运行 boxlite cgo 专项门禁需依赖本机 boxlite artifacts。
+      - 本任务为字段迁移同步调整了 `exec_output_filter` 的 stream 判断；2.2 仍需按任务要求完成 seccomp warning filter 专项验收和进度记录。
+      - 全仓其他 `IsStderr` 命中属于后续 adapter/API/session/proto/CLI 迁移范围，未在本任务提前处理。
     - 下一目标：2.2 迁移 driver output filter 和噪声过滤测试。
 
 - [ ] 2.2 迁移 seccomp warning filter 和 driver stream 测试
