@@ -102,19 +102,27 @@
       - dry-run/prune/remove 保护语义按任务 2.3 实现，本任务仅预留 request/result 类型。
     - 下一目标：2.2 实现 cache_id 和安全删除基础。
 
-- [ ] 2.2 实现 `cache_id`、path safety 和 size/warning 机制
+- [x] 2.2 实现 `cache_id`、path safety 和 size/warning 机制
   - 依赖：2.1。
   - 工作内容：实现稳定 `cache_id` 生成/解析、canonical root 检查、symlink escape 防护、root deletion 防护、size walk、warning 聚合。
   - 可并行子任务：
-    - [ ] 可并行：实现并审计 path traversal、symlink、broken symlink 测试夹具。
-    - [ ] 可并行：实现 size walk 和 permission/stat failure warning 测试夹具。
+    - [x] 可并行：实现并审计 path traversal、symlink、broken symlink 测试夹具。
+    - [x] 可并行：实现 size walk 和 permission/stat failure warning 测试夹具。
   - 测试方案：`go test ./pkg/runtimecache`，覆盖 ID 稳定性、非法 ID、path 注入、symlink escape、root deletion、stat/read/walk 失败 warning。
   - 验收标准：删除逻辑只能作用于 inventory 生成出的 item path；无法证明安全时返回 `unknown` 或不可删。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - 新增稳定 `cache_id` 生成和解析 helper，ID 由 domain、driver、kind 和 path/digest/name/session identity hash 组成，不把原始路径暴露为可执行输入。
+      - 新增 `ValidateCachePath`，执行 absolute path、canonical root/target、root deletion、path traversal、symlink escape、broken symlink 和 canonical parent 检查。
+      - 新增 `EstimateSize` 和 `AppendWarnings`，递归估算文件大小，并把 missing/stat/walk failure 聚合成 warnings。
+      - 增加 tests 覆盖 ID 稳定性、不同 identity 不冲突、非法 ID/输入、path traversal、symlink escape、broken symlink、root deletion、size walk 成功和 warning 聚合。
+    - 验证：
+      - `./scripts/with-go-toolchain.sh go test -count=1 ./pkg/runtimecache`
+      - `rg -n "connectrpc|connect\\." pkg/runtimecache || true`
+    - 审计与例外：
+      - `ValidateCachePath` 只提供删除前安全校验；实际删除和重新构建 inventory 后再校验的流程按任务 2.3/后续 adapter 接入实现。
+      - 读取失败对保护状态的 `unknown/removable=false` 聚合将在 2.3 的 prune/remove 结果计算中接入；本任务已提供 warning helper。
     - 下一目标：2.3 实现保护状态和 dry-run/prune。
 
 - [ ] 2.3 实现保护规则、dry-run 和 prune/remove 核心
