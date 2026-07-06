@@ -424,6 +424,9 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 	}
 	root.SetOut(out)
 	root.SetErr(errOut)
+	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return commandExitError{Code: exitCodeUsage, Err: err}
+	})
 	root.CompletionOptions.DisableDefaultCmd = true
 
 	root.PersistentFlags().StringVar(&options.Host, "host", "", "Daemon HTTP endpoint")
