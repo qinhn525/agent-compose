@@ -1359,7 +1359,7 @@ agents:
 		t.Fatalf("run -d --command code/stderr = %d / %q", exitCode, stderr)
 	}
 	logOut, logErr, _, logCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--run-id", "run-detached-logs", "--follow")
-	if logCode != 0 || logErr != "" || logOut != "reviewer | detached output\n" {
+	if logCode != 0 || logErr != "" || logOut != "reviewer-run-deta | detached output\n" {
 		t.Fatalf("logs --follow code/stdout/stderr = %d / %q / %q", logCode, logOut, logErr)
 	}
 	if !sawCommand || !sawFollow {
@@ -2267,7 +2267,7 @@ agents:
 	}
 
 	runOut, runErr, _, runCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--run-id", "run-logs")
-	if runCode != 0 || runErr != "" || runOut != "reviewer | stored log output\n" {
+	if runCode != 0 || runErr != "" || runOut != "reviewer-run-logs | stored log output\n" {
 		t.Fatalf("logs --run-id code/stdout/stderr = %d / %q / %q", runCode, runOut, runErr)
 	}
 }
@@ -2297,7 +2297,7 @@ agents:
 	defer server.Close()
 
 	stdout, stderr, _, exitCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--tail", "2")
-	if exitCode != 0 || stderr != "" || stdout != "reviewer | two\nreviewer | three\n" {
+	if exitCode != 0 || stderr != "" || stdout != "reviewer-run-tail | two\nreviewer-run-tail | three\n" {
 		t.Fatalf("logs --tail text code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
 	}
 
@@ -2314,7 +2314,7 @@ agents:
 	}
 
 	runOut, runErr, _, runCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--run-id", "run-tail", "-n", "1")
-	if runCode != 0 || runErr != "" || runOut != "reviewer | three\n" {
+	if runCode != 0 || runErr != "" || runOut != "reviewer-run-tail | three\n" {
 		t.Fatalf("logs --run-id --tail code/stdout/stderr = %d / %q / %q", runCode, runOut, runErr)
 	}
 }
@@ -2367,9 +2367,9 @@ agents:
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("logs --timestamp code/stderr = %d / %q", exitCode, stderr)
 	}
-	want := "reviewer | 2026-06-11T00:00:02Z review one\n" +
-		"writer | 2026-06-11T00:00:01Z write one\n" +
-		"writer | 2026-06-11T00:00:01Z write two\n"
+	want := "reviewer-run-revi | time=2026-06-11T00:00:02.000Z review one\n" +
+		"writer-run-writ | time=2026-06-11T00:00:01.000Z write one\n" +
+		"writer-run-writ | time=2026-06-11T00:00:01.000Z write two\n"
 	if stdout != want {
 		t.Fatalf("logs --timestamp stdout = %q, want %q", stdout, want)
 	}
@@ -2413,22 +2413,22 @@ agents:
 			if req.Msg.GetRunId() != "run-follow" || !req.Msg.GetFollow() || req.Msg.GetTailLines() != 2 {
 				t.Fatalf("FollowRunLogs request = %#v", req.Msg)
 			}
-			if err := stream.Send(&agentcomposev2.RunLogChunk{Data: "first\n", Offset: 6, RunStatus: agentcomposev2.RunStatus_RUN_STATUS_RUNNING}); err != nil {
+			if err := stream.Send(&agentcomposev2.RunLogChunk{Data: "first\n", Offset: 6, RunStatus: agentcomposev2.RunStatus_RUN_STATUS_RUNNING, CreatedAt: "2026-07-06T08:01:36.372Z"}); err != nil {
 				return err
 			}
-			return stream.Send(&agentcomposev2.RunLogChunk{Data: "second\n", Offset: 13, RunStatus: agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, IsFinal: true})
+			return stream.Send(&agentcomposev2.RunLogChunk{Data: "second\n", Offset: 13, RunStatus: agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, CreatedAt: "2026-07-06T08:01:36.875Z", IsFinal: true})
 		},
 	})
 	defer server.Close()
 
-	stdout, stderr, _, exitCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--follow", "--tail", "2")
+	stdout, stderr, _, exitCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--follow", "--tail", "2", "--timestamp")
 	if exitCode != 0 {
 		t.Fatalf("logs follow exit code = %d, stderr=%q", exitCode, stderr)
 	}
 	if stderr != "" {
 		t.Fatalf("logs follow stderr = %q, want empty", stderr)
 	}
-	if stdout != "reviewer | first\nreviewer | second\n" {
+	if stdout != "reviewer-run-foll | time=2026-07-06T08:01:36.372Z first\nreviewer-run-foll | time=2026-07-06T08:01:36.875Z second\n" {
 		t.Fatalf("logs follow stdout = %q", stdout)
 	}
 	if listCalls != 1 || followCalls != 1 {

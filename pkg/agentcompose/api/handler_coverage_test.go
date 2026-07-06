@@ -552,6 +552,11 @@ func TestFollowRunLogsStreamsOffsetsTailAndFinal(t *testing.T) {
 		t.Fatalf("all chunks = %#v", all)
 	}
 
+	followAll := collectRunLogChunks(t, client, &agentcomposev2.FollowRunLogsRequest{ProjectId: "project-1", RunId: "run-1", Follow: true})
+	if len(followAll) != 2 || followAll[0].GetData() != "one\ntwo\nthree\n" || followAll[0].GetOffset() != 14 || !followAll[1].GetIsFinal() {
+		t.Fatalf("follow all chunks = %#v", followAll)
+	}
+
 	tail := collectRunLogChunks(t, client, &agentcomposev2.FollowRunLogsRequest{ProjectId: "project-1", RunId: "run-1", TailLines: 2, Follow: true})
 	if len(tail) != 2 || tail[0].GetData() != "two\nthree\n" || tail[0].GetOffset() != 14 || !tail[1].GetIsFinal() {
 		t.Fatalf("tail chunks = %#v", tail)

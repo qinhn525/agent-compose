@@ -306,7 +306,7 @@ func (c *Controller) executeStartedProjectRun(ctx context.Context, coordinator *
 		RunID:             run.RunID,
 		Message:           req.Prompt,
 		OutputSchemaJSON:  req.OutputSchemaJSON,
-		Stream:            projectRunAgentExecutionStream(run, sessionResult.Session, stream),
+		Stream:            projectRunAgentExecutionStream(transitionCtx, coordinator, run, sessionResult.Session, stream),
 	})
 	transition := TransitionFromAgentCell(run, sessionResult.Session, cell, execErr)
 	if execErr != nil || !cell.Success {
@@ -459,9 +459,21 @@ func (c *Controller) projectRunAgentConfig(ctx context.Context, run domain.Proje
 	return config, nil
 }
 
-func projectRunAgentExecutionStream(run domain.ProjectRunRecord, session *domain.Session, sink *StreamSink) execution.AgentExecutionStream {
+func projectRunAgentExecutionStream(ctx context.Context, coordinator *Coordinator, run domain.ProjectRunRecord, session *domain.Session, sink *StreamSink) execution.AgentExecutionStream {
 	return execution.AgentExecutionStream{
-		OnStart: func(domain.NotebookCell) error {
+		OnStart: func(cell domain.NotebookCell) error {
+			if coordinator != nil {
+				logsPath := projectRunAgentCellOutputPath(session, cell.ID)
+				if strings.TrimSpace(logsPath) != "" {
+					if _, err := coordinator.TransitionRun(ctx, TransitionRequest{
+						RunID:    run.RunID,
+						Status:   domain.ProjectRunStatusRunning,
+						LogsPath: logsPath,
+					}); err != nil {
+						return err
+					}
+				}
+			}
 			if sink == nil || sink.SendStarted == nil {
 				return nil
 			}

@@ -243,6 +243,7 @@ func TestRunsControllerRunProjectAgentSuccessWorkflow(t *testing.T) {
 		Dashboard: dashboard,
 	})
 	var started bool
+	var startedLogsPath string
 	var chunks []domain.ExecChunk
 	run, execErr, err := controller.RunProjectAgent(ctx, RunAgentRequest{
 		ProjectID:       "project-1",
@@ -252,8 +253,9 @@ func TestRunsControllerRunProjectAgentSuccessWorkflow(t *testing.T) {
 		ClientRequestID: "request-1",
 		CleanupPolicy:   agentcomposev2.RunSessionCleanupPolicy_RUN_SESSION_CLEANUP_POLICY_STOP_ON_COMPLETION,
 	}, &StreamSink{
-		SendStarted: func(domain.ProjectRunRecord, time.Time) error {
+		SendStarted: func(run domain.ProjectRunRecord, _ time.Time) error {
 			started = true
+			startedLogsPath = configDB.runs[run.RunID].LogsPath
 			return nil
 		},
 		SendChunk: func(_ string, chunk domain.ExecChunk, _ time.Time) error {
@@ -269,6 +271,9 @@ func TestRunsControllerRunProjectAgentSuccessWorkflow(t *testing.T) {
 	}
 	if !started || len(chunks) != 1 || !driver.started || !driver.stopped || executor.request.Message != "do work" {
 		t.Fatalf("started=%v chunks=%#v driver=%#v request=%#v", started, chunks, driver, executor.request)
+	}
+	if startedLogsPath == "" || filepath.Base(startedLogsPath) != "output.txt" {
+		t.Fatalf("started logs path = %q, want cell output path", startedLogsPath)
 	}
 	if data, err := os.ReadFile(run.LogsPath); err != nil || string(data) != "chunk" {
 		t.Fatalf("agent run logs_path content = %q err=%v", string(data), err)

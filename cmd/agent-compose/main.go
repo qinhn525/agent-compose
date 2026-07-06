@@ -3579,7 +3579,7 @@ func followRunLogStream(ctx context.Context, out io.Writer, client agentcomposev
 	for stream.Receive() {
 		chunk := stream.Msg()
 		if chunk.GetData() != "" {
-			if err := writePrefixedRunOutput(out, summary, chunk.GetData(), options.Timestamp); err != nil {
+			if err := writePrefixedRunOutputWithTimestamp(out, summary, chunk.GetData(), options.Timestamp, chunk.GetCreatedAt()); err != nil {
 				return err
 			}
 		}
@@ -3638,11 +3638,15 @@ func writeLogDetails(out io.Writer, details []*agentcomposev2.RunDetail, printed
 }
 
 func writePrefixedRunOutput(out io.Writer, summary *agentcomposev2.RunSummary, output string, timestamp bool) error {
+	return writePrefixedRunOutputWithTimestamp(out, summary, output, timestamp, runLogTimestamp(summary))
+}
+
+func writePrefixedRunOutputWithTimestamp(out io.Writer, summary *agentcomposev2.RunSummary, output string, timestamp bool, timestampValue string) error {
 	if output == "" {
 		return nil
 	}
-	agentName := firstNonEmptyString(summary.GetAgentName(), summary.GetRunId(), "-")
-	runTime := runLogTimestamp(summary)
+	prefix := runLogPrefix(summary)
+	runTime := formatComposeLogTimestamp(timestampValue)
 	for len(output) > 0 {
 		line := output
 		rest := ""
@@ -3650,11 +3654,11 @@ func writePrefixedRunOutput(out io.Writer, summary *agentcomposev2.RunSummary, o
 			line = output[:idx+1]
 			rest = output[idx+1:]
 		}
-		if _, err := fmt.Fprintf(out, "%s | ", agentName); err != nil {
+		if _, err := fmt.Fprintf(out, "%s | ", prefix); err != nil {
 			return err
 		}
 		if timestamp && runTime != "" {
-			if _, err := fmt.Fprintf(out, "%s ", runTime); err != nil {
+			if _, err := fmt.Fprintf(out, "time=%s ", runTime); err != nil {
 				return err
 			}
 		}
@@ -3669,6 +3673,26 @@ func writePrefixedRunOutput(out io.Writer, summary *agentcomposev2.RunSummary, o
 		output = rest
 	}
 	return nil
+}
+
+func runLogPrefix(summary *agentcomposev2.RunSummary) string {
+	runID := strings.TrimSpace(summary.GetRunId())
+	agentName := strings.TrimSpace(summary.GetAgentName())
+	if agentName == "" {
+		return firstNonEmptyString(runID, "-")
+	}
+	if runID == "" || runID == agentName {
+		return agentName
+	}
+	return agentName + "-" + shortRunID(runID)
+}
+
+func shortRunID(runID string) string {
+	runID = strings.TrimSpace(runID)
+	if len(runID) <= 8 {
+		return runID
+	}
+	return runID[:8]
 }
 
 func tailLogOutput(output string, lines int) string {
@@ -3695,6 +3719,18 @@ func tailLogOutput(output string, lines int) string {
 
 func runLogTimestamp(summary *agentcomposev2.RunSummary) string {
 	return firstNonEmptyString(summary.GetCompletedAt(), summary.GetUpdatedAt(), summary.GetStartedAt())
+}
+
+func formatComposeLogTimestamp(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return value
+	}
+	return parsed.UTC().Format("2006-01-02T15:04:05.000Z")
 }
 
 func manualRunClientRequestID(projectName, agentName, prompt string) string {

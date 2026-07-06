@@ -386,7 +386,7 @@ func testComposeRunLogAndExecHelpers(t *testing.T) {
 	if err := writeLogDetails(&out, []*agentcomposev2.RunDetail{detail}, map[string]int{}, composeLogsOptions{TailLines: 1, Timestamp: true}); err != nil {
 		t.Fatalf("writeLogDetails returned error: %v", err)
 	}
-	if !strings.Contains(out.String(), "reviewer | completed line3") {
+	if !strings.Contains(out.String(), "reviewer-run-1 | time=completed line3") {
 		t.Fatalf("log details = %q", out.String())
 	}
 	out.Reset()

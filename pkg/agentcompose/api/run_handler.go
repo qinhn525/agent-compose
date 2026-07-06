@@ -174,22 +174,12 @@ func (h *RunHandler) projectRunForLogRequest(ctx context.Context, projectID, run
 	return run, nil
 }
 
-func initialRunLogOffset(path string, tailLines int, startOffset uint64, follow bool) (uint64, error) {
+func initialRunLogOffset(path string, tailLines int, startOffset uint64, _ bool) (uint64, error) {
 	if tailLines > 0 {
 		return tailRunLogOffset(path, tailLines)
 	}
 	if startOffset > 0 {
 		return startOffset, nil
-	}
-	if follow {
-		info, err := os.Stat(path)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return 0, nil
-			}
-			return 0, err
-		}
-		return uint64(info.Size()), nil
 	}
 	return 0, nil
 }
