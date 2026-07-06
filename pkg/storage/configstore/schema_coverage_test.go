@@ -98,11 +98,22 @@ func testConfigStoreProjectCRUDCoverageWorkflows(t *testing.T) {
 	if existing, created, err := store.SaveProjectRevision(ctx, domain.ProjectRevisionRecord{ProjectID: project.ID, SpecHash: "hash-1", SpecJSON: `{"agents":[]}`}); err != nil || created || existing.Revision != revision.Revision {
 		t.Fatalf("SaveProjectRevision existing=%#v created=%v err=%v", existing, created, err)
 	}
-	if got, err := store.GetProject(ctx, project.ID); err != nil || got.CurrentRevision != revision.Revision {
+	secondRevision, created, err := store.SaveProjectRevision(ctx, domain.ProjectRevisionRecord{ProjectID: project.ID, SpecHash: "hash-2", SpecJSON: `{"agents":[{"driver":"boxlite"}]}`})
+	if err != nil || !created || secondRevision.Revision != 2 {
+		t.Fatalf("SaveProjectRevision secondRevision=%#v created=%v err=%v", secondRevision, created, err)
+	}
+	thirdRevision, created, err := store.SaveProjectRevision(ctx, domain.ProjectRevisionRecord{ProjectID: project.ID, SpecHash: "hash-1", SpecJSON: `{"agents":[]}`})
+	if err != nil || !created || thirdRevision.Revision != 3 {
+		t.Fatalf("SaveProjectRevision repeated hash thirdRevision=%#v created=%v err=%v", thirdRevision, created, err)
+	}
+	if got, err := store.GetProject(ctx, project.ID); err != nil || got.CurrentRevision != thirdRevision.Revision {
 		t.Fatalf("GetProject got=%#v err=%v", got, err)
 	}
 	if got, err := store.GetProjectRevision(ctx, project.ID, revision.Revision); err != nil || got.SpecHash != "hash-1" {
 		t.Fatalf("GetProjectRevision got=%#v err=%v", got, err)
+	}
+	if got, err := store.GetProjectRevision(ctx, project.ID, thirdRevision.Revision); err != nil || got.SpecHash != "hash-1" {
+		t.Fatalf("GetProjectRevision repeated hash got=%#v err=%v", got, err)
 	}
 	if result, err := store.ListProjects(ctx, domain.ProjectListOptions{Query: "updated", Limit: 10}); err != nil || result.TotalCount != 1 {
 		t.Fatalf("ListProjects result=%#v err=%v", result, err)
@@ -112,7 +123,7 @@ func testConfigStoreProjectCRUDCoverageWorkflows(t *testing.T) {
 	}
 
 	agent, err := store.UpsertProjectAgent(ctx, domain.ProjectAgentRecord{
-		ProjectID: project.ID, AgentName: "worker", ManagedAgentID: "managed-agent-1", Revision: revision.Revision,
+		ProjectID: project.ID, AgentName: "worker", ManagedAgentID: "managed-agent-1", Revision: thirdRevision.Revision,
 		Provider: "codex", Model: "gpt", Image: "guest:latest", Driver: driverpkg.RuntimeDriverBoxlite, SchedulerEnabled: true, SpecJSON: `{"name":"worker"}`,
 	})
 	if err != nil {
@@ -129,7 +140,7 @@ func testConfigStoreProjectCRUDCoverageWorkflows(t *testing.T) {
 		t.Fatalf("ListProjectAgents agents=%#v err=%v", agents, err)
 	}
 	scheduler, err := store.UpsertProjectScheduler(ctx, domain.ProjectSchedulerRecord{
-		ProjectID: project.ID, SchedulerID: "scheduler-1", AgentName: "worker", ManagedLoaderID: "loader-1", Revision: revision.Revision, Enabled: true, TriggerCount: 2, SpecJSON: `{"id":"scheduler-1"}`,
+		ProjectID: project.ID, SchedulerID: "scheduler-1", AgentName: "worker", ManagedLoaderID: "loader-1", Revision: thirdRevision.Revision, Enabled: true, TriggerCount: 2, SpecJSON: `{"id":"scheduler-1"}`,
 	})
 	if err != nil {
 		t.Fatalf("UpsertProjectScheduler returned error: %v", err)
@@ -156,7 +167,7 @@ func testConfigStoreProjectCRUDCoverageWorkflows(t *testing.T) {
 		t.Fatalf("GetManagedAgentDefinition got=%#v err=%v", got, err)
 	}
 	run, err := store.CreateProjectRun(ctx, domain.ProjectRunRecord{
-		RunID: "run-1", ProjectID: project.ID, ProjectName: project.Name, ProjectRevision: revision.Revision, AgentName: "worker", ManagedAgentID: managedAgent.ID,
+		RunID: "run-1", ProjectID: project.ID, ProjectName: project.Name, ProjectRevision: thirdRevision.Revision, AgentName: "worker", ManagedAgentID: managedAgent.ID,
 		Source: domain.ProjectRunSourceAPI, SchedulerID: scheduler.SchedulerID, TriggerID: "trigger-1", Status: domain.ProjectRunStatusPending, Prompt: "prompt", ResultJSON: "{}",
 	})
 	if err != nil {
@@ -815,6 +826,7 @@ func assertProjectSchema(t *testing.T, store *ConfigStore) {
 	} {
 		assertSQLiteIndexExists(t, store.db, index)
 	}
+	assertSQLiteIndexUnique(t, store.db, "idx_project_revision_hash", false)
 }
 
 func assertTableColumns(t *testing.T, store *ConfigStore, table string, columns ...string) {
@@ -842,6 +854,35 @@ func assertSQLiteIndexExists(t *testing.T, db *sql.DB, indexName string) {
 	if count != 1 {
 		t.Fatalf("sqlite index %s count = %d, want 1", indexName, count)
 	}
+}
+
+func assertSQLiteIndexUnique(t *testing.T, db *sql.DB, indexName string, want bool) {
+	t.Helper()
+	rows, err := db.QueryContext(context.Background(), `PRAGMA index_list('project_revision')`)
+	if err != nil {
+		t.Fatalf("query sqlite index list: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var seq int
+		var name string
+		var unique int
+		var origin string
+		var partial int
+		if err := rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
+			t.Fatalf("scan sqlite index list: %v", err)
+		}
+		if name == indexName {
+			if (unique != 0) != want {
+				t.Fatalf("sqlite index %s unique = %v, want %v", indexName, unique != 0, want)
+			}
+			return
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate sqlite index list: %v", err)
+	}
+	t.Fatalf("sqlite index %s not found", indexName)
 }
 
 func newMemoryDB(t *testing.T) *sql.DB {

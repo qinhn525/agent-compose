@@ -317,8 +317,10 @@ stable rules.
 Current `ApplyProject` behavior:
 
 - Validate and normalize the v2 `ProjectSpec`.
-- Persist project revision idempotently by spec hash. Applying the same spec
-  repeatedly does not create duplicate revisions.
+- Persist project revisions as a monotonically increasing sequence. Applying the
+  same spec repeatedly without an intervening spec change reuses the current
+  revision; returning to a previously seen spec hash after another revision
+  creates a new revision.
 - Write `project_agent`.
 - Reconcile each agent spec into a managed `AgentDefinition`, isolated from
   manual agent definitions by `managed_project_id`, `managed_project_revision`,
@@ -540,7 +542,10 @@ materialized rootfs.
 Project-related tables:
 
 - `project`
-- `project_revision`
+- `project_revision`: append-only project spec history keyed by
+  `(project_id, revision)`. `spec_hash` identifies content and is indexed for
+  lookup, but it is not unique because different revisions may intentionally
+  contain identical spec content.
 - `project_agent`
 - `project_scheduler`
 - `project_run`

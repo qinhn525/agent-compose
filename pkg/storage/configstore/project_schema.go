@@ -29,7 +29,8 @@ func (s *ConfigStore) ensureProjectSchema(ctx context.Context) error {
 			PRIMARY KEY(project_id, revision),
 			FOREIGN KEY(project_id) REFERENCES project(id) ON DELETE CASCADE
 		);`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_project_revision_hash ON project_revision(project_id, spec_hash);`,
+		`DROP INDEX IF EXISTS idx_project_revision_hash;`,
+		`CREATE INDEX IF NOT EXISTS idx_project_revision_hash ON project_revision(project_id, spec_hash);`,
 		`CREATE TABLE IF NOT EXISTS project_agent (
 			project_id TEXT NOT NULL,
 			agent_name TEXT NOT NULL,

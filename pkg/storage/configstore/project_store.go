@@ -94,34 +94,63 @@ func (s *ConfigStore) SaveProjectRevision(ctx context.Context, revision ProjectR
 		return ProjectRevisionRecord{}, false, fmt.Errorf("project revision spec_json must be valid JSON")
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	conn, err := s.db.Conn(ctx)
 	if err != nil {
-		return ProjectRevisionRecord{}, false, fmt.Errorf("begin project revision tx: %w", err)
+		return ProjectRevisionRecord{}, false, fmt.Errorf("get project revision conn: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return ProjectRevisionRecord{}, false, fmt.Errorf("begin immediate project revision tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.Background(), `ROLLBACK`)
+		}
+	}()
+	commit := func() error {
+		if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+			return fmt.Errorf("commit project revision tx: %w", err)
+		}
+		committed = true
+		return nil
+	}
 
-	row := tx.QueryRowContext(ctx, `SELECT project_id, revision, spec_hash, spec_json, created_at
-		FROM project_revision WHERE project_id = ? AND spec_hash = ?`, revision.ProjectID, revision.SpecHash)
-	existing, err := projects.ScanProjectRevision(row.Scan)
-	if err == nil {
-		return existing, false, tx.Commit()
+	var currentRevision int64
+	if err := conn.QueryRowContext(ctx, `SELECT current_revision FROM project WHERE id = ?`, revision.ProjectID).Scan(&currentRevision); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ProjectRevisionRecord{}, false, domain.ResourceError(domain.ErrNotFound, "project", revision.ProjectID, fmt.Sprintf("project %s not found", revision.ProjectID), err)
+		}
+		return ProjectRevisionRecord{}, false, fmt.Errorf("query current project revision %s: %w", revision.ProjectID, err)
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return ProjectRevisionRecord{}, false, err
+	if currentRevision > 0 {
+		row := conn.QueryRowContext(ctx, `SELECT project_id, revision, spec_hash, spec_json, created_at
+			FROM project_revision WHERE project_id = ? AND revision = ?`, revision.ProjectID, currentRevision)
+		existing, err := projects.ScanProjectRevision(row.Scan)
+		if err == nil {
+			if existing.SpecHash == revision.SpecHash {
+				if err := commit(); err != nil {
+					return ProjectRevisionRecord{}, false, err
+				}
+				return existing, false, nil
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return ProjectRevisionRecord{}, false, err
+		}
 	}
 
 	var nextRevision int64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision), 0) + 1 FROM project_revision WHERE project_id = ?`, revision.ProjectID).Scan(&nextRevision); err != nil {
+	if err := conn.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision), 0) + 1 FROM project_revision WHERE project_id = ?`, revision.ProjectID).Scan(&nextRevision); err != nil {
 		return ProjectRevisionRecord{}, false, fmt.Errorf("query next project revision %s: %w", revision.ProjectID, err)
 	}
 	now := time.Now().UTC()
 	revision.Revision = nextRevision
 	revision.CreatedAt = now
-	if _, err := tx.ExecContext(ctx, `INSERT INTO project_revision(project_id, revision, spec_hash, spec_json, created_at)
+	if _, err := conn.ExecContext(ctx, `INSERT INTO project_revision(project_id, revision, spec_hash, spec_json, created_at)
 		VALUES(?, ?, ?, ?, ?)`, revision.ProjectID, revision.Revision, revision.SpecHash, revision.SpecJSON, revision.CreatedAt.Unix()); err != nil {
 		return ProjectRevisionRecord{}, false, fmt.Errorf("insert project revision %s/%d: %w", revision.ProjectID, revision.Revision, err)
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE project SET current_revision = ?, spec_hash = ?, updated_at = ?, removed_at = 0 WHERE id = ?`,
+	result, err := conn.ExecContext(ctx, `UPDATE project SET current_revision = ?, spec_hash = ?, updated_at = ?, removed_at = 0 WHERE id = ?`,
 		revision.Revision, revision.SpecHash, now.Unix(), revision.ProjectID)
 	if err != nil {
 		return ProjectRevisionRecord{}, false, fmt.Errorf("update project revision pointer %s: %w", revision.ProjectID, err)
@@ -129,8 +158,8 @@ func (s *ConfigStore) SaveProjectRevision(ctx context.Context, revision ProjectR
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		return ProjectRevisionRecord{}, false, domain.ResourceError(domain.ErrNotFound, "project", revision.ProjectID, fmt.Sprintf("project %s not found", revision.ProjectID), nil)
 	}
-	if err := tx.Commit(); err != nil {
-		return ProjectRevisionRecord{}, false, fmt.Errorf("commit project revision tx: %w", err)
+	if err := commit(); err != nil {
+		return ProjectRevisionRecord{}, false, err
 	}
 	return revision, true, nil
 }

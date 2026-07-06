@@ -92,7 +92,8 @@ agent-compose ls --json
 
 - `PROJECT`：project name。
 - `CONFIG FILE`：配置文件路径。
-- `REVISION`：当前 project revision。
+- `REVISION`：当前 project revision。每次应用新的 spec 变更都会递增；连续重复
+  apply 当前 spec 时保持同一个 revision。
 - `AGENTS`：agent 数量。
 - `SCHEDULERS`：scheduler 数量。
 - `SERVICES`：project 关联服务数量。当前 project spec 尚未定义 service 模型，因此该列显示为 `-`。

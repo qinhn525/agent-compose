@@ -92,7 +92,8 @@ Default columns:
 
 - `PROJECT`: project name.
 - `CONFIG FILE`: config file path.
-- `REVISION`: current project revision.
+- `REVISION`: current project revision. Revisions increase for each applied spec
+  change; repeated applies of the current spec keep the same revision.
 - `AGENTS`: agent count.
 - `SCHEDULERS`: scheduler count.
 - `SERVICES`: service count. The current project spec does not define a service model, so this column is shown as `-`.
