@@ -205,7 +205,7 @@
       - `cmd/agent-compose` 中 v2 `GetIsStderr`/`IsStderr` 使用尚未迁移，属于 4.2/4.4 CLI stream writer 范围。
     - 下一目标：3.2 修复 agent prompt streaming。
 
-- [ ] 3.2 修复 agent prompt streaming stdout 静默丢弃
+- [x] 3.2 修复 agent prompt streaming stdout 静默丢弃
   - 依赖：1.2、3.1。
   - 工作内容：
     - 迁移 `pkg/agentcompose/adapters/agent_executor.go`，删除 `if !chunk.IsStderr { return }` 类 stdout 静默过滤。
@@ -213,9 +213,9 @@
     - filtered stdout 写入 cell stdout/output；filtered stderr 写入 cell stderr/output。
     - stream broker 和 `stream.OnChunk` 只发送 filtered chunk。
   - 可并行子任务：
-    - [ ] 可并行：补充 agent stdout payload 不进入 stream/cell output 的测试。
-    - [ ] 可并行：补充 agent stdout 非 payload 文本可见的测试。
-    - [ ] 可并行：补充 agent stderr transcript 仍正常进入 stream/cell output 的测试。
+    - [x] 可并行：补充 agent stdout payload 不进入 stream/cell output 的测试。
+    - [x] 可并行：补充 agent stdout 非 payload 文本可见的测试。
+    - [x] 可并行：补充 agent stderr transcript 仍正常进入 stream/cell output 的测试。
   - 测试方案：
     - `./scripts/with-go-toolchain.sh go test ./pkg/agentcompose/adapters`
   - 验收标准：
@@ -223,10 +223,17 @@
     - `__AGENT_RESULT__` 不进入 stream/cell output/artifacts。
     - agent stderr transcript 行为保持兼容。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - `pkg/agentcompose/adapters/agent_executor.go` 的 stream writer 改为使用 `execution.FilterAgentStreamChunk`，删除按 stdout/stderr 直接决定可见性的 guard。
+      - filtered stdout 写入 cell stdout/output，filtered stderr 写入 cell stderr/output；session stream broker 和 `stream.OnChunk` 只接收 filtered chunk。
+      - `pkg/agentcompose/adapters/agent_executor_test.go` 覆盖 payload-only stdout chunk 隐藏、stdout marker 前 transcript 可见、stderr transcript 兼容保留，以及 cell output 不包含 `__AGENT_RESULT__`。
+    - 验证：
+      - `./scripts/with-go-toolchain.sh go test ./pkg/agentcompose/adapters`：通过。
+      - `rg -n "FilterAgentStreamChunk|if !.*StdioStderr|if !chunk\\.IsStderr|AgentResultPrefix" pkg/agentcompose/adapters/agent_executor.go pkg/agentcompose/adapters/agent_executor_test.go`：`agent_executor.go` 只通过 `FilterAgentStreamChunk` 判断 stream 可见性，测试覆盖 agent marker 剥离。
+    - 审计与例外：
+      - 本任务只修复 agent prompt streaming；command、exec、run 和 loader command 的 streaming filter 按 3.3 迁移。
+      - final result parser/sanitizer 未改动，仍只基于 `__AGENT_RESULT__` marker。
     - 下一目标：3.3 迁移 command/exec/loader streaming。
 
 - [ ] 3.3 迁移 command、exec、run 和 loader streaming filter
