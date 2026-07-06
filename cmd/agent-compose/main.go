@@ -663,7 +663,27 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 			return runComposeCacheInspectCommand(cmd, options, args[0])
 		},
 	}
-	cacheCmd.AddCommand(cacheLSCmd, cacheInspectCmd)
+	cachePruneOptions := composeCachePruneOptions{}
+	cachePruneCmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Prune daemon runtime caches",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeCachePruneCommand(cmd, options, cachePruneOptions)
+		},
+	}
+	addCachePruneFlags(cachePruneCmd, &cachePruneOptions)
+	cacheRemoveOptions := composeCacheRemoveOptions{}
+	cacheRemoveCmd := &cobra.Command{
+		Use:   "rm <cache-id>",
+		Short: "Remove a daemon runtime cache item",
+		Args:  cacheRemoveArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeCacheRemoveCommand(cmd, options, cacheRemoveOptions, args[0])
+		},
+	}
+	addCacheRemoveFlags(cacheRemoveCmd, &cacheRemoveOptions)
+	cacheCmd.AddCommand(cacheLSCmd, cacheInspectCmd, cachePruneCmd, cacheRemoveCmd)
 
 	imageCmd := &cobra.Command{
 		Use:   "image",
@@ -857,6 +877,20 @@ type composeCacheFilterOptions struct {
 	Status string
 }
 
+type composeCachePruneOptions struct {
+	composeCacheFilterOptions
+	Unused            bool
+	Orphaned          bool
+	Expired           bool
+	OlderThan         string
+	IncludeReferenced bool
+	Force             bool
+}
+
+type composeCacheRemoveOptions struct {
+	Force bool
+}
+
 func addImageListFlags(cmd *cobra.Command, options *composeImageListOptions) {
 	cmd.Flags().StringVar(&options.Query, "query", "", "Filter images by reference")
 	cmd.Flags().BoolVarP(&options.All, "all", "a", false, "Show all images")
@@ -877,9 +911,30 @@ func addCacheFilterFlags(cmd *cobra.Command, options *composeCacheFilterOptions)
 	cmd.Flags().StringVar(&options.Status, "status", "", "Filter caches by status: active, referenced, unused, expired, orphaned, or unknown")
 }
 
+func addCachePruneFlags(cmd *cobra.Command, options *composeCachePruneOptions) {
+	addCacheFilterFlags(cmd, &options.composeCacheFilterOptions)
+	cmd.Flags().BoolVar(&options.Unused, "unused", false, "Only match unused caches")
+	cmd.Flags().BoolVar(&options.Orphaned, "orphaned", false, "Only match orphaned caches")
+	cmd.Flags().BoolVar(&options.Expired, "expired", false, "Only match expired caches")
+	cmd.Flags().StringVar(&options.OlderThan, "older-than", "", "Only match caches older than a duration such as 7d or 24h")
+	cmd.Flags().BoolVar(&options.IncludeReferenced, "include-referenced", false, "Allow referenced caches to be removed")
+	cmd.Flags().BoolVar(&options.Force, "force", false, "Actually remove matched caches")
+}
+
+func addCacheRemoveFlags(cmd *cobra.Command, options *composeCacheRemoveOptions) {
+	cmd.Flags().BoolVar(&options.Force, "force", false, "Actually remove the cache item")
+}
+
 func cacheInspectArgs(_ *cobra.Command, args []string) error {
 	if len(args) != 1 {
 		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("cache inspect accepts 1 arg(s), received %d", len(args))}
+	}
+	return nil
+}
+
+func cacheRemoveArgs(_ *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("cache rm accepts 1 arg(s), received %d", len(args))}
 	}
 	return nil
 }
@@ -2011,6 +2066,56 @@ func runComposeCacheInspectCommand(cmd *cobra.Command, cli cliOptions, cacheID s
 	return writeCacheInspectText(cmd.OutOrStdout(), output)
 }
 
+func runComposeCachePruneCommand(cmd *cobra.Command, cli cliOptions, options composeCachePruneOptions) error {
+	clients, err := newCLIServiceClients(cli)
+	if err != nil {
+		return err
+	}
+	filter, err := cacheFilterFromPruneOptions(options)
+	if err != nil {
+		return commandExitError{Code: exitCodeUsage, Err: err}
+	}
+	resp, err := clients.cache.PruneCaches(cmd.Context(), connect.NewRequest(&agentcomposev2.PruneCachesRequest{
+		Filter:            filter,
+		IncludeReferenced: options.IncludeReferenced,
+		Force:             options.Force,
+	}))
+	if err != nil {
+		return commandExitErrorForConnect(fmt.Errorf("prune caches: %w", err))
+	}
+	output := composeCacheOperationOutputFromPruneResponse(resp.Msg)
+	if err := writeCacheOperationOutput(cmd.OutOrStdout(), cli.JSON, output); err != nil {
+		return err
+	}
+	return nil
+}
+
+func runComposeCacheRemoveCommand(cmd *cobra.Command, cli cliOptions, options composeCacheRemoveOptions, cacheID string) error {
+	cacheID = strings.TrimSpace(cacheID)
+	if cacheID == "" {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("cache rm requires a cache id")}
+	}
+	clients, err := newCLIServiceClients(cli)
+	if err != nil {
+		return err
+	}
+	resp, err := clients.cache.RemoveCache(cmd.Context(), connect.NewRequest(&agentcomposev2.RemoveCacheRequest{
+		CacheId: cacheID,
+		Force:   options.Force,
+	}))
+	if err != nil {
+		return commandExitErrorForConnect(fmt.Errorf("remove cache %s: %w", cacheID, err))
+	}
+	output := composeCacheOperationOutputFromRemoveResponse(resp.Msg)
+	if err := writeCacheOperationOutput(cmd.OutOrStdout(), cli.JSON, output); err != nil {
+		return err
+	}
+	if options.Force && len(output.Removed) == 0 && len(output.Skipped) > 0 {
+		return commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("remove cache %s: cache is protected", cacheID)}
+	}
+	return nil
+}
+
 func runComposePullCommand(cmd *cobra.Command, cli cliOptions, options composeImagePullOptions, args []string) error {
 	if len(args) == 1 {
 		return runComposeImagePullCommand(cmd, cli, options, args[0])
@@ -2627,6 +2732,14 @@ type composeCacheListOutput struct {
 type composeCacheInspectOutput struct {
 	Cache    composeCacheOutput `json:"cache"`
 	Warnings []string           `json:"warnings,omitempty"`
+}
+
+type composeCacheOperationOutput struct {
+	DryRun   bool                 `json:"dry_run"`
+	Matched  []composeCacheOutput `json:"matched"`
+	Removed  []string             `json:"removed"`
+	Skipped  []composeCacheOutput `json:"skipped"`
+	Warnings []string             `json:"warnings,omitempty"`
 }
 
 type composeCacheOutput struct {
@@ -3553,6 +3666,40 @@ func composeCacheInspectOutputFromResponse(resp *agentcomposev2.InspectCacheResp
 	}
 }
 
+func composeCacheOperationOutputFromPruneResponse(resp *agentcomposev2.PruneCachesResponse) composeCacheOperationOutput {
+	output := composeCacheOperationOutput{
+		DryRun:   resp.GetDryRun(),
+		Matched:  make([]composeCacheOutput, 0, len(resp.GetMatched())),
+		Removed:  append([]string(nil), resp.GetRemoved()...),
+		Skipped:  make([]composeCacheOutput, 0, len(resp.GetSkipped())),
+		Warnings: append([]string(nil), resp.GetWarnings()...),
+	}
+	for _, cache := range resp.GetMatched() {
+		output.Matched = append(output.Matched, composeCacheOutputFromProto(cache))
+	}
+	for _, cache := range resp.GetSkipped() {
+		output.Skipped = append(output.Skipped, composeCacheOutputFromProto(cache))
+	}
+	return output
+}
+
+func composeCacheOperationOutputFromRemoveResponse(resp *agentcomposev2.RemoveCacheResponse) composeCacheOperationOutput {
+	output := composeCacheOperationOutput{
+		DryRun:   resp.GetDryRun(),
+		Matched:  make([]composeCacheOutput, 0, len(resp.GetMatched())),
+		Removed:  append([]string(nil), resp.GetRemoved()...),
+		Skipped:  make([]composeCacheOutput, 0, len(resp.GetSkipped())),
+		Warnings: append([]string(nil), resp.GetWarnings()...),
+	}
+	for _, cache := range resp.GetMatched() {
+		output.Matched = append(output.Matched, composeCacheOutputFromProto(cache))
+	}
+	for _, cache := range resp.GetSkipped() {
+		output.Skipped = append(output.Skipped, composeCacheOutputFromProto(cache))
+	}
+	return output
+}
+
 func composeImageRemoveOutputFromResponse(resp *agentcomposev2.RemoveImageResponse) composeImageRemoveOutput {
 	return composeImageRemoveOutput{
 		ImageRef:     resp.GetImageRef(),
@@ -3729,6 +3876,67 @@ func writeCacheInspectText(out io.Writer, output composeCacheInspectOutput) erro
 		return err
 	}
 	return nil
+}
+
+func writeCacheOperationOutput(out io.Writer, asJSON bool, output composeCacheOperationOutput) error {
+	if asJSON {
+		data, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeCommandOutput(out, append(data, '\n'))
+	}
+	if output.DryRun {
+		if _, err := fmt.Fprintf(out, "Dry-run: %d matched, %d skipped, %d would be removed.\n", len(output.Matched), len(output.Skipped), len(output.Matched)-len(output.Skipped)); err != nil {
+			return err
+		}
+	} else {
+		if _, err := fmt.Fprintf(out, "Removed %d cache item(s); %d matched, %d skipped.\n", len(output.Removed), len(output.Matched), len(output.Skipped)); err != nil {
+			return err
+		}
+	}
+	if len(output.Removed) > 0 {
+		if err := writeStringListSection(out, "Removed", output.Removed); err != nil {
+			return err
+		}
+	}
+	if len(output.Matched) > 0 {
+		if _, err := fmt.Fprintln(out, "Matched:"); err != nil {
+			return err
+		}
+		if err := writeCacheOperationTable(out, output.Matched); err != nil {
+			return err
+		}
+	}
+	if len(output.Skipped) > 0 {
+		if _, err := fmt.Fprintln(out, "Skipped:"); err != nil {
+			return err
+		}
+		if err := writeCacheOperationTable(out, output.Skipped); err != nil {
+			return err
+		}
+	}
+	return writeStringListSection(out, "Warnings", output.Warnings)
+}
+
+func writeCacheOperationTable(out io.Writer, caches []composeCacheOutput) error {
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "CACHE ID\tDRIVER\tTYPE\tSTATUS\tREMOVABLE\tREASON"); err != nil {
+		return err
+	}
+	for _, cache := range caches {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			firstNonEmptyString(cache.CacheID, "-"),
+			firstNonEmptyString(cache.Driver, "-"),
+			firstNonEmptyString(cache.Type, "-"),
+			firstNonEmptyString(cache.Status, "-"),
+			strconv.FormatBool(cache.Removable),
+			firstNonEmptyString(strings.Join(cache.BlockedReasons, "; "), "-"),
+		); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
 }
 
 func writeStringListSection(out io.Writer, title string, values []string) error {
@@ -4137,6 +4345,88 @@ func cacheFilterFromOptions(options composeCacheFilterOptions) (*agentcomposev2.
 		Type:   cacheType,
 		Status: status,
 	}, nil
+}
+
+func cacheFilterFromPruneOptions(options composeCachePruneOptions) (*agentcomposev2.CacheFilter, error) {
+	base, err := cacheFilterFromOptions(options.composeCacheFilterOptions)
+	if err != nil {
+		return nil, err
+	}
+	status, err := cachePruneShortcutStatus(options)
+	if err != nil {
+		return nil, err
+	}
+	if status != agentcomposev2.CacheStatus_CACHE_STATUS_UNSPECIFIED {
+		if base == nil {
+			base = &agentcomposev2.CacheFilter{}
+		}
+		base.Status = status
+	}
+	if strings.TrimSpace(options.OlderThan) != "" {
+		seconds, err := parseCacheOlderThanSeconds(options.OlderThan)
+		if err != nil {
+			return nil, err
+		}
+		if base == nil {
+			base = &agentcomposev2.CacheFilter{}
+		}
+		base.OlderThanSeconds = seconds
+	}
+	return base, nil
+}
+
+func cachePruneShortcutStatus(options composeCachePruneOptions) (agentcomposev2.CacheStatus, error) {
+	var selected []string
+	var status agentcomposev2.CacheStatus
+	if options.Unused {
+		selected = append(selected, "--unused")
+		status = agentcomposev2.CacheStatus_CACHE_STATUS_UNUSED
+	}
+	if options.Orphaned {
+		selected = append(selected, "--orphaned")
+		status = agentcomposev2.CacheStatus_CACHE_STATUS_ORPHANED
+	}
+	if options.Expired {
+		selected = append(selected, "--expired")
+		status = agentcomposev2.CacheStatus_CACHE_STATUS_EXPIRED
+	}
+	if len(selected) > 1 {
+		return agentcomposev2.CacheStatus_CACHE_STATUS_UNSPECIFIED, fmt.Errorf("%s are mutually exclusive", strings.Join(selected, ", "))
+	}
+	if len(selected) == 1 && strings.TrimSpace(options.Status) != "" {
+		return agentcomposev2.CacheStatus_CACHE_STATUS_UNSPECIFIED, fmt.Errorf("%s cannot be combined with --status", selected[0])
+	}
+	return status, nil
+}
+
+func parseCacheOlderThanSeconds(value string) (uint64, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, nil
+	}
+	var duration time.Duration
+	var err error
+	if strings.HasSuffix(value, "d") {
+		daysText := strings.TrimSpace(strings.TrimSuffix(value, "d"))
+		days, parseErr := strconv.ParseFloat(daysText, 64)
+		if parseErr != nil {
+			err = parseErr
+		} else {
+			duration = time.Duration(days * float64(24*time.Hour))
+		}
+	} else {
+		duration, err = time.ParseDuration(value)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("invalid --older-than %q: expected a positive duration such as 7d or 24h", value)
+	}
+	if duration <= 0 {
+		return 0, fmt.Errorf("invalid --older-than %q: duration must be positive", value)
+	}
+	if duration < time.Second {
+		return 0, fmt.Errorf("invalid --older-than %q: duration must be at least 1s", value)
+	}
+	return uint64(duration / time.Second), nil
 }
 
 func cacheDriverFilterValue(value string) (string, error) {

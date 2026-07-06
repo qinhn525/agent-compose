@@ -391,19 +391,33 @@
       - 本任务未运行真实 BoxLite/Microsandbox smoke；变更不启动 runtime，补跑命令仍为 `SMOKE_RUNTIME_DRIVERS=boxlite task test:runtime-smoke`、`SMOKE_RUNTIME_DRIVERS=microsandbox task test:runtime-smoke`。
     - 下一目标：6.2 CLI cache prune/rm。
 
-- [ ] 6.2 实现 CLI `cache prune` 和 `cache rm`
+- [x] 6.2 实现 CLI `cache prune` 和 `cache rm`
   - 依赖：6.1。
   - 工作内容：实现 `cache prune`、`cache rm <cache-id>`；实现 `--unused`、`--orphaned`、`--expired`、`--older-than`、`--include-referenced`、`--force`；定义互斥/组合规则和退出码。
   - 可并行子任务：
-    - [ ] 可并行：实现 prune/rm request mapping tests。
-    - [ ] 可并行：实现文本输出和 JSON output tests。
+    - [x] 可并行：实现 prune/rm request mapping tests。
+    - [x] 可并行：实现文本输出和 JSON output tests。
   - 测试方案：`go test ./cmd/agent-compose`，覆盖默认 dry-run、`--force`、`--unused`、`--orphaned`、`--expired`、`--older-than 7d`、`--include-referenced`、非法 duration、负数/零 duration、active/unknown protected error、missing/extra args。
   - 验收标准：无可删项返回 0；usage error 和 Connect error 映射符合现有 CLI；dry-run 中 protected skipped 不失败；JSON 不被 warning/deprecated 文案污染。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - 新增 `agent-compose cache prune` 和 `agent-compose cache rm <cache-id>` 命令，并接入 v2 `CacheService` 的 `PruneCaches`/`RemoveCache` RPC。
+      - `cache prune` 支持 `--driver`、`--type`、`--status`、`--unused`、`--orphaned`、`--expired`、`--older-than`、`--include-referenced`、`--force`；`--unused`、`--orphaned`、`--expired` 与彼此及 `--status` 互斥。
+      - `--older-than` 支持 `7d` 和 Go duration（例如 `168h`），并拒绝非法、零、负数和小于 1 秒的 duration。
+      - 新增 prune/rm operation JSON 输出结构，包含 `dry_run`、`matched`、`removed`、`skipped`、`warnings`；文本输出展示 dry-run/removed/skipped/warnings。
+      - `cache rm` 默认 dry-run，`--force` 才传递删除请求；force 后 daemon 返回 protected skipped 时输出结果并按 usage error 退出，Connect `FailedPrecondition`/`NotFound`/`InvalidArgument` 继续走现有映射。
+      - 增加 CLI integration tests，覆盖 dry-run、force、JSON clean stdout、request mapping、duration parsing、互斥 usage errors、missing/extra/empty cache id、successful protected skipped 和 Connect protected error。
+    - 验证：
+      - `./scripts/with-go-toolchain.sh go test -count=1 ./cmd/agent-compose -run 'TestIntegrationCLICache|TestCLICache'`
+      - `./scripts/with-go-toolchain.sh go test -count=1 ./cmd/agent-compose`
+      - `./scripts/with-go-toolchain.sh go test -count=1 ./pkg/agentcompose/api ./pkg/runtimecache`
+      - `rg -n "connectrpc|connect\\." pkg/runtimecache || true`
+      - `git diff --check`
+    - 审计与例外：
+      - CLI 只做参数校验、请求映射和输出展示，不读取或删除 daemon cache path。
+      - `pkg/runtimecache` 未引入 Connect import。
+      - 真实 BoxLite/Microsandbox smoke 为 opt-in，本任务未运行；补跑命令：`SMOKE_RUNTIME_DRIVERS=all task test:runtime-smoke`。
     - 下一目标：7.1 端到端 workflow。
 
 ## 阶段 7：端到端集成和非回归
