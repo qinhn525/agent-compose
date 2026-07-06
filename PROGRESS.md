@@ -580,7 +580,7 @@
       - 未发现 `chunk_type`、`payload_kind`、typed payload event、stdin 转发、新 CLI 参数或输出协议 JSON schema 变更。
     - 下一目标：6.2 运行完整 harness 和 CI 对齐门禁。
 
-- [ ] 6.2 运行完整 harness 和 CI 对齐门禁
+- [x] 6.2 运行完整 harness 和 CI 对齐门禁
   - 依赖：6.1。
   - 工作内容：
     - 运行主质量门禁并修复失败。
@@ -588,11 +588,11 @@
     - 记录 coverage summary、不可运行命令和环境缺失。
     - 确认无需构建 Docker images，除非实现过程改动 Dockerfile、guest image 构建脚本或部署配置。
   - 可并行子任务：
-    - [ ] 可并行：Go focused/full tests 结果整理。
-    - [ ] 可并行：runtime/javascript npm 测试结果整理。
-    - [ ] 可并行：runtime SDK package 测试结果整理。
-    - [ ] 可并行：proto-client 生成构建结果整理。
-    - [ ] 可并行：lint/build/test 门禁失败 triage。
+    - [x] 可并行：Go focused/full tests 结果整理。
+    - [x] 可并行：runtime/javascript npm 测试结果整理。
+    - [x] 可并行：runtime SDK package 测试结果整理。
+    - [x] 可并行：proto-client 生成构建结果整理。
+    - [x] 可并行：lint/build/test 门禁失败 triage。
   - 测试方案：
     - `task lint`
     - `task build`
@@ -607,8 +607,20 @@
     - CI 对齐补充命令全部通过，或完成总结清楚记录无法运行原因。
     - v2 Go/Connect/TypeScript 生成产物已更新并可编译。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
-    - 下一目标：无。
+    - 状态：已完成。
+    - 变更：
+      - 本任务只运行完整 harness 和 CI 对齐门禁；未修改 runtime behavior、proto schema、CLI 参数、JSON schema 或测试代码。
+      - 更新 `PROGRESS.md` 记录完整 gate、coverage summary、生成产物和例外结论。
+    - 验证：
+      - `task lint`：通过，`golangci-lint fmt --diff` 和 `golangci-lint run` 均完成，输出 `0 issues`。
+      - `task build`：通过，构建 `cmd/agent-compose`、v2 proto Go packages，并完成 `runtime/agent-compose-runtime-sdk` build 与 `test:packaging`。
+      - `task test`：通过，coverage summary 为 unit `70.98%`、integration `66.17%`、E2E `68.99%`、combined `73.03%`，均满足 `TESTING.md` baseline。
+      - `./scripts/with-go-toolchain.sh go test ./cmd/... ./pkg/...`：通过。
+      - `cd runtime/javascript && npm run test:unit`：通过，`14` 个 test files、`118` 个 tests passed。
+      - `cd runtime/agent-compose-runtime-sdk && npm test && npm run test:packaging`：通过，`5` 个 test files、`31` 个 tests passed，并验证 offline install package。
+      - `cd proto-client && npm run gen && npm run build`：通过，v1/v2/health TypeScript client 重新生成并编译。
+    - 审计与例外：
+      - `git status --ignored --short runtime/javascript proto-client runtime/agent-compose-runtime-sdk` 显示 `proto-client/src`、`proto-client/dist`、`proto-client/node_modules`、`runtime/javascript/node_modules`、`runtime/agent-compose-runtime-sdk/node_modules`、`runtime/agent-compose-runtime-sdk/dist` 均为 ignored 输出；未强制加入版本控制。
+      - 本目标未改 Dockerfile、guest image 构建脚本、部署配置或 runtime driver image 行为，因此未运行 Docker image 构建门禁。
+      - 没有不可运行命令；所有 6.2 要求的本地门禁和 CI 对齐补充命令均通过。
+    - 下一目标：检查远端 CI 状态并完成目标收口。
