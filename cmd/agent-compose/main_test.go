@@ -2730,6 +2730,18 @@ agents:
 		t.Fatalf("ps JSON sandbox field shape = %q", stdout)
 	}
 
+	sandboxOut, sandboxErr, _, sandboxCode := executeCLICommand("sandbox", "ls", "--host", server.URL, "--file", composePath, "--json")
+	if sandboxCode != 0 || sandboxErr != "" {
+		t.Fatalf("sandbox ls --json code/stderr = %d / %q", sandboxCode, sandboxErr)
+	}
+	var sandboxDecoded composePSOutput
+	if err := json.Unmarshal([]byte(sandboxOut), &sandboxDecoded); err != nil {
+		t.Fatalf("sandbox ls JSON decode failed: %v\n%s", err, sandboxOut)
+	}
+	if !reflect.DeepEqual(sandboxDecoded, decoded) {
+		t.Fatalf("sandbox ls JSON = %#v, want %#v", sandboxDecoded, decoded)
+	}
+
 	textOut, textErr, _, textCode := executeCLICommand("ps", "--host", server.URL, "--file", composePath)
 	if textCode != 0 || textErr != "" {
 		t.Fatalf("ps text code/stderr = %d / %q", textCode, textErr)
@@ -2773,6 +2785,18 @@ agents:
 	for _, want := range []string{"DRIVER", "IMAGE", "WORKSPACE", "boxlite", "guest:latest", "/workspace/session-running"} {
 		if !strings.Contains(verboseOut, want) {
 			t.Fatalf("ps --verbose output %q does not contain %q", verboseOut, want)
+		}
+	}
+}
+
+func TestIntegrationCLISandboxCommandGroupHelp(t *testing.T) {
+	stdout, stderr, runCount, exitCode := executeCLICommand("sandbox", "--help")
+	if exitCode != 0 || stderr != "" || runCount != 0 {
+		t.Fatalf("sandbox --help code/stderr/runCount = %d / %q / %d", exitCode, stderr, runCount)
+	}
+	for _, want := range []string{"Manage project sandboxes", "ls", "stop", "resume", "rm", "prune"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("sandbox --help output %q does not contain %q", stdout, want)
 		}
 	}
 }
@@ -3162,6 +3186,17 @@ func TestIntegrationCLIRemoveSandboxes(t *testing.T) {
 	}
 	if len(removed) != 3 || removed[1].force || removed[2].force {
 		t.Fatalf("removed requests after json = %#v", removed)
+	}
+
+	sandboxOut, sandboxErr, _, sandboxCode := executeCLICommand("sandbox", "rm", "--host", server.URL, "--force", "sandbox-d")
+	if sandboxCode != 0 || sandboxErr != "" {
+		t.Fatalf("sandbox rm --force code/stderr = %d / %q", sandboxCode, sandboxErr)
+	}
+	if sandboxOut != "removed sandbox sandbox-d\n" {
+		t.Fatalf("sandbox rm --force stdout = %q", sandboxOut)
+	}
+	if len(removed) != 4 || removed[3].sandbox != "sandbox-d" || !removed[3].force {
+		t.Fatalf("removed requests after sandbox rm = %#v", removed)
 	}
 }
 

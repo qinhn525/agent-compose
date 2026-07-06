@@ -605,6 +605,67 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 	}
 	rmCmd.Flags().BoolVar(&removeSandboxOptions.Force, "force", false, "Force remove running sandboxes")
 
+	sandboxPSOptions := composePSOptions{}
+	sandboxLSCmd := &cobra.Command{
+		Use:   "ls",
+		Short: "List project sandboxes",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposePSCommand(cmd, options, sandboxPSOptions)
+		},
+	}
+	sandboxLSCmd.Flags().BoolVarP(&sandboxPSOptions.All, "all", "a", false, "Show all recognizable sandboxes")
+	sandboxLSCmd.Flags().StringVar(&sandboxPSOptions.Status, "status", "", "Filter sandboxes by status, comma-separated")
+	sandboxLSCmd.Flags().BoolVar(&sandboxPSOptions.Verbose, "verbose", false, "Show more sandbox details")
+
+	sandboxStopCmd := &cobra.Command{
+		Use:   "stop <sandbox> [<sandbox N>]",
+		Short: "Stop one or more sandboxes",
+		Args:  sandboxActionArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeSandboxActionCommand(cmd, options, "stop", "stopped", args)
+		},
+	}
+
+	sandboxResumeCmd := &cobra.Command{
+		Use:   "resume <sandbox> [<sandbox N>]",
+		Short: "Resume one or more sandboxes",
+		Args:  sandboxActionArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeSandboxActionCommand(cmd, options, "resume", "resumed", args)
+		},
+	}
+
+	sandboxRemoveOptions := composeSandboxRemoveOptions{}
+	sandboxRMCmd := &cobra.Command{
+		Use:   "rm <sandbox> [<sandbox N>]",
+		Short: "Remove one or more sandboxes",
+		Args:  sandboxActionArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runComposeSandboxRemoveCommand(cmd, options, sandboxRemoveOptions, args)
+		},
+	}
+	sandboxRMCmd.Flags().BoolVar(&sandboxRemoveOptions.Force, "force", false, "Force remove running sandboxes")
+
+	sandboxPruneCmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Prune stopped or failed sandboxes",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return commandExitError{Code: exitCodeUnsupported, Err: fmt.Errorf("sandbox prune is not implemented yet")}
+		},
+	}
+
+	sandboxCmd := &cobra.Command{
+		Use:   "sandbox",
+		Short: "Manage project sandboxes",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
+	}
+	sandboxCmd.AddCommand(sandboxLSCmd, sandboxStopCmd, sandboxResumeCmd, sandboxRMCmd, sandboxPruneCmd)
+
 	execOptions := composeExecOptions{}
 	execCmd := &cobra.Command{
 		Use:   "exec <sandbox> [command] [args...]",
@@ -805,7 +866,7 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		},
 	}
 
-	root.AddCommand(daemonCmd, versionCmd, statusCmd, configCmd, listCmd, upCmd, downCmd, runCmd, schedulerCmd, logsCmd, psCmd, statsCmd, stopCmd, resumeCmd, rmCmd, execCmd, imagesCmd, cacheCmd, imageCmd, pullCmd, buildCmd, rmiCmd, inspectCmd)
+	root.AddCommand(daemonCmd, versionCmd, statusCmd, configCmd, listCmd, upCmd, downCmd, runCmd, schedulerCmd, logsCmd, psCmd, statsCmd, sandboxCmd, stopCmd, resumeCmd, rmCmd, execCmd, imagesCmd, cacheCmd, imageCmd, pullCmd, buildCmd, rmiCmd, inspectCmd)
 	return root
 }
 
