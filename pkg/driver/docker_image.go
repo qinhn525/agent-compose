@@ -116,9 +116,14 @@ func applyDockerDaemonPullPolicy(ctx context.Context, imageRef, pullPolicy strin
 
 	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		// No reachable daemon: let the caller fall through to its OCI path,
-		// which applies pullPolicy on its own.
-		return nil
+		// This runs only after the caller has confirmed the docker daemon is
+		// available (the resolve* paths gate this behind dockerAvailable==true)
+		// and BEFORE it materializes from the local daemon copy. Silently
+		// returning nil here would let the caller proceed to dockerMaterialize
+		// with policy unenforced — pull_policy=always would skip the re-pull and
+		// pull_policy=never would skip the local existence check. Surface the
+		// error so the caller aborts instead of using an unvalidated image.
+		return fmt.Errorf("connect docker daemon for pull-policy check %s: %w", imageRef, err)
 	}
 	defer func() { _ = dockerClient.Close() }()
 

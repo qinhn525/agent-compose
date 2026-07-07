@@ -132,7 +132,9 @@ func (r *LoaderSessionRunner) Ensure(ctx context.Context, loader domain.Loader, 
 	session.ProviderEnvItems = providerEnvItems
 	if request.PullPolicy != "" {
 		session.Summary.PullPolicy = request.PullPolicy
-		_ = r.Store.UpdateSession(ctx, session)
+		if err := r.Store.UpdateSession(ctx, session); err != nil {
+			return nil, "", fmt.Errorf("persist session pull policy: %w", err)
+		}
 	}
 	if err := workspaces.PrepareSessionWorkspace(ctx, r.Config, r.ConfigDB, session); err != nil {
 		session.Summary.VMStatus = domain.VMStatusFailed
