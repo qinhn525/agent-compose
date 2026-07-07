@@ -155,6 +155,58 @@ func TestRuntimeHostProjectAgentPath(t *testing.T) {
 	}
 }
 
+func TestRuntimeHostLogPublishEventAndState(t *testing.T) {
+	ctx := context.Background()
+	loader := domain.Loader{Summary: domain.LoaderSummary{ID: "loader-state", Name: "State Loader"}}
+	run := &domain.LoaderRunSummary{ID: "run-state", LoaderID: loader.Summary.ID, TriggerID: "trigger-state"}
+	store := &hostStoreFake{}
+	events := &hostEventsFake{}
+	host := loaders.NewRuntimeHost(loaders.RunHostDependencies{
+		Store:  store,
+		Events: events,
+	}, loader, run, loaders.TriggerEventMetadata{
+		EventID:       "trigger-event",
+		CorrelationID: "correlation-1",
+	})
+
+	if err := host.Log(ctx, "hello", map[string]any{"ok": true}); err != nil {
+		t.Fatalf("Log returned error: %v", err)
+	}
+	if !events.contains("loader.log") {
+		t.Fatalf("events after Log = %#v", events.types())
+	}
+
+	created, err := host.PublishEvent(ctx, "runtime.demo", `{"value":1}`)
+	if err != nil {
+		t.Fatalf("PublishEvent returned error: %v", err)
+	}
+	if created.Topic != "runtime.demo" || created.Sequence != 7 || created.PayloadJSON == `{"value":1}` {
+		t.Fatalf("created event = %#v", created)
+	}
+	if !events.contains("loader.event.published") {
+		t.Fatalf("events after PublishEvent = %#v", events.types())
+	}
+
+	if err := host.StateSet(ctx, "cursor", `{"offset":2}`); err != nil {
+		t.Fatalf("StateSet returned error: %v", err)
+	}
+	value, ok, err := host.StateGet(ctx, "cursor")
+	if err != nil || !ok || value != `{"offset":2}` {
+		t.Fatalf("StateGet value=%q ok=%v err=%v", value, ok, err)
+	}
+	if err := host.StateDelete(ctx, "cursor"); err != nil {
+		t.Fatalf("StateDelete returned error: %v", err)
+	}
+	if _, ok, err := host.StateGet(ctx, "cursor"); err != nil || ok {
+		t.Fatalf("StateGet after delete ok=%v err=%v", ok, err)
+	}
+
+	missingStoreHost := loaders.NewRuntimeHost(loaders.RunHostDependencies{}, loader, run, loaders.TriggerEventMetadata{})
+	if _, err := missingStoreHost.PublishEvent(ctx, "runtime.demo", `{}`); err == nil || !strings.Contains(err.Error(), "event store is unavailable") {
+		t.Fatalf("PublishEvent missing store error = %v", err)
+	}
+}
+
 type hostStoreFake struct {
 	events []domain.TopicEventRecord
 	state  map[string]string

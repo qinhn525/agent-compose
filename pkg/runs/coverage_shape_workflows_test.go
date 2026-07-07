@@ -869,6 +869,45 @@ func TestRunsControllerRunProjectAgentManualTriggerMissingDoesNotCreateRun(t *te
 	}
 }
 
+func TestManualTriggerCaptureHostUnavailableMethodsAndEnvSpecs(t *testing.T) {
+	ctx := context.Background()
+	host := &manualTriggerCaptureHost{}
+
+	if err := host.Log(ctx, "ignored", map[string]any{"ok": true}); err != nil {
+		t.Fatalf("Log returned error: %v", err)
+	}
+	if _, err := host.PublishEvent(ctx, "runtime.topic", `{}`); err == nil || !strings.Contains(err.Error(), "scheduler.event.publish") {
+		t.Fatalf("PublishEvent error = %v", err)
+	}
+	if _, err := host.Command(ctx, domain.LoaderCommandRequest{}); err == nil || !strings.Contains(err.Error(), "scheduler.command") {
+		t.Fatalf("Command error = %v", err)
+	}
+	if _, err := host.LLM(ctx, "prompt", domain.LoaderLLMRequest{}); err == nil || !strings.Contains(err.Error(), "scheduler.llm") {
+		t.Fatalf("LLM error = %v", err)
+	}
+	if value, ok, err := host.StateGet(ctx, "cursor"); err != nil || ok || value != "" {
+		t.Fatalf("StateGet value=%q ok=%v err=%v", value, ok, err)
+	}
+	if err := host.StateSet(ctx, "cursor", `{}`); err != nil {
+		t.Fatalf("StateSet returned error: %v", err)
+	}
+	if err := host.StateDelete(ctx, "cursor"); err != nil {
+		t.Fatalf("StateDelete returned error: %v", err)
+	}
+	if _, err := host.CallSessionRPC(ctx, "GetSession", `{}`); err == nil || !strings.Contains(err.Error(), "scheduler.session") {
+		t.Fatalf("CallSessionRPC error = %v", err)
+	}
+
+	specs := envVarSpecsFromSessionEnv([]domain.SessionEnvVar{
+		{Name: " A ", Value: "1", Secret: true},
+		{Name: " ", Value: "ignored"},
+		{Name: "B", Value: "2"},
+	})
+	if len(specs) != 2 || specs[0].Name != "A" || specs[0].Value != "1" || !specs[0].Secret || specs[1].Name != "B" {
+		t.Fatalf("env specs = %#v", specs)
+	}
+}
+
 func TestRunsProjectRunLogAppendChunk(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state", "runs", "run-1", "output.txt")
 	if err := appendProjectRunLogChunk(path, domain.ExecChunk{Text: "stdout\n"}); err != nil {

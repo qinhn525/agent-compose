@@ -1122,3 +1122,49 @@ func newMemoryDB(t *testing.T) *sql.DB {
 	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
+
+func TestConfigStoreExportedSchemaHelpers(t *testing.T) {
+	ctx := context.Background()
+	db := newMemoryDB(t)
+	if _, err := db.ExecContext(ctx, `CREATE TABLE helper_columns (name TEXT PRIMARY KEY)`); err != nil {
+		t.Fatalf("create helper table: %v", err)
+	}
+	if err := EnsureColumn(ctx, db, "helper_columns", "value", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		t.Fatalf("EnsureColumn add returned error: %v", err)
+	}
+	if err := EnsureColumn(ctx, db, "helper_columns", "value", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		t.Fatalf("EnsureColumn existing returned error: %v", err)
+	}
+	types, err := TableColumnTypes(ctx, db, "helper_columns")
+	if err != nil {
+		t.Fatalf("TableColumnTypes returned error: %v", err)
+	}
+	if types["value"] != "TEXT" {
+		t.Fatalf("column types = %#v", types)
+	}
+
+	store := FromDB(db)
+	if err := store.InitCoreSchema(ctx); err != nil {
+		t.Fatalf("InitCoreSchema returned error: %v", err)
+	}
+	if _, err := store.ReplaceGlobalEnv(ctx, []domain.SessionEnvVar{{Name: "A", Value: "1", Secret: true}}); err != nil {
+		t.Fatalf("ReplaceGlobalEnv returned error: %v", err)
+	}
+	if _, err := store.CreateWorkspaceConfig(ctx, domain.WorkspaceConfig{ID: "workspace-1", Name: "Workspace", Type: "file", ConfigJSON: `{}`}); err != nil {
+		t.Fatalf("CreateWorkspaceConfig returned error: %v", err)
+	}
+	if err := store.RebuildGlobalEnvTable(ctx); err != nil {
+		t.Fatalf("RebuildGlobalEnvTable returned error: %v", err)
+	}
+	if err := store.RebuildWorkspaceConfigTable(ctx); err != nil {
+		t.Fatalf("RebuildWorkspaceConfigTable returned error: %v", err)
+	}
+	env, err := store.ListGlobalEnv(ctx)
+	if err != nil || len(env) != 1 || env[0].Name != "A" || !env[0].Secret {
+		t.Fatalf("global env after rebuild = %#v err=%v", env, err)
+	}
+	workspace, err := store.GetWorkspaceConfig(ctx, "workspace-1")
+	if err != nil || workspace.Name != "Workspace" {
+		t.Fatalf("workspace after rebuild = %#v err=%v", workspace, err)
+	}
+}

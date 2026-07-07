@@ -671,6 +671,99 @@ func testComposeImageStatsAndSessionHelpers(t *testing.T) {
 	if inspect.Image.ImageID == "" || remove.DeletedIDs[0] != "sha256:123" {
 		t.Fatalf("inspect=%#v remove=%#v", inspect, remove)
 	}
+	cacheItem := &agentcomposev2.CacheItem{
+		CacheId:        "cache-1",
+		Domain:         agentcomposev2.CacheDomain_CACHE_DOMAIN_SESSION_EPHEMERAL_STATE,
+		Driver:         "docker",
+		Kind:           "sandbox-dir",
+		Path:           "/tmp/session",
+		SizeBytes:      789,
+		ImageId:        "sha256:image",
+		ImageRef:       "guest:latest",
+		ResolvedRef:    "guest@sha256:abc",
+		SessionId:      "session-1",
+		SandboxId:      "sandbox-1",
+		Status:         agentcomposev2.CacheStatus_CACHE_STATUS_REFERENCED,
+		Removable:      false,
+		BlockedReasons: []string{"cache is referenced"},
+		LastUsedAt:     "used",
+		LastUsedSource: "metadata",
+		References: []*agentcomposev2.CacheReference{{
+			Type:        "session",
+			Id:          "session-1",
+			Name:        "Session",
+			Path:        "/tmp/session",
+			Status:      "running",
+			Description: "active sandbox",
+		}},
+		Warnings: []string{"cache warn"},
+	}
+	cacheList := composeCacheListOutputFromResponse(&agentcomposev2.ListCachesResponse{Caches: []*agentcomposev2.CacheItem{cacheItem}, Warnings: []string{"list warn"}})
+	if len(cacheList.Caches) != 1 || cacheList.Caches[0].Domain != "sandbox-ephemeral-state" || cacheList.Caches[0].Type != "sandbox" || len(cacheList.Caches[0].References) != 1 {
+		t.Fatalf("composeCacheListOutputFromResponse = %#v", cacheList)
+	}
+	cacheInspect := composeCacheInspectOutputFromResponse(&agentcomposev2.InspectCacheResponse{Cache: cacheItem, Warnings: []string{"inspect warn"}})
+	if cacheInspect.Cache.CacheID != "cache-1" || cacheInspect.Cache.Status != "referenced" {
+		t.Fatalf("composeCacheInspectOutputFromResponse = %#v", cacheInspect)
+	}
+	pruneOutput := composeCacheOperationOutputFromPruneResponse(&agentcomposev2.PruneCachesResponse{
+		DryRun:   true,
+		Matched:  []*agentcomposev2.CacheItem{cacheItem},
+		Skipped:  []*agentcomposev2.CacheItem{cacheItem},
+		Warnings: []string{"prune warn"},
+	})
+	removeOutput := composeCacheOperationOutputFromRemoveResponse(&agentcomposev2.RemoveCacheResponse{
+		Matched: []*agentcomposev2.CacheItem{cacheItem},
+		Removed: []string{
+			"cache-1",
+		},
+		Warnings: []string{"remove warn"},
+	})
+	if !pruneOutput.DryRun || len(pruneOutput.Matched) != 1 || len(removeOutput.Removed) != 1 {
+		t.Fatalf("cache operation outputs prune=%#v remove=%#v", pruneOutput, removeOutput)
+	}
+	out.Reset()
+	if err := writeCacheListText(&out, cacheList); err != nil {
+		t.Fatalf("writeCacheListText returned error: %v", err)
+	}
+	if !strings.Contains(out.String(), "cache-1") || !strings.Contains(out.String(), "list warn") {
+		t.Fatalf("cache list text = %q", out.String())
+	}
+	out.Reset()
+	if err := writeCacheInspectText(&out, cacheInspect); err != nil {
+		t.Fatalf("writeCacheInspectText returned error: %v", err)
+	}
+	if !strings.Contains(out.String(), "active sandbox") || !strings.Contains(out.String(), "inspect warn") || !strings.Contains(out.String(), "cache warn") {
+		t.Fatalf("cache inspect text = %q", out.String())
+	}
+	out.Reset()
+	if err := writeCacheOperationOutput(&out, false, pruneOutput); err != nil {
+		t.Fatalf("writeCacheOperationOutput dry-run returned error: %v", err)
+	}
+	if !strings.Contains(out.String(), "Dry-run") || !strings.Contains(out.String(), "prune warn") {
+		t.Fatalf("cache dry-run text = %q", out.String())
+	}
+	out.Reset()
+	if err := writeCacheOperationOutput(&out, true, removeOutput); err != nil {
+		t.Fatalf("writeCacheOperationOutput json returned error: %v", err)
+	}
+	if !strings.Contains(out.String(), `"removed"`) || !strings.Contains(out.String(), "cache-1") {
+		t.Fatalf("cache remove json = %q", out.String())
+	}
+	if cacheRefSessionText(composeCacheOutput{ImageID: "image-only"}) != "image-only" ||
+		cacheDomainText(agentcomposev2.CacheDomain_CACHE_DOMAIN_OCI_IMAGE_STORE) != "oci-image-store" ||
+		cacheDomainText(agentcomposev2.CacheDomain_CACHE_DOMAIN_MATERIALIZED_IMAGE_CACHE) != "materialized-image-cache" ||
+		cacheDomainText(agentcomposev2.CacheDomain_CACHE_DOMAIN_RUNTIME_DERIVED_CACHE) != "runtime-derived-cache" ||
+		cacheTypeText(agentcomposev2.CacheDomain_CACHE_DOMAIN_OCI_IMAGE_STORE) != "oci" ||
+		cacheTypeText(agentcomposev2.CacheDomain_CACHE_DOMAIN_MATERIALIZED_IMAGE_CACHE) != "materialized" ||
+		cacheTypeText(agentcomposev2.CacheDomain_CACHE_DOMAIN_RUNTIME_DERIVED_CACHE) != "runtime" ||
+		cacheStatusText(agentcomposev2.CacheStatus_CACHE_STATUS_ACTIVE) != "active" ||
+		cacheStatusText(agentcomposev2.CacheStatus_CACHE_STATUS_UNUSED) != "unused" ||
+		cacheStatusText(agentcomposev2.CacheStatus_CACHE_STATUS_EXPIRED) != "expired" ||
+		cacheStatusText(agentcomposev2.CacheStatus_CACHE_STATUS_ORPHANED) != "orphaned" ||
+		cacheStatusText(agentcomposev2.CacheStatus_CACHE_STATUS_UNKNOWN) != "unknown" {
+		t.Fatalf("cache text helper returned unexpected values")
+	}
 	out.Reset()
 	if err := writeImagesText(&out, imageList.Images); err != nil {
 		t.Fatalf("writeImagesText returned error: %v", err)
