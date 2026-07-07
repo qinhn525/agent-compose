@@ -123,6 +123,34 @@ func TestControllerRemoveProjectMarksProjectRemovedAndIsIdempotent(t *testing.T)
 	}
 }
 
+func TestManagedSchedulerErrorHelpersCoverage(t *testing.T) {
+	plain := &managedSchedulerBuildError{message: "missing script"}
+	if plain.Error() != "missing script" {
+		t.Fatalf("plain build error = %q", plain.Error())
+	}
+	withPath := &managedSchedulerBuildError{path: "agents.worker.scheduler.script", message: "invalid script"}
+	if withPath.Error() != "agents.worker.scheduler.script: invalid script" {
+		t.Fatalf("path build error = %q", withPath.Error())
+	}
+	if issue := managedSchedulerBuildIssue(withPath); issue.Path != withPath.path || issue.Message != withPath.message {
+		t.Fatalf("managed scheduler build issue = %#v", issue)
+	}
+	if issue := managedSchedulerBuildIssue(errors.New("boom")); issue.Path != "schedulers" || issue.Message != "boom" {
+		t.Fatalf("fallback scheduler build issue = %#v", issue)
+	}
+
+	var cleaned bool
+	cleanupFailedManagedScheduler(context.Background(), ReconcileSchedulerOptions{
+		CleanupFailedManagedScheduler: func(_ context.Context, scheduler domain.ProjectSchedulerRecord, loaderID string) {
+			cleaned = scheduler.SchedulerID == "scheduler-1" && loaderID == "loader-1"
+		},
+	}, domain.ProjectSchedulerRecord{SchedulerID: "scheduler-1"}, "loader-1")
+	if !cleaned {
+		t.Fatal("cleanupFailedManagedScheduler did not invoke callback")
+	}
+	cleanupFailedManagedScheduler(context.Background(), ReconcileSchedulerOptions{}, domain.ProjectSchedulerRecord{}, "")
+}
+
 func TestDownProjectSessionAndSchedulerWorkflows(t *testing.T) {
 	ctx := context.Background()
 	project := domain.ProjectRecord{ID: "project-1", Name: "Down Project"}

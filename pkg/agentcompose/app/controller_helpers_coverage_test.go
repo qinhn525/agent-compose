@@ -91,6 +91,15 @@ func TestAppProjectControllerHelperCoverage(t *testing.T) {
 	}
 }
 
+func TestCapabilityRuntimeConfigCoverage(t *testing.T) {
+	if got := (capabilityRuntimeConfig{}).CapProxyListen(); got != "" {
+		t.Fatalf("nil config CapProxyListen = %q", got)
+	}
+	if got := (capabilityRuntimeConfig{config: &appconfig.Config{CapGRPCListen: "127.0.0.1:9100"}}).CapProxyListen(); got != "127.0.0.1:9100" {
+		t.Fatalf("CapProxyListen = %q", got)
+	}
+}
+
 func TestAppRunControllerHelperCoverage(t *testing.T) {
 	msg := &agentcomposev2.RunAgentRequest{
 		ProjectId:        "project-1",

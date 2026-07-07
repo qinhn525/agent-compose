@@ -188,6 +188,25 @@ func TestRunsPreparationWorkspaceAndStatusWorkflows(t *testing.T) {
 	if _, err := projectRunGitWorkspaceConfig(run, &compose.WorkspaceSpec{Provider: "git"}); err == nil {
 		t.Fatalf("expected git workspace url error")
 	}
+	if workspace, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, nil, nil); err != nil || workspace != nil {
+		t.Fatalf("nil workspace = %#v/%v", workspace, err)
+	}
+	if _, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, &compose.WorkspaceSpec{}, nil); err == nil || !strings.Contains(err.Error(), "provider is required") {
+		t.Fatalf("missing provider err=%v", err)
+	}
+	if _, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, &compose.WorkspaceSpec{Provider: "s3"}, nil); err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("unsupported provider err=%v", err)
+	}
+	localWorkspace, err := controller.prepareProjectRunWorkspace(ctx, run, store.project, &compose.WorkspaceSpec{Provider: "git", URL: "https://example.test/project.git", Path: "."}, &compose.WorkspaceSpec{Provider: "local", Path: "."})
+	if err != nil || localWorkspace == nil || localWorkspace.Type != "file" {
+		t.Fatalf("agent local workspace = %#v/%v", localWorkspace, err)
+	}
+	if _, err := (&Controller{}).materializeLocalProjectRunWorkspace(run, store.project, &compose.WorkspaceSpec{Provider: "local", Path: "."}); err == nil {
+		t.Fatalf("materialize without config returned nil error")
+	}
+	if _, err := controller.materializeLocalProjectRunWorkspace(run, store.project, &compose.WorkspaceSpec{Provider: "local", Path: "missing"}); err == nil {
+		t.Fatalf("materialize missing local path returned nil error")
+	}
 	if snapshot := toSessionWorkspaceSnapshot(domain.WorkspaceConfig{ID: "workspace", Name: "Workspace", Type: "file", ConfigJSON: "{}"}); snapshot.ID != "workspace" {
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
