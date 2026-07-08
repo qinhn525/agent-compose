@@ -1592,7 +1592,10 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 	if err != nil {
 		return err
 	}
-	agentName := strings.TrimSpace(args[0])
+	agentName, err := resolveComposeAgentNameFromSpec(normalized, projectID, args[0])
+	if err != nil {
+		return err
+	}
 	if normalizedOptions.Interactive && promptFlagChanged {
 		if err := validateInteractivePromptProvider(normalized, agentName); err != nil {
 			return err
@@ -1699,7 +1702,10 @@ func runComposeSchedulerListCommand(cmd *cobra.Command, cli cliOptions, args []s
 	}
 	agentFilter := ""
 	if len(args) > 0 {
-		agentFilter = strings.TrimSpace(args[0])
+		agentFilter, err = resolveComposeAgentNameFromSpec(normalized, projectID, args[0])
+		if err != nil {
+			return err
+		}
 	}
 	triggers, err := listComposeSchedulerTriggers(cmd.Context(), clients, normalized, projectID, agentFilter)
 	if err != nil {
@@ -1859,11 +1865,15 @@ func listComposeSchedulerTriggers(ctx context.Context, clients cliServiceClients
 }
 
 func resolveComposeSchedulerTrigger(ctx context.Context, clients cliServiceClients, normalized *compose.NormalizedProjectSpec, projectID, agentName, triggerRef string) (composeSchedulerTriggerItem, error) {
-	agentName = strings.TrimSpace(agentName)
 	triggerRef = strings.TrimSpace(triggerRef)
-	if agentName == "" || triggerRef == "" {
+	if strings.TrimSpace(agentName) == "" || triggerRef == "" {
 		return composeSchedulerTriggerItem{}, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("scheduler trigger requires non-empty agent and trigger")}
 	}
+	resolvedAgentName, err := resolveComposeAgentNameFromSpec(normalized, projectID, agentName)
+	if err != nil {
+		return composeSchedulerTriggerItem{}, err
+	}
+	agentName = resolvedAgentName
 	items, err := listComposeSchedulerTriggers(ctx, clients, normalized, projectID, agentName)
 	if err != nil {
 		return composeSchedulerTriggerItem{}, err
@@ -2230,6 +2240,100 @@ func composeRunAgentSpec(normalized *compose.NormalizedProjectSpec, agentName st
 		}
 	}
 	return compose.NormalizedAgentSpec{}, false
+}
+
+type composeAgentRefCandidate struct {
+	Name    string
+	ID      string
+	ShortID string
+}
+
+func resolveComposeAgentNameFromSpec(normalized *compose.NormalizedProjectSpec, projectID, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("agent ref is required")}
+	}
+	if normalized == nil {
+		return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("agent %q not found in current project", ref)}
+	}
+	candidates := make([]composeAgentRefCandidate, 0, len(normalized.Agents))
+	for _, agent := range normalized.Agents {
+		name := strings.TrimSpace(agent.Name)
+		if name == "" {
+			continue
+		}
+		id, err := domain.StableManagedAgentID(projectID, name)
+		if err != nil {
+			return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("resolve agent %q id: %w", name, err)}
+		}
+		candidates = append(candidates, composeAgentRefCandidate{Name: name, ID: id, ShortID: shortOpaqueID(id)})
+	}
+	return resolveComposeAgentNameFromCandidates(ref, candidates)
+}
+
+func resolveComposeAgentNameFromProject(project *agentcomposev2.Project, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("agent ref is required")}
+	}
+	if project == nil {
+		return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("agent %q not found in current project", ref)}
+	}
+	candidates := make([]composeAgentRefCandidate, 0, len(project.GetAgents()))
+	for _, agent := range project.GetAgents() {
+		name := strings.TrimSpace(agent.GetAgentName())
+		if name == "" {
+			continue
+		}
+		id := strings.TrimSpace(agent.GetManagedAgentId())
+		candidates = append(candidates, composeAgentRefCandidate{Name: name, ID: id, ShortID: shortOpaqueID(id)})
+	}
+	return resolveComposeAgentNameFromCandidates(ref, candidates)
+}
+
+func resolveComposeAgentNameFromCandidates(ref string, candidates []composeAgentRefCandidate) (string, error) {
+	ref = strings.TrimSpace(ref)
+	for _, candidate := range candidates {
+		if candidate.Name == ref {
+			return candidate.Name, nil
+		}
+	}
+	var matches []composeAgentRefCandidate
+	for _, candidate := range candidates {
+		if resourceIDMatchesRef(candidate.ID, candidate.ShortID, ref) {
+			matches = append(matches, candidate)
+		}
+	}
+	if len(matches) == 0 {
+		return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("agent %q not found in current project", ref)}
+	}
+	if len(matches) > 1 {
+		names := make([]string, 0, len(matches))
+		for _, match := range matches {
+			names = append(names, match.Name)
+		}
+		sort.Strings(names)
+		return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("agent ref %q is ambiguous in current project; matches: %s", ref, strings.Join(names, ", "))}
+	}
+	return matches[0].Name, nil
+}
+
+func resourceIDMatchesRef(id, shortID, ref string) bool {
+	id = strings.TrimSpace(id)
+	shortID = strings.TrimSpace(shortID)
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return false
+	}
+	if ref == id || (shortID != "" && ref == shortID) {
+		return true
+	}
+	normalizedRef := strings.TrimPrefix(strings.ToLower(ref), identity.Prefix)
+	normalizedID := strings.TrimPrefix(strings.ToLower(id), identity.Prefix)
+	if !identity.IsIDPrefix(normalizedRef) {
+		return false
+	}
+	return strings.HasPrefix(normalizedID, normalizedRef)
 }
 
 func normalizeOptionalRunModeValue(value string) string {
@@ -3153,7 +3257,11 @@ func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string)
 		if err != nil {
 			return commandExitErrorForComposeProject(fmt.Errorf("inspect agent %s in project %s: %w", target, normalized.Name, err), "inspect agent", normalized.Name, composePath)
 		}
-		agent, err := composeAgentInspectOutputFor(cmd.Context(), clients, project.Msg.GetProject(), target)
+		agentName, err := resolveComposeAgentNameFromProject(project.Msg.GetProject(), target)
+		if err != nil {
+			return err
+		}
+		agent, err := composeAgentInspectOutputFor(cmd.Context(), clients, project.Msg.GetProject(), agentName)
 		if err != nil {
 			return err
 		}

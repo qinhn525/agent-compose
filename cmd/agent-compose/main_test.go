@@ -22,6 +22,7 @@ import (
 	"agent-compose/pkg/config"
 	"agent-compose/pkg/identity"
 	"agent-compose/pkg/imagecache"
+	domain "agent-compose/pkg/model"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
@@ -48,6 +49,32 @@ func clearDaemonTestEnv() {
 	}
 	for key := range values {
 		_ = os.Unsetenv(key)
+	}
+}
+
+func TestResolveComposeAgentNameFromCandidates(t *testing.T) {
+	firstID := identity.NewID(identity.ResourceAgent, "project", "reviewer")
+	secondID := identity.NewID(identity.ResourceAgent, "project", "worker")
+	candidates := []composeAgentRefCandidate{
+		{Name: "reviewer", ID: firstID, ShortID: identity.ShortID(firstID)},
+		{Name: "worker", ID: secondID, ShortID: identity.ShortID(secondID)},
+	}
+
+	for _, ref := range []string{"reviewer", firstID, identity.ShortID(firstID), strings.TrimPrefix(firstID, identity.Prefix)[:16]} {
+		got, err := resolveComposeAgentNameFromCandidates(ref, candidates)
+		if err != nil || got != "reviewer" {
+			t.Fatalf("resolve agent ref %q = %q, %v; want reviewer", ref, got, err)
+		}
+	}
+
+	if _, err := resolveComposeAgentNameFromCandidates("missing", candidates); err == nil {
+		t.Fatalf("missing agent ref returned nil error")
+	}
+	if _, err := resolveComposeAgentNameFromCandidates("123456789abc", []composeAgentRefCandidate{
+		{Name: "a", ID: "sha256:123456789abc" + strings.Repeat("0", 52), ShortID: "123456789abc"},
+		{Name: "b", ID: "sha256:123456789abc" + strings.Repeat("1", 52), ShortID: "123456789abc"},
+	}); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("ambiguous agent ref err = %v", err)
 	}
 }
 
@@ -1493,7 +1520,15 @@ agents:
 	})
 	defer server.Close()
 
-	stdout, stderr, _, exitCode := executeCLICommand("run", "--host", server.URL, "--file", composePath, "reviewer", "--command", "echo command")
+	projectID, err := domain.StableProjectID("cli-run-command", composePath)
+	if err != nil {
+		t.Fatalf("StableProjectID returned error: %v", err)
+	}
+	agentID, err := domain.StableManagedAgentID(projectID, "reviewer")
+	if err != nil {
+		t.Fatalf("StableManagedAgentID returned error: %v", err)
+	}
+	stdout, stderr, _, exitCode := executeCLICommand("run", "--host", server.URL, "--file", composePath, identity.ShortID(agentID), "--command", "echo command")
 	if exitCode != 0 || stderr != "command stderr\n" || stdout != "command stdout\n" {
 		t.Fatalf("run --command code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
 	}
@@ -1926,7 +1961,15 @@ agents:
 		t.Fatalf("scheduler ls stdout = %q", stdout)
 	}
 
-	jsonOut, jsonErr, _, jsonCode := executeCLICommand("scheduler", "ls", "reviewer", "--json", "--host", server.URL, "--file", composePath)
+	projectID, err := domain.StableProjectID("cli-scheduler-list", composePath)
+	if err != nil {
+		t.Fatalf("StableProjectID returned error: %v", err)
+	}
+	agentID, err := domain.StableManagedAgentID(projectID, "reviewer")
+	if err != nil {
+		t.Fatalf("StableManagedAgentID returned error: %v", err)
+	}
+	jsonOut, jsonErr, _, jsonCode := executeCLICommand("scheduler", "ls", identity.ShortID(agentID), "--json", "--host", server.URL, "--file", composePath)
 	if jsonCode != 0 || jsonErr != "" || !strings.Contains(jsonOut, `"agent_name": "reviewer"`) || !strings.Contains(jsonOut, `"source": "declarative"`) {
 		t.Fatalf("scheduler ls --json code/stdout/stderr = %d / %q / %q", jsonCode, jsonOut, jsonErr)
 	}
@@ -3863,6 +3906,16 @@ agents:
     provider: codex
 `)
 	project := testCLIProject("project-inspect", "cli-inspect-demo", composePath)
+	reviewerID, err := domain.StableManagedAgentID(project.GetSummary().GetProjectId(), "reviewer")
+	if err != nil {
+		t.Fatalf("StableManagedAgentID reviewer returned error: %v", err)
+	}
+	workerID, err := domain.StableManagedAgentID(project.GetSummary().GetProjectId(), "worker")
+	if err != nil {
+		t.Fatalf("StableManagedAgentID worker returned error: %v", err)
+	}
+	project.Agents[0].ManagedAgentId = reviewerID
+	project.Agents[1].ManagedAgentId = workerID
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		project: projectServiceStub{
 			getProject: func(ctx context.Context, req *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
@@ -3903,7 +3956,7 @@ agents:
 		t.Fatalf("inspect project JSON = %#v", projectDecoded)
 	}
 
-	agentOut, agentErr, _, agentCode := executeCLICommand("inspect", "--host", server.URL, "--file", composePath, "--json", "agent", "reviewer")
+	agentOut, agentErr, _, agentCode := executeCLICommand("inspect", "--host", server.URL, "--file", composePath, "--json", "agent", identity.ShortID(reviewerID))
 	if agentCode != 0 || agentErr != "" {
 		t.Fatalf("inspect agent code/stderr = %d / %q", agentCode, agentErr)
 	}
