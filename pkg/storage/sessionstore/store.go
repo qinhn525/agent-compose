@@ -263,6 +263,9 @@ func (s *Store) RemoveSession(_ context.Context, id string) error {
 	unlock := s.lockSession(id)
 	defer unlock()
 
+	if err := driverpkg.CleanupBoxliteVolumeBridgeMounts(path); err != nil {
+		return fmt.Errorf("cleanup session mounts %s: %w", id, err)
+	}
 	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("remove session dir %s: %w", id, err)
 	}

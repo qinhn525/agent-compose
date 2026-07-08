@@ -169,7 +169,7 @@ func TestPrepareRuntimeMountManifestForMicrosandboxIncludesSessionVolumeMounts(t
 	}
 }
 
-func TestPrepareRuntimeMountManifestForBoxliteUsesVolumeSymlinkBridge(t *testing.T) {
+func TestPrepareRuntimeMountManifestForBoxliteUsesVolumeBridge(t *testing.T) {
 	root := t.TempDir()
 	volumeSource := t.TempDir()
 	session := testRuntimeMountSession(root)
@@ -181,6 +181,23 @@ func TestPrepareRuntimeMountManifestForBoxliteUsesVolumeSymlinkBridge(t *testing
 		ReadOnly: true,
 		HostPath: volumeSource,
 	}}
+	var mounted []struct {
+		source   string
+		target   string
+		readOnly bool
+	}
+	originalMounter := boxliteVolumeBridgeMounter
+	boxliteVolumeBridgeMounter = func(sourcePath string, targetPath string, readOnly bool) error {
+		mounted = append(mounted, struct {
+			source   string
+			target   string
+			readOnly bool
+		}{source: sourcePath, target: targetPath, readOnly: readOnly})
+		return nil
+	}
+	t.Cleanup(func() {
+		boxliteVolumeBridgeMounter = originalMounter
+	})
 	manifest, err := prepareRuntimeMountManifest(testRuntimeMountConfig(), session, RuntimeDriverBoxlite)
 	if err != nil {
 		t.Fatalf("prepareRuntimeMountManifest returned error: %v", err)
@@ -189,12 +206,18 @@ func TestPrepareRuntimeMountManifestForBoxliteUsesVolumeSymlinkBridge(t *testing
 		t.Fatalf("boxlite manifest mounts = %+v, want single session dir mount", manifest.Mounts)
 	}
 	bridgePath := filepath.Join(root, "volumes", "mount-a8f37c92e51b4d10")
-	target, err := os.Readlink(bridgePath)
+	info, err := os.Stat(bridgePath)
 	if err != nil {
-		t.Fatalf("read boxlite volume bridge symlink: %v", err)
+		t.Fatalf("stat boxlite volume bridge path: %v", err)
 	}
-	if target != volumeSource {
-		t.Fatalf("boxlite volume bridge target = %q, want %q", target, volumeSource)
+	if !info.IsDir() {
+		t.Fatalf("boxlite volume bridge path mode = %s, want directory", info.Mode())
+	}
+	if len(mounted) != 1 {
+		t.Fatalf("boxlite volume bridge mount calls = %+v, want one", mounted)
+	}
+	if mounted[0].source != volumeSource || mounted[0].target != bridgePath || !mounted[0].readOnly {
+		t.Fatalf("boxlite volume bridge mount call = %+v, want %s -> %s ro", mounted[0], volumeSource, bridgePath)
 	}
 	for _, mount := range manifest.Mounts {
 		if mount.GuestPath == "/cache" {

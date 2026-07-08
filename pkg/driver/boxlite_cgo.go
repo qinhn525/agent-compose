@@ -428,13 +428,23 @@ func (r *cgoBoxRuntime) EnsureSession(ctx context.Context, session *Session, vmS
 	}, nil
 }
 
-func (r *cgoBoxRuntime) StopSession(ctx context.Context, _ *Session, vmState VMState) (bool, error) {
+func (r *cgoBoxRuntime) StopSession(ctx context.Context, session *Session, vmState VMState) (bool, error) {
 	if strings.TrimSpace(vmState.BoxID) == "" {
+		if session != nil {
+			if err := CleanupBoxliteVolumeBridgeMounts(hostSessionDir(session)); err != nil {
+				return true, err
+			}
+		}
 		return true, nil
 	}
 	box, err := r.getBox(ctx, vmState.BoxID)
 	if err != nil {
 		if isBoxNotFound(err) {
+			if session != nil {
+				if cleanupErr := CleanupBoxliteVolumeBridgeMounts(hostSessionDir(session)); cleanupErr != nil {
+					return true, cleanupErr
+				}
+			}
 			return true, nil
 		}
 		return false, err
@@ -445,6 +455,11 @@ func (r *cgoBoxRuntime) StopSession(ctx context.Context, _ *Session, vmState VMS
 	}
 	if err := r.removeBox(ctx, vmState.BoxID, true); err != nil && !isBoxNotFound(err) {
 		return false, err
+	}
+	if session != nil {
+		if err := CleanupBoxliteVolumeBridgeMounts(hostSessionDir(session)); err != nil {
+			return false, err
+		}
 	}
 	return true, nil
 }

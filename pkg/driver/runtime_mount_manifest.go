@@ -163,7 +163,7 @@ func buildRuntimeMountManifest(config *appconfig.Config, session *Session, drive
 		return RuntimeMountManifest{}, err
 	}
 	if driver == RuntimeDriverBoxlite {
-		if err := prepareBoxliteVolumeSymlinkBridge(session); err != nil {
+		if err := prepareBoxliteVolumeBridge(session); err != nil {
 			return RuntimeMountManifest{}, err
 		}
 	}
