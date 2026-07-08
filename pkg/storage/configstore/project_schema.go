@@ -10,6 +10,7 @@ func (s *projectStore) ensureProjectSchema(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS project (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
+			short_id TEXT NOT NULL DEFAULT '',
 			source_path TEXT NOT NULL DEFAULT '',
 			source_json TEXT NOT NULL DEFAULT '{}',
 			current_revision INTEGER NOT NULL DEFAULT 0,
@@ -19,6 +20,7 @@ func (s *projectStore) ensureProjectSchema(ctx context.Context) error {
 			removed_at INTEGER NOT NULL DEFAULT 0
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_name ON project(name, removed_at);`,
+		`CREATE INDEX IF NOT EXISTS idx_project_short_id ON project(short_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_source_path ON project(source_path);`,
 		`CREATE TABLE IF NOT EXISTS project_revision (
 			project_id TEXT NOT NULL,
@@ -32,6 +34,9 @@ func (s *projectStore) ensureProjectSchema(ctx context.Context) error {
 		`DROP INDEX IF EXISTS idx_project_revision_hash;`,
 		`CREATE INDEX IF NOT EXISTS idx_project_revision_hash ON project_revision(project_id, spec_hash);`,
 		`CREATE TABLE IF NOT EXISTS project_agent (
+			id TEXT NOT NULL DEFAULT '',
+			name TEXT NOT NULL DEFAULT '',
+			short_id TEXT NOT NULL DEFAULT '',
 			project_id TEXT NOT NULL,
 			agent_name TEXT NOT NULL,
 			managed_agent_id TEXT NOT NULL DEFAULT '',
@@ -47,8 +52,11 @@ func (s *projectStore) ensureProjectSchema(ctx context.Context) error {
 			PRIMARY KEY(project_id, agent_name),
 			FOREIGN KEY(project_id) REFERENCES project(id) ON DELETE CASCADE
 		);`,
+		`CREATE INDEX IF NOT EXISTS idx_project_agent_id ON project_agent(id);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_agent_managed_agent ON project_agent(managed_agent_id);`,
 		`CREATE TABLE IF NOT EXISTS project_scheduler (
+			id TEXT NOT NULL DEFAULT '',
+			short_id TEXT NOT NULL DEFAULT '',
 			project_id TEXT NOT NULL,
 			scheduler_id TEXT NOT NULL,
 			agent_name TEXT NOT NULL,
@@ -63,6 +71,7 @@ func (s *projectStore) ensureProjectSchema(ctx context.Context) error {
 			FOREIGN KEY(project_id) REFERENCES project(id) ON DELETE CASCADE,
 			FOREIGN KEY(project_id, agent_name) REFERENCES project_agent(project_id, agent_name) ON DELETE CASCADE
 		);`,
+		`CREATE INDEX IF NOT EXISTS idx_project_scheduler_id ON project_scheduler(id);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_scheduler_agent ON project_scheduler(project_id, agent_name);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_scheduler_managed_loader ON project_scheduler(managed_loader_id);`,
 		`CREATE TABLE IF NOT EXISTS project_run (
@@ -76,7 +85,7 @@ func (s *projectStore) ensureProjectSchema(ctx context.Context) error {
 			scheduler_id TEXT NOT NULL DEFAULT '',
 			trigger_id TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'pending',
-			session_id TEXT NOT NULL DEFAULT '',
+			sandbox_id TEXT NOT NULL DEFAULT '',
 			exit_code INTEGER NOT NULL DEFAULT 0,
 			error TEXT NOT NULL DEFAULT '',
 			prompt TEXT NOT NULL DEFAULT '',
@@ -96,7 +105,7 @@ func (s *projectStore) ensureProjectSchema(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_run_project_status ON project_run(project_id, status, created_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_run_agent ON project_run(project_id, agent_name, created_at DESC);`,
-		`CREATE INDEX IF NOT EXISTS idx_project_run_session ON project_run(session_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_project_run_sandbox ON project_run(sandbox_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_run_scheduler ON project_run(project_id, scheduler_id, trigger_id);`,
 	}
 	for _, stmt := range statements {

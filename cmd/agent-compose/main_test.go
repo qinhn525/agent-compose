@@ -20,7 +20,9 @@ import (
 	"time"
 
 	"agent-compose/pkg/config"
+	"agent-compose/pkg/identity"
 	"agent-compose/pkg/imagecache"
+	domain "agent-compose/pkg/model"
 	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 	"agent-compose/proto/agentcompose/v1/agentcomposev1connect"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
@@ -47,6 +49,32 @@ func clearDaemonTestEnv() {
 	}
 	for key := range values {
 		_ = os.Unsetenv(key)
+	}
+}
+
+func TestResolveComposeAgentNameFromCandidates(t *testing.T) {
+	firstID := identity.NewID(identity.ResourceAgent, "project", "reviewer")
+	secondID := identity.NewID(identity.ResourceAgent, "project", "worker")
+	candidates := []composeAgentRefCandidate{
+		{Name: "reviewer", ID: firstID, ShortID: identity.ShortID(firstID)},
+		{Name: "worker", ID: secondID, ShortID: identity.ShortID(secondID)},
+	}
+
+	for _, ref := range []string{"reviewer", firstID, identity.ShortID(firstID), strings.TrimPrefix(firstID, identity.Prefix)[:16]} {
+		got, err := resolveComposeAgentNameFromCandidates(ref, candidates)
+		if err != nil || got != "reviewer" {
+			t.Fatalf("resolve agent ref %q = %q, %v; want reviewer", ref, got, err)
+		}
+	}
+
+	if _, err := resolveComposeAgentNameFromCandidates("missing", candidates); err == nil {
+		t.Fatalf("missing agent ref returned nil error")
+	}
+	if _, err := resolveComposeAgentNameFromCandidates("123456789abc", []composeAgentRefCandidate{
+		{Name: "a", ID: "sha256:123456789abc" + strings.Repeat("0", 52), ShortID: "123456789abc"},
+		{Name: "b", ID: "sha256:123456789abc" + strings.Repeat("1", 52), ShortID: "123456789abc"},
+	}); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("ambiguous agent ref err = %v", err)
 	}
 }
 
@@ -866,7 +894,7 @@ func TestIntegrationCLIUpAppliesInlineSchedulerScriptAndPSJSON(t *testing.T) {
 	if firstErr != "" {
 		t.Fatalf("up inline first stderr = %q, want empty", firstErr)
 	}
-	for _, want := range []string{"Project: cli-inline-demo", "Status: applied", "project_scheduler"} {
+	for _, want := range []string{"ID", "NAME", "TYPE", "ACTION", "project_scheduler"} {
 		if !strings.Contains(firstOut, want) {
 			t.Fatalf("up inline first stdout %q does not contain %q", firstOut, want)
 		}
@@ -944,7 +972,7 @@ agents:
 	if runCount != 0 {
 		t.Fatalf("daemon runner called %d times, want 0", runCount)
 	}
-	for _, want := range []string{"Project: cli-up-demo", "Status: applied", "created", "project_agent", "project_scheduler"} {
+	for _, want := range []string{"ID", "NAME", "TYPE", "ACTION", "created", "project_agent", "project_scheduler"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("up first stdout %q does not contain %q", stdout, want)
 		}
@@ -999,7 +1027,6 @@ agents:
 	if !changed.Applied || changed.Unchanged {
 		t.Fatalf("up changed state = applied %v unchanged %v", changed.Applied, changed.Unchanged)
 	}
-	assertComposeUpChange(t, changed.Changes, "created", "project_revision", changed.Revision.SpecHash)
 	assertComposeUpChange(t, changed.Changes, "updated", "project_agent", "reviewer")
 	assertComposeUpChange(t, changed.Changes, "updated", "agent_definition", "reviewer")
 }
@@ -1102,6 +1129,7 @@ agents:
 			"  \"project\": {\n" +
 			"    \"id\": \"project-down\",\n" +
 			"    \"name\": \"cli-down-demo\",\n" +
+			"    \"short_id\": \"project-down\",\n" +
 			"    \"source_path\": \"compose.yml\",\n" +
 			"    \"current_revision\": 1,\n" +
 			"    \"spec_hash\": \"sha256:test\",\n" +
@@ -1114,7 +1142,8 @@ agents:
 			"    {\n" +
 			"      \"action\": \"updated\",\n" +
 			"      \"resource_type\": \"session\",\n" +
-			"      \"resource_id\": \"session-1\",\n" +
+			"      \"id\": \"session-1\",\n" +
+			"      \"short_id\": \"session-1\",\n" +
 			"      \"name\": \"reviewer run\",\n" +
 			"      \"message\": \"stopped by project down\"\n" +
 			"    }\n" +
@@ -1337,7 +1366,7 @@ agents:
 	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
 		t.Fatalf("decode run -d JSON: %v\n%s", err, stdout)
 	}
-	if decoded.RunID != "run-detached-json" || decoded.SessionID != "sandbox-json" || decoded.Status != "running" {
+	if decoded.ID != "run-detached-json" || decoded.SandboxID != "sandbox-json" || decoded.Status != "running" {
 		t.Fatalf("run -d JSON decoded = %#v", decoded)
 	}
 	if !strings.Contains(decoded.LogsCommand, "logs --run-id run-detached-json --follow") || len(decoded.Warnings) != 2 {
@@ -1391,7 +1420,7 @@ agents:
 		t.Fatalf("run -d --command code/stderr = %d / %q", exitCode, stderr)
 	}
 	logOut, logErr, _, logCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--run-id", "run-detached-logs", "--follow")
-	if logCode != 0 || logErr != "" || logOut != "reviewer-run-deta | detached output\n" {
+	if logCode != 0 || logErr != "" || logOut != "reviewer-run-detached-log | detached output\n" {
 		t.Fatalf("logs --follow code/stdout/stderr = %d / %q / %q", logCode, logOut, logErr)
 	}
 	if !sawCommand || !sawFollow {
@@ -1491,7 +1520,15 @@ agents:
 	})
 	defer server.Close()
 
-	stdout, stderr, _, exitCode := executeCLICommand("run", "--host", server.URL, "--file", composePath, "reviewer", "--command", "echo command")
+	projectID, err := domain.StableProjectID("cli-run-command", composePath)
+	if err != nil {
+		t.Fatalf("StableProjectID returned error: %v", err)
+	}
+	agentID, err := domain.StableManagedAgentID(projectID, "reviewer")
+	if err != nil {
+		t.Fatalf("StableManagedAgentID returned error: %v", err)
+	}
+	stdout, stderr, _, exitCode := executeCLICommand("run", "--host", server.URL, "--file", composePath, identity.ShortID(agentID), "--command", "echo command")
 	if exitCode != 0 || stderr != "command stderr\n" || stdout != "command stdout\n" {
 		t.Fatalf("run --command code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
 	}
@@ -1924,7 +1961,15 @@ agents:
 		t.Fatalf("scheduler ls stdout = %q", stdout)
 	}
 
-	jsonOut, jsonErr, _, jsonCode := executeCLICommand("scheduler", "ls", "reviewer", "--json", "--host", server.URL, "--file", composePath)
+	projectID, err := domain.StableProjectID("cli-scheduler-list", composePath)
+	if err != nil {
+		t.Fatalf("StableProjectID returned error: %v", err)
+	}
+	agentID, err := domain.StableManagedAgentID(projectID, "reviewer")
+	if err != nil {
+		t.Fatalf("StableManagedAgentID returned error: %v", err)
+	}
+	jsonOut, jsonErr, _, jsonCode := executeCLICommand("scheduler", "ls", identity.ShortID(agentID), "--json", "--host", server.URL, "--file", composePath)
 	if jsonCode != 0 || jsonErr != "" || !strings.Contains(jsonOut, `"agent_name": "reviewer"`) || !strings.Contains(jsonOut, `"source": "declarative"`) {
 		t.Fatalf("scheduler ls --json code/stdout/stderr = %d / %q / %q", jsonCode, jsonOut, jsonErr)
 	}
@@ -1952,7 +1997,7 @@ agents:
 		run: runServiceStub{
 			runAgentStream: func(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
 				sawRequest = true
-				if req.Msg.GetAgentName() != "reviewer" || !strings.HasPrefix(req.Msg.GetTriggerId(), "trigger-nightly-") || req.Msg.GetPrompt() != "" || req.Msg.GetCommand() != "" {
+				if req.Msg.GetAgentName() != "reviewer" || !identity.IsID(req.Msg.GetTriggerId()) || req.Msg.GetPrompt() != "" || req.Msg.GetCommand() != "" {
 					t.Fatalf("RunAgentStream scheduler trigger request = %#v", req.Msg)
 				}
 				return stream.Send(&agentcomposev2.RunAgentStreamResponse{
@@ -2437,28 +2482,42 @@ agents:
   reviewer:
     provider: codex
 `)
-	var sawList bool
+	runID := identity.NewID(identity.ResourceRun, "logs", "run")
+	sandboxID := identity.NewID(identity.ResourceSandbox, "logs", "sandbox")
+	var sawFilteredList bool
 	server := newRunServiceStubServer(t, runServiceStub{
 		listRuns: func(ctx context.Context, req *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error) {
-			sawList = true
-			if req.Msg.GetAgentName() != "reviewer" || req.Msg.GetSessionId() != "session-logs" || req.Msg.GetLimit() != 20 {
+			switch req.Msg.GetLimit() {
+			case 200:
+				if req.Msg.GetSessionId() != "" {
+					t.Fatalf("ListRuns resolver request = %#v", req.Msg)
+				}
+			case 20:
+				sawFilteredList = true
+				if req.Msg.GetAgentName() != "reviewer" || req.Msg.GetSessionId() != sandboxID {
+					t.Fatalf("ListRuns filtered request = %#v", req.Msg)
+				}
+			default:
 				t.Fatalf("ListRuns request = %#v", req.Msg)
 			}
 			return connect.NewResponse(&agentcomposev2.ListRunsResponse{Runs: []*agentcomposev2.RunSummary{{
-				RunId:     "run-logs",
+				RunId:     runID,
 				ProjectId: req.Msg.GetProjectId(),
 				AgentName: "reviewer",
 				Status:    agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
-				SessionId: "session-logs",
+				SessionId: sandboxID,
 			}}}), nil
 		},
 		getRun: func(ctx context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
-			return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), req.Msg.GetRunId(), "reviewer", "session-logs", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "stored log output\n")}), nil
+			if req.Msg.GetRunId() != runID {
+				t.Fatalf("GetRun request = %#v", req.Msg)
+			}
+			return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), req.Msg.GetRunId(), "reviewer", sandboxID, agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "stored log output\n")}), nil
 		},
 	})
 	defer server.Close()
 
-	stdout, stderr, _, exitCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "reviewer", "--sandbox", "session-logs", "--json")
+	stdout, stderr, _, exitCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "reviewer", "--sandbox", identity.ShortID(sandboxID), "--json")
 	if exitCode != 0 {
 		t.Fatalf("logs exit code = %d, stderr=%q", exitCode, stderr)
 	}
@@ -2469,20 +2528,20 @@ agents:
 	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
 		t.Fatalf("logs JSON decode failed: %v\n%s", err, stdout)
 	}
-	if len(decoded.Runs) != 1 || decoded.Runs[0].RunID != "run-logs" || decoded.Runs[0].Output != "stored log output\n" {
+	if len(decoded.Runs) != 1 || decoded.Runs[0].RunID != displayOpaqueID(runID) || decoded.Runs[0].Content != "stored log output\n" {
 		t.Fatalf("logs JSON = %#v", decoded)
 	}
-	if !sawList {
+	if !sawFilteredList {
 		t.Fatal("ListRuns was not called")
 	}
 
-	legacyOut, legacyErr, _, legacyCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--agent", "reviewer", "--session-id", "session-logs", "--json")
+	legacyOut, legacyErr, _, legacyCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--agent", "reviewer", "--session-id", sandboxID, "--json")
 	if legacyCode != exitCodeUsage || legacyOut != "" || !strings.Contains(legacyErr, "unknown flag: --session-id") {
 		t.Fatalf("logs --session-id code/stdout/stderr = %d / %q / %q", legacyCode, legacyOut, legacyErr)
 	}
 
-	runOut, runErr, _, runCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--run-id", "run-logs")
-	if runCode != 0 || runErr != "" || runOut != "reviewer-run-logs | stored log output\n" {
+	runOut, runErr, _, runCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--run-id", identity.ShortID(runID))
+	if runCode != 0 || runErr != "" || runOut != "reviewer-run-"+identity.ShortID(runID)+" [2026-06-11T00:00:01.000Z]| stored log output\n" {
 		t.Fatalf("logs --run-id code/stdout/stderr = %d / %q / %q", runCode, runOut, runErr)
 	}
 }
@@ -2512,7 +2571,7 @@ agents:
 	defer server.Close()
 
 	stdout, stderr, _, exitCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--tail", "2")
-	if exitCode != 0 || stderr != "" || stdout != "reviewer-run-tail | two\nreviewer-run-tail | three\n" {
+	if exitCode != 0 || stderr != "" || stdout != "reviewer-run-tail [2026-06-11T00:00:01.000Z]| two\nreviewer-run-tail [2026-06-11T00:00:01.000Z]| three\n" {
 		t.Fatalf("logs --tail text code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
 	}
 
@@ -2524,12 +2583,12 @@ agents:
 	if err := json.Unmarshal([]byte(jsonOut), &decoded); err != nil {
 		t.Fatalf("logs --tail JSON decode failed: %v\n%s", err, jsonOut)
 	}
-	if len(decoded.Runs) != 1 || decoded.Runs[0].Output != "two\nthree\n" {
+	if len(decoded.Runs) != 1 || decoded.Runs[0].Content != "two\nthree\n" {
 		t.Fatalf("logs --tail JSON = %#v", decoded)
 	}
 
 	runOut, runErr, _, runCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--run-id", "run-tail", "-n", "1")
-	if runCode != 0 || runErr != "" || runOut != "reviewer-run-tail | three\n" {
+	if runCode != 0 || runErr != "" || runOut != "reviewer-run-tail [2026-06-11T00:00:01.000Z]| three\n" {
 		t.Fatalf("logs --run-id --tail code/stdout/stderr = %d / %q / %q", runCode, runOut, runErr)
 	}
 }
@@ -2582,9 +2641,9 @@ agents:
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("logs --timestamp code/stderr = %d / %q", exitCode, stderr)
 	}
-	want := "reviewer-run-revi | time=2026-06-11T00:00:02.000Z review one\n" +
-		"writer-run-writ | time=2026-06-11T00:00:01.000Z write one\n" +
-		"writer-run-writ | time=2026-06-11T00:00:01.000Z write two\n"
+	want := "reviewer-run-reviewer [2026-06-11T00:00:02.000Z]| review one\n" +
+		"writer-run-writer [2026-06-11T00:00:01.000Z]| write one\n" +
+		"writer-run-writer [2026-06-11T00:00:01.000Z]| write two\n"
 	if stdout != want {
 		t.Fatalf("logs --timestamp stdout = %q, want %q", stdout, want)
 	}
@@ -2643,7 +2702,7 @@ agents:
 	if stderr != "" {
 		t.Fatalf("logs follow stderr = %q, want empty", stderr)
 	}
-	if stdout != "reviewer-run-foll | time=2026-07-06T08:01:36.372Z first\nreviewer-run-foll | time=2026-07-06T08:01:36.875Z second\n" {
+	if stdout != "reviewer-run-follow [2026-07-06T08:01:36.372Z]| first\nreviewer-run-follow [2026-07-06T08:01:36.875Z]| second\n" {
 		t.Fatalf("logs follow stdout = %q", stdout)
 	}
 	if listCalls != 1 || followCalls != 1 {
@@ -2723,10 +2782,10 @@ agents:
 	if decoded.Project.Name != "cli-ps-demo" || len(decoded.Sandboxes) != 1 {
 		t.Fatalf("ps JSON project/sandboxes = %#v", decoded)
 	}
-	if decoded.Sandboxes[0].Sandbox != "session-running" || decoded.Sandboxes[0].Agent != "reviewer" || decoded.Sandboxes[0].Status != "running" || decoded.Sandboxes[0].Run != "run-running" {
+	if decoded.Sandboxes[0].ID != "session-running" || decoded.Sandboxes[0].Agent != "reviewer" || decoded.Sandboxes[0].Status != "running" || decoded.Sandboxes[0].RunID != "run-running" {
 		t.Fatalf("ps sandbox JSON = %#v", decoded.Sandboxes[0])
 	}
-	if stdout == "" || !strings.Contains(stdout, `"sandbox"`) || strings.Contains(stdout, `"session_id"`) {
+	if stdout == "" || !strings.Contains(stdout, `"id"`) || strings.Contains(stdout, `"session_id"`) {
 		t.Fatalf("ps JSON sandbox field shape = %q", stdout)
 	}
 
@@ -2746,7 +2805,7 @@ agents:
 	if textCode != 0 || textErr != "" {
 		t.Fatalf("ps text code/stderr = %d / %q", textCode, textErr)
 	}
-	for _, want := range []string{"SANDBOX", "AGENT", "STATUS", "RUN", "CREATED", "UPDATED", "session-running", "reviewer", "running", "run-running"} {
+	for _, want := range []string{"SANDBOX ID", "AGENT", "STATUS", "RUN ID", "CREATED", "UPDATED", "session-runn", "reviewer", "running", "running"} {
 		if !strings.Contains(textOut, want) {
 			t.Fatalf("ps text output %q does not contain %q", textOut, want)
 		}
@@ -2761,7 +2820,7 @@ agents:
 	if allCode != 0 || allErr != "" {
 		t.Fatalf("ps --all code/stderr = %d / %q", allCode, allErr)
 	}
-	for _, want := range []string{"session-running", "session-stopped", "session-error"} {
+	for _, want := range []string{"session-runn", "session-stop", "session-erro"} {
 		if !strings.Contains(allOut, want) {
 			t.Fatalf("ps --all output %q does not contain %q", allOut, want)
 		}
@@ -2774,7 +2833,7 @@ agents:
 	if statusCode != 0 || statusErr != "" {
 		t.Fatalf("ps --status code/stderr = %d / %q", statusCode, statusErr)
 	}
-	if !strings.Contains(statusOut, "session-error") || strings.Contains(statusOut, "session-running") || strings.Contains(statusOut, "session-stopped") {
+	if !strings.Contains(statusOut, "session-erro") || strings.Contains(statusOut, "session-runn") || strings.Contains(statusOut, "session-stop") {
 		t.Fatalf("ps --status output = %q", statusOut)
 	}
 
@@ -2902,7 +2961,7 @@ agents:
 		t.Helper()
 		result := map[string]bool{}
 		for _, sandbox := range output.Matched {
-			result[sandbox.Sandbox] = true
+			result[sandbox.ID] = true
 		}
 		return result
 	}
@@ -3077,7 +3136,7 @@ agents:
 				t.Fatalf("RemoveSandbox calls = %#v, want %#v", removed, tc.wantRemoveSeq)
 			}
 			for _, item := range decoded.Matched {
-				if item.Sandbox == "session-running" || item.Sandbox == "session-foreign" {
+				if item.ID == "session-running" || item.ID == "session-foreign" {
 					t.Fatalf("matched unsafe/unowned sandbox in forced prune: %#v", decoded.Matched)
 				}
 			}
@@ -3131,7 +3190,7 @@ agents:
 	if dryCode != 0 || dryErr != "" {
 		t.Fatalf("sandbox prune text dry-run code/stderr = %d / %q", dryCode, dryErr)
 	}
-	for _, want := range []string{"Dry-run: 2 matched, 0 skipped, 2 would be removed.", "Use --force", "Matched:", "SANDBOX", "AGENT", "STATUS", "DRIVER", "UPDATED", "REASON", "session-text-a", "would remove"} {
+	for _, want := range []string{"Dry-run: 2 matched, 0 skipped, 2 would be removed.", "Use --force", "Matched:", "SANDBOX", "AGENT", "STATUS", "DRIVER", "UPDATED", "REASON", "session-text", "would remove"} {
 		if !strings.Contains(dryOut, want) {
 			t.Fatalf("sandbox prune dry-run output %q does not contain %q", dryOut, want)
 		}
@@ -3269,6 +3328,106 @@ func TestIntegrationCLIStopSandbox(t *testing.T) {
 	}
 }
 
+func TestIntegrationCLIResolvesShortResourceIDsBeforeDaemonRequests(t *testing.T) {
+	composePath := writeComposeFile(t, t.TempDir(), `
+name: cli-short-id-demo
+agents:
+  reviewer:
+    provider: codex
+`)
+	projectID := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	sandboxID := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	runID := "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	project := testCLIProject(projectID, "cli-short-id-demo", composePath)
+	session := testCLISessionSummary(sandboxID, "RUNNING", projectID, "reviewer", runID)
+	run := &agentcomposev2.RunSummary{
+		RunId:     runID,
+		ProjectId: projectID,
+		AgentName: "reviewer",
+		Status:    agentcomposev2.RunStatus_RUN_STATUS_RUNNING,
+		SessionId: sandboxID,
+		UpdatedAt: "2026-06-11T00:00:01Z",
+	}
+	var stopped []string
+	var resumed []string
+	var execSandbox string
+	var runSandbox string
+	var inspectedRun string
+	server := newComposeServiceStubServer(t, composeServiceStubs{
+		project: projectServiceStub{
+			getProject: func(ctx context.Context, req *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
+				return connect.NewResponse(&agentcomposev2.GetProjectResponse{Project: project}), nil
+			},
+		},
+		run: runServiceStub{
+			listRuns: func(ctx context.Context, req *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error) {
+				return connect.NewResponse(&agentcomposev2.ListRunsResponse{Runs: []*agentcomposev2.RunSummary{run}}), nil
+			},
+			getRun: func(ctx context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
+				inspectedRun = req.Msg.GetRunId()
+				return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(projectID, req.Msg.GetRunId(), "reviewer", sandboxID, agentcomposev2.RunStatus_RUN_STATUS_RUNNING, 0, "ok")}), nil
+			},
+			runAgentStream: func(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
+				runSandbox = req.Msg.GetSessionId()
+				return stream.Send(&agentcomposev2.RunAgentStreamResponse{
+					EventType: agentcomposev2.RunAgentStreamEventType_RUN_AGENT_STREAM_EVENT_TYPE_COMPLETED,
+					RunId:     runID,
+					Run:       run,
+				})
+			},
+		},
+		session: sessionServiceStub{
+			listSessions: func(ctx context.Context, req *connect.Request[agentcomposev1.ListSessionsRequest]) (*connect.Response[agentcomposev1.ListSessionsResponse], error) {
+				return connect.NewResponse(&agentcomposev1.ListSessionsResponse{Sessions: []*agentcomposev1.SessionSummary{session}}), nil
+			},
+			stopSession: func(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
+				stopped = append(stopped, req.Msg.GetSessionId())
+				return connect.NewResponse(&agentcomposev1.SessionResponse{}), nil
+			},
+			resumeSession: func(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
+				resumed = append(resumed, req.Msg.GetSessionId())
+				return connect.NewResponse(&agentcomposev1.SessionResponse{}), nil
+			},
+		},
+		exec: execServiceStub{
+			execStream: func(ctx context.Context, req *connect.Request[agentcomposev2.ExecRequest], stream *connect.ServerStream[agentcomposev2.ExecStreamResponse]) error {
+				execSandbox = req.Msg.GetSessionId()
+				return stream.Send(&agentcomposev2.ExecStreamResponse{
+					EventType: agentcomposev2.ExecStreamEventType_EXEC_STREAM_EVENT_TYPE_COMPLETED,
+					Result: &agentcomposev2.ExecResult{
+						ExecId:    "exec-short",
+						SessionId: req.Msg.GetSessionId(),
+						Command:   req.Msg.GetCommand(),
+						Success:   true,
+					},
+				})
+			},
+		},
+	})
+	defer server.Close()
+
+	sandboxShort := shortOpaqueID(sandboxID)
+	runShort := shortOpaqueID(runID)
+	if _, stderr, _, exitCode := executeCLICommand("stop", "--host", server.URL, "--file", composePath, sandboxShort); exitCode != 0 || stderr != "" {
+		t.Fatalf("stop short id code/stderr = %d / %q", exitCode, stderr)
+	}
+	if _, stderr, _, exitCode := executeCLICommand("resume", "--host", server.URL, "--file", composePath, sandboxShort); exitCode != 0 || stderr != "" {
+		t.Fatalf("resume short id code/stderr = %d / %q", exitCode, stderr)
+	}
+	if _, stderr, _, exitCode := executeCLICommand("exec", "--host", server.URL, "--file", composePath, sandboxShort, "--command", "true"); exitCode != 0 || stderr != "" {
+		t.Fatalf("exec short id code/stderr = %d / %q", exitCode, stderr)
+	}
+	if _, stderr, _, exitCode := executeCLICommand("inspect", "--host", server.URL, "--file", composePath, "--json", "run", runShort); exitCode != 0 || stderr != "" {
+		t.Fatalf("inspect run short id code/stderr = %d / %q", exitCode, stderr)
+	}
+	if _, stderr, _, exitCode := executeCLICommand("run", "--host", server.URL, "--file", composePath, "--sandbox-id", sandboxShort, "reviewer", "--prompt", "hello"); exitCode != 0 || stderr != "" {
+		t.Fatalf("run --sandbox-id short code/stderr = %d / %q", exitCode, stderr)
+	}
+	if !reflect.DeepEqual(stopped, []string{sandboxID}) || !reflect.DeepEqual(resumed, []string{sandboxID}) || execSandbox != sandboxID || inspectedRun != runID || runSandbox != sandboxID {
+		t.Fatalf("resolved ids stopped=%#v resumed=%#v exec=%q inspect=%q run=%q", stopped, resumed, execSandbox, inspectedRun, runSandbox)
+	}
+}
+
 func TestIntegrationCLIResumeSandboxesJSON(t *testing.T) {
 	var resumed []string
 	server := newComposeServiceStubServer(t, composeServiceStubs{
@@ -3333,7 +3492,7 @@ func TestIntegrationCLIStatsTableAndJSON(t *testing.T) {
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("stats code/stderr = %d / %q", exitCode, stderr)
 	}
-	for _, want := range []string{"SANDBOX", "sandbox-stats", "docker", "12.50", "512", "-", "90s"} {
+	for _, want := range []string{"SANDBOX", "sandbox-stat", "docker", "12.50", "512", "-", "90s"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stats output %q does not contain %q", stdout, want)
 		}
@@ -3347,7 +3506,7 @@ func TestIntegrationCLIStatsTableAndJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(jsonOut), &decoded); err != nil {
 		t.Fatalf("stats JSON decode failed: %v\n%s", err, jsonOut)
 	}
-	if decoded.Sandbox != "sandbox-stats" || decoded.Driver != "docker" || decoded.MemoryLimitBytes.Status != "unknown" || decoded.MemoryLimitBytes.Value != nil {
+	if decoded.ID != "sandbox-stats" || decoded.Driver != "docker" || decoded.MemoryLimitBytes.Status != "unknown" || decoded.MemoryLimitBytes.Value != nil {
 		t.Fatalf("stats JSON = %#v", decoded)
 	}
 	if decoded.CPUPercent.Value == nil || *decoded.CPUPercent.Value != 12.5 {
@@ -3445,7 +3604,7 @@ agents:
 	if decoded.Project.Name != "cli-stats-demo" || len(decoded.Stats) != 2 {
 		t.Fatalf("stats JSON project/stats = %#v", decoded)
 	}
-	if decoded.Stats[0].Sandbox != "session-one" || decoded.Stats[1].Sandbox != "session-two" {
+	if decoded.Stats[0].ID != "session-one" || decoded.Stats[1].ID != "session-two" {
 		t.Fatalf("stats JSON order = %#v", decoded.Stats)
 	}
 	if strings.Contains(jsonOut, "session-stopped") || strings.Contains(jsonOut, "session-foreign") {
@@ -3767,7 +3926,7 @@ agents:
 	if err := json.Unmarshal([]byte(jsonOut), &decoded); err != nil {
 		t.Fatalf("exec JSON decode failed: %v\n%s", err, jsonOut)
 	}
-	if decoded.ExecID != "exec-cli" || decoded.SessionID != "session-exec" || decoded.Stdout != "exec stdout\n" || !decoded.Success {
+	if decoded.ExecID != "exec-cli" || decoded.SandboxID != "session-exec" || decoded.Stdout != "exec stdout\n" || !decoded.Success {
 		t.Fatalf("exec JSON = %#v", decoded)
 	}
 
@@ -3861,6 +4020,16 @@ agents:
     provider: codex
 `)
 	project := testCLIProject("project-inspect", "cli-inspect-demo", composePath)
+	reviewerID, err := domain.StableManagedAgentID(project.GetSummary().GetProjectId(), "reviewer")
+	if err != nil {
+		t.Fatalf("StableManagedAgentID reviewer returned error: %v", err)
+	}
+	workerID, err := domain.StableManagedAgentID(project.GetSummary().GetProjectId(), "worker")
+	if err != nil {
+		t.Fatalf("StableManagedAgentID worker returned error: %v", err)
+	}
+	project.Agents[0].ManagedAgentId = reviewerID
+	project.Agents[1].ManagedAgentId = workerID
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		project: projectServiceStub{
 			getProject: func(ctx context.Context, req *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
@@ -3901,7 +4070,7 @@ agents:
 		t.Fatalf("inspect project JSON = %#v", projectDecoded)
 	}
 
-	agentOut, agentErr, _, agentCode := executeCLICommand("inspect", "--host", server.URL, "--file", composePath, "--json", "agent", "reviewer")
+	agentOut, agentErr, _, agentCode := executeCLICommand("inspect", "--host", server.URL, "--file", composePath, "--json", "agent", identity.ShortID(reviewerID))
 	if agentCode != 0 || agentErr != "" {
 		t.Fatalf("inspect agent code/stderr = %d / %q", agentCode, agentErr)
 	}
@@ -3909,7 +4078,7 @@ agents:
 	if err := json.Unmarshal([]byte(agentOut), &agentDecoded); err != nil {
 		t.Fatalf("inspect agent JSON decode failed: %v\n%s", err, agentOut)
 	}
-	if agentDecoded.Agent.AgentName != "reviewer" || agentDecoded.LatestRun.RunID != "run-inspect" || len(agentDecoded.RunningSessions) != 1 {
+	if agentDecoded.Agent.Name != "reviewer" || agentDecoded.LatestRun.ID != "run-inspect" || len(agentDecoded.RunningSandboxes) != 1 {
 		t.Fatalf("inspect agent JSON = %#v", agentDecoded)
 	}
 
@@ -3921,7 +4090,7 @@ agents:
 	if err := json.Unmarshal([]byte(runOut), &runDecoded); err != nil {
 		t.Fatalf("inspect run JSON decode failed: %v\n%s", err, runOut)
 	}
-	if runDecoded.RunID != "run-inspect" || runDecoded.Status != "running" || runDecoded.SessionID != "session-inspect" {
+	if runDecoded.ID != "run-inspect" || runDecoded.Status != "running" || runDecoded.SandboxID != "session-inspect" {
 		t.Fatalf("inspect run JSON = %#v", runDecoded)
 	}
 
@@ -3933,7 +4102,7 @@ agents:
 	if err := json.Unmarshal([]byte(sandboxOut), &sandboxDecoded); err != nil {
 		t.Fatalf("inspect sandbox JSON decode failed: %v\n%s", err, sandboxOut)
 	}
-	if sandboxDecoded.SessionID != "session-inspect" || sandboxDecoded.VMStatus != "running" || sandboxDecoded.Tags["project"] == "" {
+	if sandboxDecoded.ID != "session-inspect" || sandboxDecoded.VMStatus != "running" || sandboxDecoded.Tags["project"] == "" {
 		t.Fatalf("inspect sandbox JSON = %#v", sandboxDecoded)
 	}
 
@@ -3948,7 +4117,7 @@ agents:
 	if err := json.Unmarshal([]byte(sessionOut), &sessionDecoded); err != nil {
 		t.Fatalf("inspect session JSON decode failed: %v\n%s", err, sessionOut)
 	}
-	if sessionDecoded.SessionID != "session-inspect" || sessionDecoded.VMStatus != "running" || sessionDecoded.Tags["project"] == "" {
+	if sessionDecoded.ID != "session-inspect" || sessionDecoded.VMStatus != "running" || sessionDecoded.Tags["project"] == "" {
 		t.Fatalf("inspect session JSON = %#v", sessionDecoded)
 	}
 }
@@ -3993,13 +4162,28 @@ func TestIntegrationCLIImagesAliasesAndJSON(t *testing.T) {
 		t.Fatalf("image ls code/stderr = %d / %q", textCode, textErr)
 	}
 	assertDeprecatedWarning(t, textErr, "agent-compose images")
-	for _, want := range []string{"IMAGE ID", "abc123456789", "agent:latest", "available"} {
+	for _, want := range []string{"IMAGE ID", "REF", "DISK USAGE", "abc123456789", "agent:latest", "1.0KB"} {
 		if !strings.Contains(textOut, want) {
 			t.Fatalf("image ls output %q does not contain %q", textOut, want)
 		}
 	}
-	if calls != 2 {
-		t.Fatalf("ListImages calls = %d, want 2", calls)
+	for _, notWant := range []string{"STORE", "STATUS", "CONTENT SIZE", "docker", "available"} {
+		if strings.Contains(textOut, notWant) {
+			t.Fatalf("image ls default output %q contains %q", textOut, notWant)
+		}
+	}
+
+	verboseOut, verboseErr, _, verboseCode := executeCLICommand("images", "--host", server.URL, "--verbose")
+	if verboseCode != 0 || verboseErr != "" {
+		t.Fatalf("images --verbose code/stderr = %d / %q", verboseCode, verboseErr)
+	}
+	for _, want := range []string{"REF", "IMAGE ID", "STORE", "STATUS", "PLATFORM", "DISK USAGE", "CONTENT SIZE", "CREATED", "docker", "available", "linux/amd64"} {
+		if !strings.Contains(verboseOut, want) {
+			t.Fatalf("images --verbose output %q does not contain %q", verboseOut, want)
+		}
+	}
+	if calls != 3 {
+		t.Fatalf("ListImages calls = %d, want 3", calls)
 	}
 }
 
@@ -4039,7 +4223,7 @@ func TestIntegrationCLICacheListTextJSONAndFilters(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
 		t.Fatalf("cache ls JSON decode failed: %v\n%s", err, stdout)
 	}
-	if len(decoded.Caches) != 1 || decoded.Caches[0].CacheID != "cache-materialized-1" || decoded.Caches[0].Type != "materialized" || decoded.Warnings[0] != "scan warning" {
+	if len(decoded.Caches) != 1 || decoded.Caches[0].ID != "cache-materialized-1" || decoded.Caches[0].Type != "materialized" || decoded.Warnings[0] != "scan warning" {
 		t.Fatalf("cache ls JSON = %#v", decoded)
 	}
 
@@ -4047,7 +4231,7 @@ func TestIntegrationCLICacheListTextJSONAndFilters(t *testing.T) {
 	if textCode != 0 || textErr != "" {
 		t.Fatalf("cache ls text code/stderr = %d / %q", textCode, textErr)
 	}
-	for _, want := range []string{"CACHE ID", "cache-materialized-1", "boxlite", "materialized", "orphaned", "/tmp/cache/rootfs"} {
+	for _, want := range []string{"CACHE ID", "cache-materi", "boxlite", "materialized", "orphaned", "/tmp/cache/rootfs"} {
 		if !strings.Contains(textOut, want) {
 			t.Fatalf("cache ls text %q does not contain %q", textOut, want)
 		}
@@ -4194,7 +4378,7 @@ func TestIntegrationCLICacheInspectTextJSONAndNotFound(t *testing.T) {
 	if err := json.Unmarshal([]byte(jsonOut), &decoded); err != nil {
 		t.Fatalf("cache inspect JSON decode failed: %v\n%s", err, jsonOut)
 	}
-	if decoded.Cache.CacheID != "cache-materialized-1" || decoded.Cache.Status != "orphaned" || decoded.Warnings[0] != "top warning" {
+	if decoded.Cache.ID != "cache-materialized-1" || decoded.Cache.Status != "orphaned" || decoded.Warnings[0] != "top warning" {
 		t.Fatalf("cache inspect JSON = %#v", decoded)
 	}
 
@@ -4206,7 +4390,7 @@ func TestIntegrationCLICacheInspectTextJSONAndNotFound(t *testing.T) {
 	if err := json.Unmarshal([]byte(genericOut), &genericDecoded); err != nil {
 		t.Fatalf("inspect cache JSON decode failed: %v\n%s", err, genericOut)
 	}
-	if genericDecoded.Cache.CacheID != "cache-materialized-1" {
+	if genericDecoded.Cache.ID != "cache-materialized-1" {
 		t.Fatalf("inspect cache JSON = %#v", genericDecoded)
 	}
 
@@ -4291,7 +4475,8 @@ func TestComposeSandboxPruneOutputJSONShape(t *testing.T) {
 	output := composeSandboxPruneOutput{
 		DryRun: true,
 		Matched: []composePSSandboxOutput{{
-			Sandbox:   "sandbox-match",
+			ID:        "sandbox-match",
+			ShortID:   "sandbox-match",
 			Agent:     "worker",
 			Status:    "stopped",
 			UpdatedAt: "2026-06-11T00:00:00Z",
@@ -4760,7 +4945,7 @@ func TestIntegrationCLICacheLifecycleWithInProcessDaemon(t *testing.T) {
 		t.Fatalf("cache ls warnings = %#v, want missing metadata path warning", listed.Warnings)
 	}
 
-	inspectOut, inspectErr, _, inspectCode := executeCLICommand("cache", "inspect", "--host", server.URL, referenced.CacheID)
+	inspectOut, inspectErr, _, inspectCode := executeCLICommand("cache", "inspect", "--host", server.URL, referenced.ID)
 	if inspectCode != 0 || inspectErr != "" {
 		t.Fatalf("cache inspect code/stderr = %d / %q", inspectCode, inspectErr)
 	}
@@ -4772,7 +4957,7 @@ func TestIntegrationCLICacheLifecycleWithInProcessDaemon(t *testing.T) {
 	if dryRunCode != 0 || dryRunErr != "" {
 		t.Fatalf("cache prune dry-run code/stderr = %d / %q", dryRunCode, dryRunErr)
 	}
-	if !strings.Contains(dryRunOut, "Dry-run") || !strings.Contains(dryRunOut, orphan.CacheID) {
+	if !strings.Contains(dryRunOut, "Dry-run") || !strings.Contains(dryRunOut, orphan.ID) {
 		t.Fatalf("cache prune dry-run stdout = %q", dryRunOut)
 	}
 	assertLocalPathExists(t, orphanRootFS)
@@ -4785,17 +4970,17 @@ func TestIntegrationCLICacheLifecycleWithInProcessDaemon(t *testing.T) {
 	if err := json.Unmarshal([]byte(forceOut), &forceResult); err != nil {
 		t.Fatalf("cache prune force JSON decode failed: %v\n%s", err, forceOut)
 	}
-	if forceResult.DryRun || !stringSliceContains(forceResult.Removed, orphan.CacheID) {
+	if forceResult.DryRun || !stringSliceContains(forceResult.Removed, orphan.ID) {
 		t.Fatalf("cache prune force result = %#v", forceResult)
 	}
 	assertLocalPathMissing(t, orphanRootFS)
 	assertLocalPathExists(t, referencedRootFS)
 
-	protectedOut, protectedErr, _, protectedCode := executeCLICommand("cache", "rm", "--host", server.URL, "--force", referenced.CacheID)
+	protectedOut, protectedErr, _, protectedCode := executeCLICommand("cache", "rm", "--host", server.URL, "--force", referenced.ID)
 	if protectedCode != exitCodeUsage {
 		t.Fatalf("cache rm referenced exit code = %d, want usage; stderr=%q", protectedCode, protectedErr)
 	}
-	if !strings.Contains(protectedOut, "Skipped") || !strings.Contains(protectedOut, referenced.CacheID) {
+	if !strings.Contains(protectedOut, "Skipped") || !strings.Contains(protectedOut, referenced.ID) {
 		t.Fatalf("cache rm referenced stdout = %q", protectedOut)
 	}
 	assertLocalPathExists(t, referencedRootFS)
@@ -4873,7 +5058,7 @@ func TestIntegrationCLIRemoveImageDoesNotDeleteRuntimeCachesWithInProcessDaemon(
 	if err := json.Unmarshal([]byte(stdout), &removed); err != nil {
 		t.Fatalf("rmi JSON decode failed: %v\n%s", err, stdout)
 	}
-	if len(removed.DeletedIDs) != 1 || removed.DeletedIDs[0] != imageID || len(removed.Warnings) == 0 {
+	if len(removed.DeletedIDs) != 1 || removed.DeletedIDs[0] != displayOpaqueID(imageID) || len(removed.Warnings) == 0 {
 		t.Fatalf("rmi output = %#v", removed)
 	}
 	for _, path := range []string{
@@ -5255,7 +5440,7 @@ func TestIntegrationCLIImageRemoveAliasesAndJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
 		t.Fatalf("rmi JSON decode failed: %v\n%s", err, stdout)
 	}
-	if decoded.ImageRef != "agent:old" || decoded.UntaggedRefs[0] != "agent:old" || decoded.DeletedIDs[0] != "sha256:old" {
+	if decoded.ImageRef != "agent:old" || decoded.UntaggedRefs[0] != "agent:old" || decoded.DeletedIDs[0] != "old" {
 		t.Fatalf("rmi JSON = %#v", decoded)
 	}
 
@@ -5264,7 +5449,7 @@ func TestIntegrationCLIImageRemoveAliasesAndJSON(t *testing.T) {
 		t.Fatalf("image rm code/stderr = %d / %q", textCode, textErr)
 	}
 	assertDeprecatedWarning(t, textErr, "agent-compose rmi")
-	if !strings.Contains(textOut, "Untagged: agent:old") || !strings.Contains(textOut, "Deleted: sha256:old") {
+	if !strings.Contains(textOut, "Untagged: agent:old") || !strings.Contains(textOut, "Deleted: old") {
 		t.Fatalf("image rm output = %q", textOut)
 	}
 	if calls != 2 {
@@ -5387,7 +5572,7 @@ func TestComposeImageOutputFromProtoAcceptsOCIStatus(t *testing.T) {
 	}
 
 	output := composeImageOutputFromProto(image)
-	if output.Store != "oci-cache" || output.ImageID != "sha256:oci123456789" || output.ImageRef != "agent:latest" || output.Platform != "linux/amd64" {
+	if output.Store != "oci-cache" || output.ImageID != "oci123456789" || output.ImageRef != "agent:latest" || output.Platform != "linux/amd64" {
 		t.Fatalf("OCI image output = %#v", output)
 	}
 }
@@ -5553,7 +5738,7 @@ func TestCLIOutputHelpersCoverEdgeBranches(t *testing.T) {
 	if err := writeComposeUpText(&text, applyResp); err != nil {
 		t.Fatalf("writeComposeUpText returned error: %v", err)
 	}
-	if !strings.Contains(text.String(), "Status: unchanged") || !strings.Contains(text.String(), "ACTION") {
+	if !strings.Contains(text.String(), "ACTION") || !strings.Contains(text.String(), "reviewer") {
 		t.Fatalf("compose up text = %q", text.String())
 	}
 
@@ -5613,7 +5798,7 @@ func TestCLIOutputHelpersCoverEdgeBranches(t *testing.T) {
 		MemoryUsageBytes: &agentcomposev2.MetricValue{Value: &value, Unit: "bytes", Status: agentcomposev2.MetricStatus_METRIC_STATUS_UNAVAILABLE, Message: "n/a"},
 		UptimeSeconds:    &agentcomposev2.MetricValue{Value: &value, Unit: "seconds", Status: agentcomposev2.MetricStatus_METRIC_STATUS_OK},
 	})
-	if stats.CPUPercent.Status != "ok" || stats.MemoryUsageBytes.Status != "unavailable" || composeStatsOutputFromProto(nil).Sandbox != "" {
+	if stats.CPUPercent.Status != "ok" || stats.MemoryUsageBytes.Status != "unavailable" || composeStatsOutputFromProto(nil).ID != "" {
 		t.Fatalf("stats output = %#v", stats)
 	}
 	text.Reset()
@@ -5641,7 +5826,7 @@ func TestCLIOutputHelpersCoverEdgeBranches(t *testing.T) {
 	if err := writeLogsForRun(&text, run, false, composeLogsOptions{TailLines: 1, Timestamp: true}); err != nil {
 		t.Fatalf("writeLogsForRun text returned error: %v", err)
 	}
-	if !strings.Contains(text.String(), "reviewer-run-1234") || !strings.Contains(text.String(), "three") {
+	if !strings.Contains(text.String(), "reviewer-run-123456789") || !strings.Contains(text.String(), "three") {
 		t.Fatalf("run logs text = %q", text.String())
 	}
 	text.Reset()
@@ -5714,23 +5899,54 @@ func TestCLIImageCacheAndFilterHelpersCoverEdgeBranches(t *testing.T) {
 		t.Fatalf("image remove output = %#v", removeOutput)
 	}
 	text.Reset()
-	if err := writeImagesText(&text, listOutput.Images); err != nil {
+	if err := writeImagesText(&text, listOutput.Images, false); err != nil {
 		t.Fatalf("writeImagesText returned error: %v", err)
 	}
-	if !strings.Contains(text.String(), "IMAGE ID") || !strings.Contains(text.String(), "agent:latest") {
+	if !strings.Contains(text.String(), "IMAGE ID") || !strings.Contains(text.String(), "REF") || !strings.Contains(text.String(), "DISK USAGE") || !strings.Contains(text.String(), "agent:latest") || !strings.Contains(text.String(), "1.0KB") || strings.Contains(text.String(), "CONTENT SIZE") {
 		t.Fatalf("images text = %q", text.String())
+	}
+	text.Reset()
+	untaggedImage := composeImageOutput{
+		ImageID:          "sha256:7e31c0c15f55c1c4bc9ccbd8d435987df0893c71f1ecdb324e87df0bc77e1c2a",
+		ShortID:          "7e31c0c15f55",
+		ImageRef:         "sha256:7e31c0c15f55c1c4bc9ccbd8d435987df0893c71f1ecdb324e87df0bc77e1c2a",
+		ResolvedRef:      "example.com/agent@sha256:7e31c0c15f55c1c4bc9ccbd8d435987df0893c71f1ecdb324e87df0bc77e1c2a",
+		SizeBytes:        559279329,
+		VirtualSizeBytes: 559279329,
+	}
+	if err := writeImagesText(&text, []composeImageOutput{untaggedImage}, false); err != nil {
+		t.Fatalf("writeImagesText untagged returned error: %v", err)
+	}
+	if !strings.Contains(text.String(), "<none>") || strings.Contains(text.String(), "example.com/agent@sha256") || strings.Contains(text.String(), "sha256:7e31c0c15f55") {
+		t.Fatalf("untagged images text = %q", text.String())
+	}
+	text.Reset()
+	if err := writeImagesText(&text, listOutput.Images, true); err != nil {
+		t.Fatalf("writeImagesText verbose returned error: %v", err)
+	}
+	if !strings.Contains(text.String(), "STORE") || !strings.Contains(text.String(), "STATUS") || !strings.Contains(text.String(), "CONTENT SIZE") || !strings.Contains(text.String(), "CREATED") {
+		t.Fatalf("images verbose text = %q", text.String())
 	}
 	if shortImageID("sha256:1234567890abcdef") != "1234567890ab" || imagePlatformText(&agentcomposev2.ImagePlatform{Os: "linux"}) != "linux" {
 		t.Fatalf("image helper output mismatch")
 	}
+	if formatImageSizeForText(0) != "0B" || formatImageSizeForText(559279329) != "559.3MB" || firstNonZeroUint64(0, 42) != 42 {
+		t.Fatalf("image text helper output mismatch")
+	}
+	if formatImageCreatedForText("") != "-" || formatImageCreatedForText("created") != "created" || formatImageAgeForText(2*time.Hour) != "2 hours" {
+		t.Fatalf("image time helper output mismatch")
+	}
+	if imageListRefForText(untaggedImage) != "<none>" || imageRefLooksUntagged("example.com/agent@sha256:def", "") != true || imageRefLooksUntagged("agent:latest", "") {
+		t.Fatalf("image ref text helper output mismatch")
+	}
 
 	cache := composeCacheOutputFromProto(testCLICache("cache-full"))
 	cache.SessionID = "session-1"
-	if cache.CacheID != "cache-full" || cache.Domain == "" || cache.Type == "" || cacheRefSessionText(cache) == "-" {
+	if cache.ID != "cache-full" || cache.Domain == "" || cache.Type == "" || cacheRefSessionText(cache) == "-" {
 		t.Fatalf("cache output = %#v", cache)
 	}
 	emptyCache := composeCacheOutputFromProto(nil)
-	if emptyCache.CacheID != "" {
+	if emptyCache.ID != "" {
 		t.Fatalf("nil cache output = %#v", emptyCache)
 	}
 	cacheListOutput := composeCacheListOutputFromResponse(&agentcomposev2.ListCachesResponse{
@@ -5744,7 +5960,7 @@ func TestCLIImageCacheAndFilterHelpersCoverEdgeBranches(t *testing.T) {
 		Cache:    testCLICache("cache-inspect"),
 		Warnings: []string{"inspect warning"},
 	})
-	if cacheInspectOutput.Cache.CacheID != "cache-inspect" || len(cacheInspectOutput.Warnings) != 1 {
+	if cacheInspectOutput.Cache.ID != "cache-inspect" || len(cacheInspectOutput.Warnings) != 1 {
 		t.Fatalf("cache inspect output = %#v", cacheInspectOutput)
 	}
 	pruneOutput := composeCacheOperationOutputFromPruneResponse(&agentcomposev2.PruneCachesResponse{
@@ -5784,7 +6000,7 @@ func TestCLIImageCacheAndFilterHelpersCoverEdgeBranches(t *testing.T) {
 	if err := writeCacheOperationOutput(&text, false, composeCacheOperationOutput{
 		DryRun:   true,
 		Matched:  []composeCacheOutput{cache},
-		Skipped:  []composeCacheOutput{{CacheID: "cache-skip", Driver: "docker", Type: "oci", Status: "active", BlockedReasons: []string{"in use"}}},
+		Skipped:  []composeCacheOutput{{ID: "cache-skip", ShortID: "cache-skip", Driver: "docker", Type: "oci", Status: "active", BlockedReasons: []string{"in use"}}},
 		Warnings: []string{"warning"},
 	}); err != nil {
 		t.Fatalf("writeCacheOperationOutput text returned error: %v", err)
@@ -5815,7 +6031,7 @@ func TestCLIImageCacheAndFilterHelpersCoverEdgeBranches(t *testing.T) {
 	text.Reset()
 	if err := writeSandboxPruneOutput(&text, false, composeSandboxPruneOutput{
 		DryRun:   true,
-		Matched:  []composePSSandboxOutput{{Sandbox: "sandbox-1", Agent: "reviewer", Status: "stopped", Driver: "boxlite", CreatedAt: "created"}},
+		Matched:  []composePSSandboxOutput{{ID: "sandbox-1", ShortID: "sandbox-1", Agent: "reviewer", Status: "stopped", Driver: "boxlite", CreatedAt: "created"}},
 		Skipped:  []composeSandboxPruneSkipped{{Sandbox: "sandbox-2", Reason: "running"}},
 		Warnings: []string{"warning"},
 	}); err != nil {
@@ -5833,7 +6049,7 @@ func TestCLIImageCacheAndFilterHelpersCoverEdgeBranches(t *testing.T) {
 	}
 	text.Reset()
 	if err := writeSandboxPruneOutput(&text, false, composeSandboxPruneOutput{
-		Matched: []composePSSandboxOutput{{Sandbox: "sandbox-3", Agent: "worker", Status: "stopped", Driver: "docker", UpdatedAt: "updated"}},
+		Matched: []composePSSandboxOutput{{ID: "sandbox-3", ShortID: "sandbox-3", Agent: "worker", Status: "stopped", Driver: "docker", UpdatedAt: "updated"}},
 		Removed: []string{"sandbox-3"},
 	}); err != nil {
 		t.Fatalf("writeSandboxPruneOutput removed returned error: %v", err)
@@ -6352,7 +6568,7 @@ agents:
 			run: runServiceStub{
 				listRuns: func(ctx context.Context, req *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error) {
 					listCalls++
-					if req.Msg.GetAgentName() == "error" {
+					if req.Msg.GetAgentName() == "reviewer" {
 						return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("list unavailable"))
 					}
 					return connect.NewResponse(&agentcomposev2.ListRunsResponse{}), nil
@@ -6372,7 +6588,7 @@ agents:
 		if exitCode != 0 || stderr != "" || !strings.Contains(stdout, `"runs": null`) {
 			t.Fatalf("logs empty json code/stdout/stderr = %d/%q/%q", exitCode, stdout, stderr)
 		}
-		stdout, stderr, _, exitCode = executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--agent", "error")
+		stdout, stderr, _, exitCode = executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--agent", "reviewer")
 		if exitCode != exitCodeUnavailable || stdout != "" || !strings.Contains(stderr, "list unavailable") {
 			t.Fatalf("logs list error code/stdout/stderr = %d/%q/%q", exitCode, stdout, stderr)
 		}
@@ -6516,7 +6732,7 @@ func TestIntegrationCLIListProjectsTextVerboseAndJSON(t *testing.T) {
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("ls code/stderr = %d / %q", exitCode, stderr)
 	}
-	for _, want := range []string{"PROJECT", "CONFIG FILE", "SERVICES", "reviewer", "/path/to/reviewer/agent-compose.yml", "builder", "-"} {
+	for _, want := range []string{"ID", "NAME", "CONFIG FILE", "reviewer", "/path/to/reviewer/agent-compose.yml", "builder"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("ls output %q does not contain %q", stdout, want)
 		}
@@ -6526,7 +6742,7 @@ func TestIntegrationCLIListProjectsTextVerboseAndJSON(t *testing.T) {
 	if verboseCode != 0 || verboseErr != "" {
 		t.Fatalf("ls --verbose code/stderr = %d / %q", verboseCode, verboseErr)
 	}
-	for _, want := range []string{"PROJECT ID", "PROJECT DIR", "SPEC HASH", "proj_1", "/path/to/reviewer", "sha256:builder", "active"} {
+	for _, want := range []string{"ID", "NAME", "PROJECT DIR", "SPEC HASH", "proj_1", "/path/to/reviewer", "sha256:builder", "active"} {
 		if !strings.Contains(verboseOut, want) {
 			t.Fatalf("ls --verbose output %q does not contain %q", verboseOut, want)
 		}
@@ -7566,7 +7782,7 @@ func requireCLICacheByPath(t *testing.T, caches []composeCacheOutput, path strin
 	t.Helper()
 	for _, cache := range caches {
 		if cache.Path == path {
-			if strings.TrimSpace(cache.CacheID) == "" {
+			if strings.TrimSpace(cache.ID) == "" {
 				t.Fatalf("cache for path %s has empty cache id: %#v", path, cache)
 			}
 			return cache

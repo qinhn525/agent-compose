@@ -17,6 +17,7 @@ const (
 type ProjectRecord struct {
 	ID              string    `json:"id"`
 	Name            string    `json:"name"`
+	ShortID         string    `json:"short_id,omitempty"`
 	SourcePath      string    `json:"source_path,omitempty"`
 	SourceJSON      string    `json:"source_json"`
 	CurrentRevision int64     `json:"current_revision"`
@@ -35,6 +36,9 @@ type ProjectRevisionRecord struct {
 }
 
 type ProjectAgentRecord struct {
+	ID               string    `json:"id,omitempty"`
+	Name             string    `json:"name,omitempty"`
+	ShortID          string    `json:"short_id,omitempty"`
 	ProjectID        string    `json:"project_id"`
 	AgentName        string    `json:"agent_name"`
 	ManagedAgentID   string    `json:"managed_agent_id,omitempty"`
@@ -50,6 +54,8 @@ type ProjectAgentRecord struct {
 }
 
 type ProjectSchedulerRecord struct {
+	ID              string    `json:"id,omitempty"`
+	ShortID         string    `json:"short_id,omitempty"`
 	ProjectID       string    `json:"project_id"`
 	SchedulerID     string    `json:"scheduler_id"`
 	AgentName       string    `json:"agent_name"`
@@ -73,7 +79,8 @@ type ProjectRunRecord struct {
 	SchedulerID     string    `json:"scheduler_id,omitempty"`
 	TriggerID       string    `json:"trigger_id,omitempty"`
 	Status          string    `json:"status"`
-	SessionID       string    `json:"session_id,omitempty"`
+	SandboxID       string    `json:"sandbox_id,omitempty"`
+	SessionID       string    `json:"-"`
 	ExitCode        int       `json:"exit_code,omitempty"`
 	Error           string    `json:"error,omitempty"`
 	Prompt          string    `json:"prompt,omitempty"`
@@ -102,6 +109,7 @@ type ProjectListOptions struct {
 type ProjectRunListOptions struct {
 	ProjectID   string
 	AgentName   string
+	SandboxID   string
 	SessionID   string
 	SchedulerID string
 	Status      string
@@ -120,6 +128,7 @@ type ProjectListResult struct {
 type ProjectSessionRelationFilter struct {
 	ProjectID string
 	AgentName string
+	SandboxID string
 	SessionID string
 	Statuses  []string
 	Limit     int
