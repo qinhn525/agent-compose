@@ -2427,6 +2427,10 @@ func runComposeLogsCommand(cmd *cobra.Command, cli cliOptions, options composeLo
 		return err
 	}
 	client := agentcomposev2connect.NewRunServiceClient(newDaemonHTTPClient(clientConfig), clientConfig.BaseURL)
+	normalizedOptions, err = resolveComposeLogRefs(cmd.Context(), client, normalized, projectID, normalizedOptions)
+	if err != nil {
+		return err
+	}
 	if strings.TrimSpace(normalizedOptions.RunID) != "" {
 		run, err := getRunDetail(cmd.Context(), client, projectID, normalizedOptions.RunID)
 		if err != nil {
@@ -2454,6 +2458,37 @@ func normalizeComposeLogsOptions(cmd *cobra.Command, options composeLogsOptions,
 		return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs --tail must be -1 or greater")}
 	}
 	return options, nil
+}
+
+func resolveComposeLogRefs(ctx context.Context, client agentcomposev2connect.RunServiceClient, normalized *compose.NormalizedProjectSpec, projectID string, options composeLogsOptions) (composeLogsOptions, error) {
+	if strings.TrimSpace(options.AgentName) != "" {
+		agentName, err := resolveComposeAgentNameFromSpec(normalized, projectID, options.AgentName)
+		if err != nil {
+			return options, err
+		}
+		options.AgentName = agentName
+	}
+	if shouldResolveComposeLogResourceRef(options.RunID) {
+		runID, err := resolveComposeRunIDRef(ctx, client, projectID, options.AgentName, options.RunID)
+		if err != nil {
+			return options, err
+		}
+		options.RunID = runID
+	}
+	if shouldResolveComposeLogResourceRef(options.SessionID) {
+		sandboxID, err := resolveComposeSandboxIDRefFromRuns(ctx, client, projectID, options.AgentName, options.SessionID)
+		if err != nil {
+			return options, err
+		}
+		options.SessionID = sandboxID
+		options.SandboxID = sandboxID
+	}
+	return options, nil
+}
+
+func shouldResolveComposeLogResourceRef(ref string) bool {
+	ref = strings.TrimSpace(ref)
+	return identity.IsID(ref) || identity.IsIDPrefix(ref)
 }
 
 func composeExecArgs(cmd *cobra.Command, args []string) error {
@@ -5165,6 +5200,89 @@ func listLogRuns(ctx context.Context, client agentcomposev2connect.RunServiceCli
 		AgentName: strings.TrimSpace(options.AgentName),
 		SessionId: strings.TrimSpace(options.SessionID),
 		Limit:     20,
+	}))
+	if err != nil {
+		return nil, err
+	}
+	return resp.Msg.GetRuns(), nil
+}
+
+func resolveComposeRunIDRef(ctx context.Context, client agentcomposev2connect.RunServiceClient, projectID, agentName, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run id is required")}
+	}
+	if identity.IsID(ref) {
+		return ref, nil
+	}
+	runs, err := listLogRunRefCandidates(ctx, client, projectID, agentName)
+	if err != nil {
+		return "", commandExitErrorForConnect(fmt.Errorf("resolve run %s: %w", ref, err))
+	}
+	var matches []*agentcomposev2.RunSummary
+	for _, run := range runs {
+		if resourceIDMatchesRef(run.GetRunId(), shortOpaqueID(run.GetRunId()), ref) {
+			matches = append(matches, run)
+		}
+	}
+	if len(matches) == 0 {
+		return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run %q not found in current project", ref)}
+	}
+	if len(matches) > 1 {
+		ids := make([]string, 0, len(matches))
+		for _, match := range matches {
+			ids = append(ids, shortOpaqueID(match.GetRunId()))
+		}
+		sort.Strings(ids)
+		return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("run ref %q is ambiguous in current project; matches: %s", ref, strings.Join(ids, ", "))}
+	}
+	return matches[0].GetRunId(), nil
+}
+
+func resolveComposeSandboxIDRefFromRuns(ctx context.Context, client agentcomposev2connect.RunServiceClient, projectID, agentName, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("sandbox id is required")}
+	}
+	if identity.IsID(ref) {
+		return ref, nil
+	}
+	runs, err := listLogRunRefCandidates(ctx, client, projectID, agentName)
+	if err != nil {
+		return "", commandExitErrorForConnect(fmt.Errorf("resolve sandbox %s: %w", ref, err))
+	}
+	matches := map[string]struct{}{}
+	for _, run := range runs {
+		sandboxID := strings.TrimSpace(run.GetSessionId())
+		if sandboxID == "" {
+			continue
+		}
+		if resourceIDMatchesRef(sandboxID, shortOpaqueID(sandboxID), ref) {
+			matches[sandboxID] = struct{}{}
+		}
+	}
+	if len(matches) == 0 {
+		return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("sandbox %q not found in current project runs", ref)}
+	}
+	if len(matches) > 1 {
+		ids := make([]string, 0, len(matches))
+		for id := range matches {
+			ids = append(ids, shortOpaqueID(id))
+		}
+		sort.Strings(ids)
+		return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("sandbox ref %q is ambiguous in current project; matches: %s", ref, strings.Join(ids, ", "))}
+	}
+	for id := range matches {
+		return id, nil
+	}
+	return "", commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("sandbox %q not found in current project runs", ref)}
+}
+
+func listLogRunRefCandidates(ctx context.Context, client agentcomposev2connect.RunServiceClient, projectID, agentName string) ([]*agentcomposev2.RunSummary, error) {
+	resp, err := client.ListRuns(ctx, connect.NewRequest(&agentcomposev2.ListRunsRequest{
+		ProjectId: strings.TrimSpace(projectID),
+		AgentName: strings.TrimSpace(agentName),
+		Limit:     200,
 	}))
 	if err != nil {
 		return nil, err

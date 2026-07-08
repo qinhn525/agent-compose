@@ -2482,28 +2482,42 @@ agents:
   reviewer:
     provider: codex
 `)
-	var sawList bool
+	runID := identity.NewID(identity.ResourceRun, "logs", "run")
+	sandboxID := identity.NewID(identity.ResourceSandbox, "logs", "sandbox")
+	var sawFilteredList bool
 	server := newRunServiceStubServer(t, runServiceStub{
 		listRuns: func(ctx context.Context, req *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error) {
-			sawList = true
-			if req.Msg.GetAgentName() != "reviewer" || req.Msg.GetSessionId() != "session-logs" || req.Msg.GetLimit() != 20 {
+			switch req.Msg.GetLimit() {
+			case 200:
+				if req.Msg.GetSessionId() != "" {
+					t.Fatalf("ListRuns resolver request = %#v", req.Msg)
+				}
+			case 20:
+				sawFilteredList = true
+				if req.Msg.GetAgentName() != "reviewer" || req.Msg.GetSessionId() != sandboxID {
+					t.Fatalf("ListRuns filtered request = %#v", req.Msg)
+				}
+			default:
 				t.Fatalf("ListRuns request = %#v", req.Msg)
 			}
 			return connect.NewResponse(&agentcomposev2.ListRunsResponse{Runs: []*agentcomposev2.RunSummary{{
-				RunId:     "run-logs",
+				RunId:     runID,
 				ProjectId: req.Msg.GetProjectId(),
 				AgentName: "reviewer",
 				Status:    agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED,
-				SessionId: "session-logs",
+				SessionId: sandboxID,
 			}}}), nil
 		},
 		getRun: func(ctx context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
-			return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), req.Msg.GetRunId(), "reviewer", "session-logs", agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "stored log output\n")}), nil
+			if req.Msg.GetRunId() != runID {
+				t.Fatalf("GetRun request = %#v", req.Msg)
+			}
+			return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: testRunDetail(req.Msg.GetProjectId(), req.Msg.GetRunId(), "reviewer", sandboxID, agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED, 0, "stored log output\n")}), nil
 		},
 	})
 	defer server.Close()
 
-	stdout, stderr, _, exitCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "reviewer", "--sandbox", "session-logs", "--json")
+	stdout, stderr, _, exitCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "reviewer", "--sandbox", identity.ShortID(sandboxID), "--json")
 	if exitCode != 0 {
 		t.Fatalf("logs exit code = %d, stderr=%q", exitCode, stderr)
 	}
@@ -2514,20 +2528,20 @@ agents:
 	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
 		t.Fatalf("logs JSON decode failed: %v\n%s", err, stdout)
 	}
-	if len(decoded.Runs) != 1 || decoded.Runs[0].RunID != "run-logs" || decoded.Runs[0].Content != "stored log output\n" {
+	if len(decoded.Runs) != 1 || decoded.Runs[0].RunID != runID || decoded.Runs[0].Content != "stored log output\n" {
 		t.Fatalf("logs JSON = %#v", decoded)
 	}
-	if !sawList {
+	if !sawFilteredList {
 		t.Fatal("ListRuns was not called")
 	}
 
-	legacyOut, legacyErr, _, legacyCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--agent", "reviewer", "--session-id", "session-logs", "--json")
+	legacyOut, legacyErr, _, legacyCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--agent", "reviewer", "--session-id", sandboxID, "--json")
 	if legacyCode != exitCodeUsage || legacyOut != "" || !strings.Contains(legacyErr, "unknown flag: --session-id") {
 		t.Fatalf("logs --session-id code/stdout/stderr = %d / %q / %q", legacyCode, legacyOut, legacyErr)
 	}
 
-	runOut, runErr, _, runCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--run-id", "run-logs")
-	if runCode != 0 || runErr != "" || runOut != "reviewer-run-logs [2026-06-11T00:00:01.000Z]| stored log output\n" {
+	runOut, runErr, _, runCode := executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--run-id", identity.ShortID(runID))
+	if runCode != 0 || runErr != "" || runOut != "reviewer-run-"+identity.ShortID(runID)+" [2026-06-11T00:00:01.000Z]| stored log output\n" {
 		t.Fatalf("logs --run-id code/stdout/stderr = %d / %q / %q", runCode, runOut, runErr)
 	}
 }
@@ -6408,7 +6422,7 @@ agents:
 			run: runServiceStub{
 				listRuns: func(ctx context.Context, req *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error) {
 					listCalls++
-					if req.Msg.GetAgentName() == "error" {
+					if req.Msg.GetAgentName() == "reviewer" {
 						return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("list unavailable"))
 					}
 					return connect.NewResponse(&agentcomposev2.ListRunsResponse{}), nil
@@ -6428,7 +6442,7 @@ agents:
 		if exitCode != 0 || stderr != "" || !strings.Contains(stdout, `"runs": null`) {
 			t.Fatalf("logs empty json code/stdout/stderr = %d/%q/%q", exitCode, stdout, stderr)
 		}
-		stdout, stderr, _, exitCode = executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--agent", "error")
+		stdout, stderr, _, exitCode = executeCLICommand("logs", "--host", server.URL, "--file", composePath, "--agent", "reviewer")
 		if exitCode != exitCodeUnavailable || stdout != "" || !strings.Contains(stderr, "list unavailable") {
 			t.Fatalf("logs list error code/stdout/stderr = %d/%q/%q", exitCode, stdout, stderr)
 		}
