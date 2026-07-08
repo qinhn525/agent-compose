@@ -2,6 +2,8 @@ package volumes
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,10 +15,16 @@ import (
 )
 
 type fakeStore struct {
-	items map[string]domain.VolumeRecord
+	items       map[string]domain.VolumeRecord
+	createErr   error
+	removeErr   error
+	removedKeys []string
 }
 
 func (s *fakeStore) CreateVolume(_ context.Context, item domain.VolumeRecord) (domain.VolumeRecord, error) {
+	if s.createErr != nil {
+		return domain.VolumeRecord{}, s.createErr
+	}
 	if s.items == nil {
 		s.items = make(map[string]domain.VolumeRecord)
 	}
@@ -61,6 +69,10 @@ func (s *fakeStore) ListVolumes(context.Context, domain.VolumeListOptions) ([]do
 }
 
 func (s *fakeStore) RemoveVolume(_ context.Context, key string) error {
+	if s.removeErr != nil {
+		return s.removeErr
+	}
+	s.removedKeys = append(s.removedKeys, key)
 	item := s.items[key]
 	delete(s.items, item.ID)
 	delete(s.items, item.Name)
@@ -302,6 +314,80 @@ func TestManagerListAndPruneVolumes(t *testing.T) {
 	}
 }
 
+func TestManagerCreateCleansManagedPathWhenStoreCreateFails(t *testing.T) {
+	ctx := context.Background()
+	dataRoot := t.TempDir()
+	store := &fakeStore{createErr: fmt.Errorf("store unavailable")}
+	manager := NewManager(store, LocalDriver{DataRoot: dataRoot})
+	_, err := manager.Create(ctx, domain.VolumeRecord{Name: "cache"})
+	if err == nil {
+		t.Fatal("Create returned nil error")
+	}
+	managedRoot := filepath.Join(dataRoot, "volumes", domain.VolumeDriverLocal)
+	entries, err := os.ReadDir(managedRoot)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read managed root: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("managed root entries after failed create = %#v, want none", entries)
+	}
+}
+
+func TestManagerRemoveKeepsStoreRecordWhenDriverRemoveFails(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeStore{}
+	record, err := store.CreateVolume(ctx, domain.VolumeRecord{ID: "vol-cache", Name: "cache", Driver: domain.VolumeDriverLocal, Path: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+	driverErr := fmt.Errorf("driver remove failed")
+	manager := NewManager(store, fakeDriver{name: domain.VolumeDriverLocal, removeErr: driverErr})
+	err = manager.Remove(ctx, record.Name, false)
+	if !errors.Is(err, driverErr) {
+		t.Fatalf("Remove err = %v, want %v", err, driverErr)
+	}
+	if len(store.removedKeys) != 0 {
+		t.Fatalf("store removed keys = %#v, want none", store.removedKeys)
+	}
+	if loaded, err := store.GetVolume(ctx, record.ID); err != nil || loaded.ID != record.ID {
+		t.Fatalf("volume record after failed remove = %#v err=%v", loaded, err)
+	}
+}
+
+func TestManagerRemoveRejectsActiveSessionVolumeReferences(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeStore{}
+	record, err := store.CreateVolume(ctx, domain.VolumeRecord{ID: "vol-cache", Name: "cache", Driver: domain.VolumeDriverLocal, Path: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+	manager := NewManager(store, LocalDriver{DataRoot: t.TempDir()})
+	manager.Sessions = fakeSessionStore{sessions: []*domain.Session{{
+		Summary: domain.SessionSummary{ID: "session-1", Title: "using cache"},
+		VolumeMounts: []domain.SessionVolumeMount{{
+			ID:       "mount-cache",
+			Type:     domain.VolumeMountTypeVolume,
+			Source:   "cache",
+			Target:   "/cache",
+			VolumeID: record.ID,
+			HostPath: record.Path,
+		}},
+	}}}
+	if err := manager.Remove(ctx, record.Name, true); !errors.Is(err, domain.ErrReferenced) {
+		t.Fatalf("Remove active session volume err = %v, want ErrReferenced", err)
+	}
+	if len(store.removedKeys) != 0 {
+		t.Fatalf("store removed keys = %#v, want none", store.removedKeys)
+	}
+	pruned, err := manager.Prune(ctx, domain.VolumeListOptions{}, true)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if len(pruned.Skipped) != 1 || pruned.Skipped[0].ID != record.ID || len(pruned.Removed) != 0 {
+		t.Fatalf("prune result = %#v, want skipped active session volume", pruned)
+	}
+}
+
 func TestBindResolverRejectsMissingOrFileSource(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "file.txt")
@@ -315,4 +401,41 @@ func TestBindResolverRejectsMissingOrFileSource(t *testing.T) {
 	if _, err := resolver.Resolve("./file.txt"); err == nil {
 		t.Fatal("Resolve file returned nil")
 	}
+}
+
+type fakeDriver struct {
+	name      string
+	removeErr error
+}
+
+func (d fakeDriver) Name() string {
+	return d.name
+}
+
+func (d fakeDriver) Create(_ context.Context, record domain.VolumeRecord) (domain.VolumeRecord, error) {
+	return record, nil
+}
+
+func (d fakeDriver) Inspect(_ context.Context, record domain.VolumeRecord) (domain.VolumeRecord, error) {
+	return record, nil
+}
+
+func (d fakeDriver) Remove(context.Context, domain.VolumeRecord) error {
+	return d.removeErr
+}
+
+func (d fakeDriver) ResolveMountSource(_ context.Context, record domain.VolumeRecord) (string, error) {
+	return record.Path, nil
+}
+
+type fakeSessionStore struct {
+	sessions []*domain.Session
+	err      error
+}
+
+func (s fakeSessionStore) ListSessions(context.Context, domain.SessionListOptions) (domain.SessionListResult, error) {
+	if s.err != nil {
+		return domain.SessionListResult{}, s.err
+	}
+	return domain.SessionListResult{Sessions: s.sessions, TotalCount: len(s.sessions)}, nil
 }

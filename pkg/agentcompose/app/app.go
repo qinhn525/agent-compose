@@ -244,7 +244,9 @@ func NewCacheController(di do.Injector) (*runtimecache.Controller, error) {
 func NewVolumeManager(di do.Injector) (*volumes.Manager, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
 	store := do.MustInvoke[*configstore.ConfigStore](di)
-	return volumes.NewManager(store, volumes.NewLocalDriver(config)), nil
+	manager := volumes.NewManager(store, volumes.NewLocalDriver(config))
+	manager.Sessions = do.MustInvoke[*sessionstore.Store](di)
+	return manager, nil
 }
 
 func NewRuntimeProvider(di do.Injector) (adapters.RuntimeProvider, error) {

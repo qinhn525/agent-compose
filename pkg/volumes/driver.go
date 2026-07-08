@@ -69,8 +69,16 @@ func (d LocalDriver) Remove(_ context.Context, record domain.VolumeRecord) error
 	if path == "" {
 		return fmt.Errorf("local volume path is required")
 	}
-	if err := os.RemoveAll(path); err != nil {
-		return fmt.Errorf("remove local volume path %s: %w", path, err)
+	removePath := path
+	if managedPath := d.dataPath(record.ID); managedPath != "" {
+		absPath, pathErr := filepath.Abs(path)
+		absManagedPath, managedErr := filepath.Abs(managedPath)
+		if pathErr == nil && managedErr == nil && absPath == absManagedPath {
+			removePath = filepath.Dir(absManagedPath)
+		}
+	}
+	if err := os.RemoveAll(removePath); err != nil {
+		return fmt.Errorf("remove local volume path %s: %w", removePath, err)
 	}
 	return nil
 }

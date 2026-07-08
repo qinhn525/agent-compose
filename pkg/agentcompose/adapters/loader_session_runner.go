@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -303,7 +304,12 @@ func (r *LoaderSessionRunner) resolveVolumeMounts(ctx context.Context, loader do
 	if err != nil {
 		return nil, nil, err
 	}
+	projectRoot, err := r.loaderProjectRoot(ctx, loader)
+	if err != nil {
+		return nil, nil, err
+	}
 	return r.Volumes.ResolveMounts(ctx, specs, volumes.ResolveOptions{
+		ProjectRoot:    projectRoot,
 		ProjectVolumes: projectVolumes,
 	})
 }
@@ -321,6 +327,33 @@ func (r *LoaderSessionRunner) loaderProjectVolumes(ctx context.Context, loader d
 		return nil, fmt.Errorf("list loader project volumes %s: %w", projectID, err)
 	}
 	return projectVolumes, nil
+}
+
+func (r *LoaderSessionRunner) loaderProjectRoot(ctx context.Context, loader domain.Loader) (string, error) {
+	projectID := strings.TrimSpace(loader.Summary.ManagedProjectID)
+	if projectID == "" {
+		return "", nil
+	}
+	if r.ConfigDB == nil {
+		return "", fmt.Errorf("config store is required")
+	}
+	project, err := r.ConfigDB.GetProject(ctx, projectID)
+	if err != nil {
+		return "", fmt.Errorf("get loader project %s: %w", projectID, err)
+	}
+	return loaderProjectRoot(project), nil
+}
+
+func loaderProjectRoot(project domain.ProjectRecord) string {
+	sourcePath := strings.TrimSpace(project.SourcePath)
+	if sourcePath == "" {
+		return ""
+	}
+	info, err := os.Stat(sourcePath)
+	if err == nil && info.IsDir() {
+		return sourcePath
+	}
+	return filepath.Dir(sourcePath)
 }
 
 func mergeLoaderVolumeMountSpecs(groups ...[]domain.VolumeMountSpec) ([]domain.VolumeMountSpec, error) {

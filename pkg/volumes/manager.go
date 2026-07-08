@@ -24,6 +24,10 @@ type Store interface {
 	FindVolumeConfigReferences(context.Context, string) ([]domain.VolumeReference, error)
 }
 
+type SessionStore interface {
+	ListSessions(context.Context, domain.SessionListOptions) (domain.SessionListResult, error)
+}
+
 type ProjectVolumeStore interface {
 	UpsertProjectVolume(ctx context.Context, projectID, key, volumeID string, external bool) error
 	ListProjectVolumes(ctx context.Context, projectID string) (map[string]domain.VolumeRecord, error)
@@ -31,9 +35,10 @@ type ProjectVolumeStore interface {
 }
 
 type Manager struct {
-	Store   Store
-	Project ProjectVolumeStore
-	Drivers map[string]Driver
+	Store    Store
+	Sessions SessionStore
+	Project  ProjectVolumeStore
+	Drivers  map[string]Driver
 }
 
 type BindResolver struct {
@@ -75,14 +80,22 @@ func (m *Manager) Create(ctx context.Context, item domain.VolumeRecord) (domain.
 	if err != nil {
 		return domain.VolumeRecord{}, err
 	}
-	if strings.TrimSpace(item.ID) == "" {
+	generatedID := strings.TrimSpace(item.ID) == ""
+	if generatedID {
 		item.ID = uuid.NewString()
 	}
 	prepared, err := driver.Create(ctx, item)
 	if err != nil {
 		return domain.VolumeRecord{}, err
 	}
-	return m.Store.CreateVolume(ctx, prepared)
+	created, err := m.Store.CreateVolume(ctx, prepared)
+	if err != nil {
+		if generatedID && strings.TrimSpace(item.Path) == "" {
+			_ = driver.Remove(ctx, prepared)
+		}
+		return domain.VolumeRecord{}, err
+	}
+	return created, nil
 }
 
 func (m *Manager) Ensure(ctx context.Context, item domain.VolumeRecord) (domain.VolumeRecord, bool, error) {
@@ -143,7 +156,7 @@ func (m *Manager) RemoveProjectVolumes(ctx context.Context, projectID string) er
 	return m.Project.RemoveProjectVolumes(ctx, projectID)
 }
 
-func (m *Manager) Remove(ctx context.Context, nameOrID string, force bool) error {
+func (m *Manager) Remove(ctx context.Context, nameOrID string, _ bool) error {
 	if m == nil || m.Store == nil {
 		return fmt.Errorf("volume store is required")
 	}
@@ -151,21 +164,24 @@ func (m *Manager) Remove(ctx context.Context, nameOrID string, force bool) error
 	if err != nil {
 		return err
 	}
-	if !force {
-		if refs, err := m.Store.FindVolumeConfigReferences(ctx, item.ID); err != nil {
-			return err
-		} else if len(refs) > 0 {
-			return domain.ResourceError(domain.ErrReferenced, "volume", item.Name, fmt.Sprintf("volume %s is still referenced", item.Name), nil)
-		}
+	refs, err := m.findReferences(ctx, item.ID)
+	if err != nil {
+		return err
+	}
+	if len(refs) > 0 {
+		return domain.ResourceError(domain.ErrReferenced, "volume", item.Name, fmt.Sprintf("volume %s is still referenced", item.Name), nil)
 	}
 	driver, err := m.driver(item.Driver)
 	if err != nil {
 		return err
 	}
+	if err := driver.Remove(ctx, item); err != nil {
+		return err
+	}
 	if err := m.Store.RemoveVolume(ctx, item.ID); err != nil {
 		return err
 	}
-	return driver.Remove(ctx, item)
+	return nil
 }
 
 func (m *Manager) Prune(ctx context.Context, options domain.VolumeListOptions, force bool) (PruneResult, error) {
@@ -175,7 +191,7 @@ func (m *Manager) Prune(ctx context.Context, options domain.VolumeListOptions, f
 	}
 	result := PruneResult{DryRun: !force}
 	for _, item := range items {
-		refs, err := m.Store.FindVolumeConfigReferences(ctx, item.ID)
+		refs, err := m.findReferences(ctx, item.ID)
 		if err != nil {
 			return PruneResult{}, err
 		}
@@ -193,6 +209,48 @@ func (m *Manager) Prune(ctx context.Context, options domain.VolumeListOptions, f
 		result.Removed = append(result.Removed, item)
 	}
 	return result, nil
+}
+
+func (m *Manager) findReferences(ctx context.Context, volumeID string) ([]domain.VolumeReference, error) {
+	refs, err := m.Store.FindVolumeConfigReferences(ctx, volumeID)
+	if err != nil {
+		return nil, err
+	}
+	sessionRefs, err := m.findSessionReferences(ctx, volumeID)
+	if err != nil {
+		return nil, err
+	}
+	refs = append(refs, sessionRefs...)
+	return refs, nil
+}
+
+func (m *Manager) findSessionReferences(ctx context.Context, volumeID string) ([]domain.VolumeReference, error) {
+	volumeID = strings.TrimSpace(volumeID)
+	if volumeID == "" || m == nil || m.Sessions == nil {
+		return nil, nil
+	}
+	result, err := m.Sessions.ListSessions(ctx, domain.SessionListOptions{Limit: 1 << 30})
+	if err != nil {
+		return nil, fmt.Errorf("list sessions for volume references: %w", err)
+	}
+	var refs []domain.VolumeReference
+	for _, session := range result.Sessions {
+		if session == nil {
+			continue
+		}
+		for _, mount := range session.VolumeMounts {
+			if strings.TrimSpace(mount.VolumeID) != volumeID {
+				continue
+			}
+			refs = append(refs, domain.VolumeReference{
+				ResourceType: "session",
+				ResourceID:   session.Summary.ID,
+				Name:         session.Summary.Title,
+			})
+			break
+		}
+	}
+	return refs, nil
 }
 
 func (m *Manager) ResolveMounts(ctx context.Context, specs []domain.VolumeMountSpec, options ResolveOptions) ([]domain.SessionVolumeMount, []string, error) {

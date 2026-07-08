@@ -29,20 +29,26 @@ func prepareBoxliteVolumeBridge(session *Session) error {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return fmt.Errorf("create boxlite volume bridge dir: %w", err)
 	}
+	mounted := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if err := ensureBoxliteVolumeBridgeSource(entry.hostPath); err != nil {
+			rollbackBoxliteVolumeBridgeMounts(mounted)
 			return err
 		}
 		if err := ensureBoxliteVolumeBridgeMount(entry.hostBridgePath, entry.hostPath, entry.readOnly); err != nil {
+			rollbackBoxliteVolumeBridgeMounts(append(mounted, entry.hostBridgePath))
 			return err
 		}
+		mounted = append(mounted, entry.hostBridgePath)
 	}
 	return nil
 }
 
 type boxliteVolumeBridgeMountFunc func(sourcePath string, targetPath string, readOnly bool) error
+type boxliteVolumeBridgeUnmountFunc func(targetPath string) error
 
 var boxliteVolumeBridgeMounter boxliteVolumeBridgeMountFunc = mountBoxliteVolumeBridgeSource
+var boxliteVolumeBridgeUnmounter boxliteVolumeBridgeUnmountFunc = unmountBoxliteVolumeBridgeMount
 
 type boxliteVolumeBridgeEntry struct {
 	id             string
@@ -153,6 +159,12 @@ func ensureBoxliteVolumeBridgeMount(bridgePath, sourcePath string, readOnly bool
 	return nil
 }
 
+func rollbackBoxliteVolumeBridgeMounts(paths []string) {
+	for i := len(paths) - 1; i >= 0; i-- {
+		_ = boxliteVolumeBridgeUnmounter(paths[i])
+	}
+}
+
 // CleanupBoxliteVolumeBridgeMounts releases host-side bridge mounts under a
 // session directory. It is safe to call for sessions that do not use BoxLite or
 // do not have volume bridges.
@@ -166,7 +178,7 @@ func CleanupBoxliteVolumeBridgeMounts(sessionDir string) error {
 		return err
 	}
 	for _, mount := range mounts {
-		if err := unmountBoxliteVolumeBridgeMount(mount); err != nil {
+		if err := boxliteVolumeBridgeUnmounter(mount); err != nil {
 			return fmt.Errorf("unmount boxlite volume bridge %s: %w", mount, err)
 		}
 	}

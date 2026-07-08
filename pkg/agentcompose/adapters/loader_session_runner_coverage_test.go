@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	driverpkg "agent-compose/pkg/driver"
@@ -101,6 +102,11 @@ func TestLoaderSessionRunnerResolvesVolumeMounts(t *testing.T) {
 		warnings: []string{"volume target /cache overlaps test path"},
 	}
 	runner := NewLoaderSessionRunner(bridge.config, bridge.store, bridge.configDB, driver, nil, resolver, bridge.streams, nil)
+	projectRoot := t.TempDir()
+	projectPath := filepath.Join(projectRoot, "agent-compose.yml")
+	if _, err := bridge.configDB.UpsertProject(ctx, domain.ProjectRecord{ID: "project-1", Name: "Project", SourcePath: projectPath}); err != nil {
+		t.Fatalf("UpsertProject returned error: %v", err)
+	}
 	projectVolume, err := bridge.configDB.CreateVolume(ctx, domain.VolumeRecord{ID: "vol-request-cache", Name: "project_request-cache", Driver: domain.VolumeDriverLocal, Path: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateVolume returned error: %v", err)
@@ -136,6 +142,9 @@ func TestLoaderSessionRunnerResolvesVolumeMounts(t *testing.T) {
 	}
 	if resolver.options.ProjectVolumes["request-cache"].ID != projectVolume.ID {
 		t.Fatalf("resolver project volumes = %#v", resolver.options.ProjectVolumes)
+	}
+	if resolver.options.ProjectRoot != projectRoot {
+		t.Fatalf("resolver project root = %q, want %q", resolver.options.ProjectRoot, projectRoot)
 	}
 	if len(session.VolumeMounts) != 1 || session.VolumeMounts[0].HostPath != hostPath {
 		t.Fatalf("session volume mounts = %#v", session.VolumeMounts)

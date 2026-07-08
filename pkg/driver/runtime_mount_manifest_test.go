@@ -1,6 +1,8 @@
 package driver
 
 import (
+	"fmt"
+
 	appconfig "agent-compose/pkg/config"
 	"encoding/json"
 	"os"
@@ -295,6 +297,57 @@ func TestPrepareRuntimeMountManifestForBoxliteUsesVolumeBridge(t *testing.T) {
 		if mount.GuestPath == "/cache" {
 			t.Fatalf("boxlite manifest should not contain direct volume mount: %+v", manifest.Mounts)
 		}
+	}
+}
+
+func TestPrepareRuntimeMountManifestForBoxliteRollsBackBridgeMountsOnFailure(t *testing.T) {
+	root := t.TempDir()
+	firstSource := t.TempDir()
+	secondSource := t.TempDir()
+	session := testRuntimeMountSession(root)
+	session.VolumeMounts = []SessionVolumeMount{
+		{
+			ID:       "mount-first",
+			Type:     "bind",
+			Source:   "./first",
+			Target:   "/first",
+			HostPath: firstSource,
+		},
+		{
+			ID:       "mount-second",
+			Type:     "bind",
+			Source:   "./second",
+			Target:   "/second",
+			HostPath: secondSource,
+		},
+	}
+	var mounted []string
+	var unmounted []string
+	originalMounter := boxliteVolumeBridgeMounter
+	originalUnmounter := boxliteVolumeBridgeUnmounter
+	boxliteVolumeBridgeMounter = func(_, targetPath string, _ bool) error {
+		mounted = append(mounted, targetPath)
+		if len(mounted) == 2 {
+			return fmt.Errorf("mount failed")
+		}
+		return nil
+	}
+	boxliteVolumeBridgeUnmounter = func(targetPath string) error {
+		unmounted = append(unmounted, targetPath)
+		return nil
+	}
+	t.Cleanup(func() {
+		boxliteVolumeBridgeMounter = originalMounter
+		boxliteVolumeBridgeUnmounter = originalUnmounter
+	})
+	_, err := prepareRuntimeMountManifest(testRuntimeMountConfig(), session, RuntimeDriverBoxlite)
+	if err == nil {
+		t.Fatal("prepareRuntimeMountManifest returned nil error")
+	}
+	firstBridge := filepath.Join(root, "volumes", "mount-first")
+	secondBridge := filepath.Join(root, "volumes", "mount-second")
+	if len(unmounted) != 2 || unmounted[0] != secondBridge || unmounted[1] != firstBridge {
+		t.Fatalf("rollback unmounted = %#v, want [%s %s]", unmounted, secondBridge, firstBridge)
 	}
 }
 
