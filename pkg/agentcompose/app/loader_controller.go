@@ -62,7 +62,7 @@ func NewLoaderController(di do.Injector) (*loaders.Controller, error) {
 				SessionRPC:              do.MustInvoke[*adapters.SandboxRPCBridge](di),
 				Publisher:               controller,
 				CommandRequiresCleanup:  loaders.CommandRequestRequiresCleanup,
-				LinkedSessionIDFromJSON: adapters.LoaderSessionRPCLinkedSessionID,
+				LinkedSandboxIDFromJSON: adapters.LoaderSandboxRPCLinkedSandboxID,
 			}, loader, run, triggerEvent)
 		},
 	})

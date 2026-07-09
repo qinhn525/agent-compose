@@ -15,18 +15,18 @@ type LoaderHostEvents struct {
 	Controller *loaders.Controller
 }
 
-func (e LoaderHostEvents) Add(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentThreadID string) error {
+func (e LoaderHostEvents) Add(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSandboxID, linkedCellID, linkedAgentThreadID string) error {
 	if e.Controller == nil {
 		return fmt.Errorf("loader controller is unavailable")
 	}
-	return e.Controller.AddLoaderEvent(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentThreadID)
+	return e.Controller.AddLoaderEvent(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSandboxID, linkedCellID, linkedAgentThreadID)
 }
 
-func (e LoaderHostEvents) AddRecord(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentThreadID string) (domain.LoaderEvent, error) {
+func (e LoaderHostEvents) AddRecord(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSandboxID, linkedCellID, linkedAgentThreadID string) (domain.LoaderEvent, error) {
 	if e.Controller == nil {
 		return domain.LoaderEvent{}, fmt.Errorf("loader controller is unavailable")
 	}
-	return e.Controller.AddLoaderEventRecord(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentThreadID)
+	return e.Controller.AddLoaderEventRecord(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSandboxID, linkedCellID, linkedAgentThreadID)
 }
 
 type LoaderHostAgentExecutor struct {
@@ -80,17 +80,17 @@ func (r LoaderHostLLMRunner) Generate(ctx context.Context, prompt, model, output
 	}, nil
 }
 
-func LoaderSessionRPCLinkedSessionID(method, requestJSON, responseJSON string) string {
-	if value := loaderSessionIDFromJSON(responseJSON); value != "" {
+func LoaderSandboxRPCLinkedSandboxID(method, requestJSON, responseJSON string) string {
+	if value := loaderSandboxIDFromJSON(responseJSON); value != "" {
 		return value
 	}
 	if strings.TrimSpace(method) == "ListSessions" {
 		return ""
 	}
-	return loaderSessionIDFromJSON(requestJSON)
+	return loaderSandboxIDFromJSON(requestJSON)
 }
 
-func loaderSessionIDFromJSON(raw string) string {
+func loaderSandboxIDFromJSON(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""

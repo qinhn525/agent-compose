@@ -23,8 +23,8 @@ type HostStore interface {
 }
 
 type HostEventRecorder interface {
-	Add(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentThreadID string) error
-	AddRecord(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentThreadID string) (domain.LoaderEvent, error)
+	Add(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSandboxID, linkedCellID, linkedAgentThreadID string) error
+	AddRecord(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSandboxID, linkedCellID, linkedAgentThreadID string) (domain.LoaderEvent, error)
 }
 
 type HostSessionRunner interface {
@@ -94,7 +94,7 @@ type RunHostDependencies struct {
 	SessionRPC              HostSessionRPC
 	Publisher               HostPublisher
 	CommandRequiresCleanup  func(loader domain.Loader, request domain.LoaderCommandRequest) bool
-	LinkedSessionIDFromJSON func(method, requestJSON, responseJSON string) string
+	LinkedSandboxIDFromJSON func(method, requestJSON, responseJSON string) string
 }
 
 type RuntimeHost struct {
@@ -162,14 +162,14 @@ func (h *RuntimeHost) CallSessionRPC(ctx context.Context, method, requestJSON st
 	method = strings.TrimSpace(method)
 	requestJSON = strings.TrimSpace(requestJSON)
 	responseJSON, err := h.deps.SessionRPC.CallJSONWithSource(ctx, method, requestJSON, domain.SandboxTypeScript+":"+h.loader.Summary.ID)
-	linkedSessionID := h.linkedSessionID(method, requestJSON, responseJSON)
+	linkedSandboxID := h.linkedSandboxID(method, requestJSON, responseJSON)
 	if err != nil {
-		event, _ := h.addLoaderEventRecord(ctx, "loader.sandbox.rpc.failed", "error", firstHostNonEmpty(err.Error(), fmt.Sprintf("%s failed", method)), map[string]any{"method": method, "requestJson": requestJSON}, linkedSessionID, "", "")
-		h.addEventSandboxLink(ctx, event, linkedSessionID, "sandbox_rpc_failed")
+		event, _ := h.addLoaderEventRecord(ctx, "loader.sandbox.rpc.failed", "error", firstHostNonEmpty(err.Error(), fmt.Sprintf("%s failed", method)), map[string]any{"method": method, "requestJson": requestJSON}, linkedSandboxID, "", "")
+		h.addEventSandboxLink(ctx, event, linkedSandboxID, "sandbox_rpc_failed")
 		return "", err
 	}
-	event, _ := h.addLoaderEventRecord(ctx, "loader.sandbox.rpc.completed", "info", fmt.Sprintf("%s completed", method), map[string]any{"method": method, "requestJson": requestJSON, "responseJson": responseJSON}, linkedSessionID, "", "")
-	h.addEventSandboxLink(ctx, event, linkedSessionID, "sandbox_rpc_completed")
+	event, _ := h.addLoaderEventRecord(ctx, "loader.sandbox.rpc.completed", "info", fmt.Sprintf("%s completed", method), map[string]any{"method": method, "requestJson": requestJSON, "responseJson": responseJSON}, linkedSandboxID, "", "")
+	h.addEventSandboxLink(ctx, event, linkedSandboxID, "sandbox_rpc_completed")
 	return responseJSON, nil
 }
 
@@ -392,36 +392,36 @@ func (h *RuntimeHost) trackCommandSession(sessionID string, cleanup bool) {
 	h.commandSessionIDOrder = append(h.commandSessionIDOrder, sessionID)
 }
 
-func (h *RuntimeHost) addLoaderEvent(ctx context.Context, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentThreadID string) error {
+func (h *RuntimeHost) addLoaderEvent(ctx context.Context, eventType, level, message string, payload any, linkedSandboxID, linkedCellID, linkedAgentThreadID string) error {
 	if h.deps.Events == nil {
 		return nil
 	}
-	return h.deps.Events.Add(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentThreadID)
+	return h.deps.Events.Add(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, eventType, level, message, payload, linkedSandboxID, linkedCellID, linkedAgentThreadID)
 }
 
-func (h *RuntimeHost) addLoaderEventRecord(ctx context.Context, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentThreadID string) (domain.LoaderEvent, error) {
+func (h *RuntimeHost) addLoaderEventRecord(ctx context.Context, eventType, level, message string, payload any, linkedSandboxID, linkedCellID, linkedAgentThreadID string) (domain.LoaderEvent, error) {
 	if h.deps.Events == nil {
 		return domain.LoaderEvent{}, nil
 	}
-	return h.deps.Events.AddRecord(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentThreadID)
+	return h.deps.Events.AddRecord(ctx, h.loader.Summary.ID, h.run.ID, h.run.TriggerID, eventType, level, message, payload, linkedSandboxID, linkedCellID, linkedAgentThreadID)
 }
 
-func (h *RuntimeHost) addLinkedLoaderEvent(ctx context.Context, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentThreadID string) error {
-	event, err := h.addLoaderEventRecord(ctx, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentThreadID)
+func (h *RuntimeHost) addLinkedLoaderEvent(ctx context.Context, eventType, level, message string, payload any, linkedSandboxID, linkedCellID, linkedAgentThreadID string) error {
+	event, err := h.addLoaderEventRecord(ctx, eventType, level, message, payload, linkedSandboxID, linkedCellID, linkedAgentThreadID)
 	if err != nil {
 		return err
 	}
-	h.addEventSandboxLink(ctx, event, linkedSessionID, event.Type)
+	h.addEventSandboxLink(ctx, event, linkedSandboxID, event.Type)
 	return nil
 }
 
-func (h *RuntimeHost) addEventSandboxLink(ctx context.Context, event domain.LoaderEvent, sessionID, relation string) {
-	if h.deps.Store == nil || strings.TrimSpace(sessionID) == "" || h.triggerEvent.EventID == "" {
+func (h *RuntimeHost) addEventSandboxLink(ctx context.Context, event domain.LoaderEvent, sandboxID, relation string) {
+	if h.deps.Store == nil || strings.TrimSpace(sandboxID) == "" || h.triggerEvent.EventID == "" {
 		return
 	}
 	if err := h.deps.Store.AddEventSandboxLink(ctx, domain.EventSandboxLink{
 		EventID:       h.triggerEvent.EventID,
-		SandboxID:     sessionID,
+		SandboxID:     sandboxID,
 		Relation:      relation,
 		LoaderID:      h.loader.Summary.ID,
 		RunID:         h.run.ID,
@@ -429,7 +429,7 @@ func (h *RuntimeHost) addEventSandboxLink(ctx context.Context, event domain.Load
 		LoaderEventID: event.ID,
 		CreatedAt:     event.CreatedAt,
 	}); err != nil {
-		slog.Warn("failed to add event sandbox link", "event_id", h.triggerEvent.EventID, "sandbox_id", sessionID, "run_id", h.run.ID, "error", err)
+		slog.Warn("failed to add event sandbox link", "event_id", h.triggerEvent.EventID, "sandbox_id", sandboxID, "run_id", h.run.ID, "error", err)
 	}
 }
 
@@ -462,11 +462,11 @@ func (h *RuntimeHost) commandRequiresCleanup(request domain.LoaderCommandRequest
 	return h.deps.CommandRequiresCleanup(h.loader, request)
 }
 
-func (h *RuntimeHost) linkedSessionID(method, requestJSON, responseJSON string) string {
-	if h.deps.LinkedSessionIDFromJSON == nil {
+func (h *RuntimeHost) linkedSandboxID(method, requestJSON, responseJSON string) string {
+	if h.deps.LinkedSandboxIDFromJSON == nil {
 		return ""
 	}
-	return h.deps.LinkedSessionIDFromJSON(method, requestJSON, responseJSON)
+	return h.deps.LinkedSandboxIDFromJSON(method, requestJSON, responseJSON)
 }
 
 func AgentRequestOverridesSession(request domain.LoaderAgentRequest, includeTitle bool) bool {

@@ -56,6 +56,7 @@ func RegisterDependencies(di do.Injector) {
 	do.Provide(di, NewRuntimeProvider)
 	do.Provide(di, NewLLMClient)
 	do.Provide(di, NewCapabilityProvider)
+	do.Provide(di, NewCapabilitySandboxResolver)
 	do.Provide(di, NewImageBackends)
 	do.Provide(di, NewCacheController)
 	do.Provide(di, NewVolumeManager)
@@ -196,6 +197,7 @@ func StartBackground(di do.Injector) error {
 		do.MustInvoke[*loaders.Controller](di),
 		do.MustInvoke[*events.Dispatcher](di),
 		do.MustInvoke[*capproxy.Server](di),
+		do.MustInvoke[*adapters.CapabilitySandboxResolver](di),
 	)
 }
 
@@ -203,7 +205,7 @@ func NewCapProxyServer(di do.Injector) (*capproxy.Server, error) {
 	return adapters.NewCapProxyServer(
 		do.MustInvoke[*appconfig.Config](di),
 		do.MustInvoke[*configstore.ConfigStore](di),
-		adapters.NewCapabilitySessionResolver(do.MustInvoke[*sessionstore.Store](di)),
+		do.MustInvoke[*adapters.CapabilitySandboxResolver](di),
 	), nil
 }
 
@@ -314,6 +316,7 @@ func NewLoaderSandboxRunner(di do.Injector) (*adapters.LoaderSandboxRunner, erro
 		do.MustInvoke[*volumes.Manager](di),
 		do.MustInvoke[*sessions.StreamBroker](di),
 		do.MustInvoke[*loaders.Bus](di),
+		do.MustInvoke[*adapters.CapabilitySandboxResolver](di),
 	), nil
 }
 
@@ -328,6 +331,7 @@ func NewSandboxRPCBridge(di do.Injector) (*adapters.SandboxRPCBridge, error) {
 		do.MustInvoke[*loaders.Bus](di),
 		do.MustInvoke[*sessions.StreamBroker](di),
 		do.MustInvoke[capabilities.Provider](di),
+		do.MustInvoke[*adapters.CapabilitySandboxResolver](di),
 		dashboard,
 	), nil
 }
@@ -339,6 +343,10 @@ func NewConfigStore(di do.Injector) (*configstore.ConfigStore, error) {
 func NewCapabilityProvider(di do.Injector) (capabilities.Provider, error) {
 	conf := do.MustInvoke[*appconfig.Config](di)
 	return adapters.NewCapabilityProvider(do.MustInvoke[*configstore.ConfigStore](di), conf.CapGRPCTarget), nil
+}
+
+func NewCapabilitySandboxResolver(di do.Injector) (*adapters.CapabilitySandboxResolver, error) {
+	return adapters.NewCapabilitySandboxResolver(do.MustInvoke[*sessionstore.Store](di)), nil
 }
 
 func NewEventDispatcher(di do.Injector) (*events.Dispatcher, error) {

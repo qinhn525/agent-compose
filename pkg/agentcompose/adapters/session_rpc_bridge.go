@@ -39,10 +39,11 @@ type SandboxRPCBridge struct {
 	bus       *loaders.Bus
 	streams   *sessions.StreamBroker
 	cap       capabilities.Provider
+	capTokens *CapabilitySandboxResolver
 	dashboard *dashboard.Hub
 }
 
-func NewSandboxRPCBridge(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, driver sessions.SandboxDriver, runtimes RuntimeProvider, bus *loaders.Bus, streams *sessions.StreamBroker, cap capabilities.Provider, dashboard *dashboard.Hub) *SandboxRPCBridge {
+func NewSandboxRPCBridge(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, driver sessions.SandboxDriver, runtimes RuntimeProvider, bus *loaders.Bus, streams *sessions.StreamBroker, cap capabilities.Provider, capTokens *CapabilitySandboxResolver, dashboard *dashboard.Hub) *SandboxRPCBridge {
 	return &SandboxRPCBridge{
 		config:    config,
 		store:     store,
@@ -52,6 +53,7 @@ func NewSandboxRPCBridge(config *appconfig.Config, store *sessionstore.Store, co
 		bus:       bus,
 		streams:   streams,
 		cap:       cap,
+		capTokens: capTokens,
 		dashboard: dashboard,
 	}
 }
@@ -181,7 +183,7 @@ func (b *SandboxRPCBridge) createSession(ctx context.Context, req *connect.Reque
 	envItems = domain.MergeEnvItems(globalEnvItems, envItems)
 	providerEnvItems := envItems
 	envItems = llms.FilterPersistedRuntimeEnv(envItems)
-	capabilityVars, capabilityTags := capabilities.BuildGatewaySessionVars(capabilities.ProxyTarget(b.cap), req.Msg.GetCapsetIds())
+	capabilityVars, capabilityTags := capabilities.BuildGatewaySandboxVars(capabilities.ProxyTarget(b.cap), req.Msg.GetCapsetIds())
 	envItems = domain.MergeEnvItems(envItems, capabilityVars)
 	tags = append(tags, capabilityTags...)
 
@@ -238,6 +240,7 @@ func (b *SandboxRPCBridge) createSession(ctx context.Context, req *connect.Reque
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	domain.RestoreSandboxTransientFields(loaded, session)
+	b.indexCapabilitySandbox(loaded)
 	b.publishLoaderTopic("agent-compose.session.created", loaders.SessionTopicPayload(loaded, source))
 	return connect.NewResponse(&agentcomposev1.SessionResponse{Session: api.SessionDetailToProto(loaded)}), nil
 }
@@ -251,16 +254,21 @@ func (b *SandboxRPCBridge) resumeSession(ctx context.Context, req *connect.Reque
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
-	loaded, err := b.sessionLifecycle().ResumeLoaded(ctx, session, capabilities.SessionCapsets(session))
+	loaded, err := b.sessionLifecycle().ResumeLoaded(ctx, session, capabilities.SandboxCapsets(session))
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+	b.indexCapabilitySandbox(loaded)
 	b.publishLoaderTopic("agent-compose.session.resumed", loaders.SessionTopicPayload(loaded, source))
 	return connect.NewResponse(&agentcomposev1.SessionResponse{Session: api.SessionDetailToProto(loaded)}), nil
 }
 
 func (b *SandboxRPCBridge) ReconcileRuntimeState(ctx context.Context, session *domain.Sandbox) (*domain.Sandbox, error) {
-	return b.sessionLifecycle().ReconcileRuntimeState(ctx, session)
+	reconciled, err := b.sessionLifecycle().ReconcileRuntimeState(ctx, session)
+	if err == nil && reconciled != nil && reconciled.Summary.VMStatus != domain.VMStatusRunning {
+		b.revokeCapabilitySandbox(reconciled.Summary.ID)
+	}
+	return reconciled, err
 }
 
 func (b *SandboxRPCBridge) StopSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
@@ -278,16 +286,30 @@ func (b *SandboxRPCBridge) stopSession(ctx context.Context, req *connect.Request
 		session = reconciled
 	}
 	if session.Summary.VMStatus != domain.VMStatusRunning {
+		b.revokeCapabilitySandbox(session.Summary.ID)
 		return connect.NewResponse(&agentcomposev1.SessionResponse{Session: api.SessionDetailToProto(session)}), nil
 	}
 	loaded, stopped, err := b.sessionLifecycle().StopLoaded(ctx, session)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+	b.revokeCapabilitySandbox(loaded.Summary.ID)
 	if stopped {
 		b.publishLoaderTopic("agent-compose.session.stopped", loaders.SessionTopicPayload(loaded, source))
 	}
 	return connect.NewResponse(&agentcomposev1.SessionResponse{Session: api.SessionDetailToProto(loaded)}), nil
+}
+
+func (b *SandboxRPCBridge) indexCapabilitySandbox(session *domain.Sandbox) {
+	if b != nil && b.capTokens != nil {
+		b.capTokens.IndexSandbox(session)
+	}
+}
+
+func (b *SandboxRPCBridge) revokeCapabilitySandbox(sandboxID string) {
+	if b != nil && b.capTokens != nil {
+		b.capTokens.RevokeSandbox(sandboxID)
+	}
 }
 
 func (b *SandboxRPCBridge) GetSession(ctx context.Context, req *connect.Request[agentcomposev1.SessionIDRequest]) (*connect.Response[agentcomposev1.SessionResponse], error) {
@@ -422,7 +444,7 @@ func writeCapabilityGuide(ctx context.Context, provider capabilities.Provider, s
 	if len(ids) == 0 || provider == nil || session == nil {
 		return
 	}
-	catalogPath := capabilities.SessionGuidePath(session)
+	catalogPath := capabilities.SandboxGuidePath(session)
 	if catalogPath == "" {
 		return
 	}

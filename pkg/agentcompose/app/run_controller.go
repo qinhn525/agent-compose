@@ -48,6 +48,7 @@ func NewRunController(di do.Injector) (*runs.Controller, error) {
 		Streams:      do.MustInvoke[*sessions.StreamBroker](di),
 		Bus:          do.MustInvoke[*loaders.Bus](di),
 		Dashboard:    dashboardHub,
+		CapTokens:    do.MustInvoke[*adapters.CapabilitySandboxResolver](di),
 	}), nil
 }
 

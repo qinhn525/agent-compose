@@ -14,7 +14,7 @@ func TestIntegrationAdapterRuntimeWorkflows(t *testing.T) {
 	t.Run("runtime liveness", TestSandboxRuntimeLivenessAndNotifierBranches)
 	t.Run("capability guide http", TestSandboxRPCBridgeCapabilityGuideFromHTTPProvider)
 	t.Run("adapter helpers", TestAdapterHelperCoverage)
-	t.Run("capability session resolver", TestCapabilitySessionResolverCoverage)
+	t.Run("capability sandbox resolver", TestCapabilitySandboxResolverCoverage)
 }
 
 func TestE2EAdapterRuntimeWorkflows(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"agent-compose/pkg/agentcompose/adapters"
 	"agent-compose/pkg/capproxy"
 	"agent-compose/pkg/events"
 	"agent-compose/pkg/execution"
@@ -28,12 +29,17 @@ type backgroundLoaderManager interface {
 	Start()
 }
 
-func startBackgroundManagers(ctx context.Context, sandboxes *sessionstore.Store, configDB *configstore.ConfigStore, bridge runtimeReconciler, loaders backgroundLoaderManager, events *events.Dispatcher, capProxy *capproxy.Server) error {
+func startBackgroundManagers(ctx context.Context, sandboxes *sessionstore.Store, configDB *configstore.ConfigStore, bridge runtimeReconciler, loaders backgroundLoaderManager, events *events.Dispatcher, capProxy *capproxy.Server, capTokens *adapters.CapabilitySandboxResolver) error {
 	startedAt := time.Now().UTC()
 	reconcileCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := reconcilePersistedSandboxes(reconcileCtx, sandboxes, configDB, bridge, startedAt); err != nil {
 		slog.Warn("failed to reconcile persisted sandbox state on startup", "error", err)
+	}
+	if capTokens != nil {
+		if err := capTokens.Rebuild(reconcileCtx); err != nil {
+			slog.Warn("failed to rebuild capability sandbox token index on startup", "error", err)
+		}
 	}
 	loaders.Start()
 	events.Start()

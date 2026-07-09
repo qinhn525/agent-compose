@@ -133,8 +133,8 @@ func (c *Controller) init() {
 			WriteArtifact: c.WriteRunArtifact,
 			EnterRun:      c.EnterRun,
 			LeaveRun:      c.LeaveRun,
-			AddLoaderEvent: func(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentThreadID string) error {
-				return c.AddLoaderEvent(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentThreadID)
+			AddLoaderEvent: func(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSandboxID, linkedCellID, linkedAgentThreadID string) error {
+				return c.AddLoaderEvent(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSandboxID, linkedCellID, linkedAgentThreadID)
 			},
 			UpdateTriggerEventDelivery: c.UpdateTriggerEventDelivery,
 			Notify:                     c.notify,
@@ -483,12 +483,12 @@ func (c *Controller) AnyTargetBusy(targets []EventTarget) bool {
 	return AnyTargetBusy(targets, c.running)
 }
 
-func (c *Controller) AddLoaderEvent(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentThreadID string) error {
-	_, err := c.AddLoaderEventRecord(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSessionID, linkedCellID, linkedAgentThreadID)
+func (c *Controller) AddLoaderEvent(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSandboxID, linkedCellID, linkedAgentThreadID string) error {
+	_, err := c.AddLoaderEventRecord(ctx, loaderID, runID, triggerID, eventType, level, message, payload, linkedSandboxID, linkedCellID, linkedAgentThreadID)
 	return err
 }
 
-func (c *Controller) AddLoaderEventRecord(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSessionID, linkedCellID, linkedAgentThreadID string) (domain.LoaderEvent, error) {
+func (c *Controller) AddLoaderEventRecord(ctx context.Context, loaderID, runID, triggerID, eventType, level, message string, payload any, linkedSandboxID, linkedCellID, linkedAgentThreadID string) (domain.LoaderEvent, error) {
 	payloadJSON, err := domain.MarshalJSONCompact(payload)
 	if err != nil {
 		return domain.LoaderEvent{}, err
@@ -502,7 +502,7 @@ func (c *Controller) AddLoaderEventRecord(ctx context.Context, loaderID, runID, 
 		Level:               firstNonEmpty(strings.TrimSpace(level), "info"),
 		Message:             strings.TrimSpace(message),
 		PayloadJSON:         payloadJSON,
-		LinkedSandboxID:     strings.TrimSpace(linkedSessionID),
+		LinkedSandboxID:     strings.TrimSpace(linkedSandboxID),
 		LinkedCellID:        strings.TrimSpace(linkedCellID),
 		LinkedAgentThreadID: strings.TrimSpace(linkedAgentThreadID),
 		CreatedAt:           c.now(),

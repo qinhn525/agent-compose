@@ -273,9 +273,9 @@ func testConfigStoreProjectCRUDCoverageWorkflows(t *testing.T) {
 		t.Fatalf("CreateProjectRun returned error: %v", err)
 	}
 	run.Status = domain.ProjectRunStatusRunning
-	run.SandboxID = "session-1"
+	run.SandboxID = "sandbox-1"
 	run.StartedAt = time.Now().UTC()
-	if run, err = store.UpdateProjectRun(ctx, run); err != nil || run.SandboxID != "session-1" {
+	if run, err = store.UpdateProjectRun(ctx, run); err != nil || run.SandboxID != "sandbox-1" {
 		t.Fatalf("UpdateProjectRun run=%#v err=%v", run, err)
 	}
 	if _, err := store.UpdateProjectRun(ctx, domain.ProjectRunRecord{RunID: "missing-run", ProjectID: project.ID, ResultJSON: "{}"}); !errors.Is(err, domain.ErrNotFound) {
@@ -293,13 +293,13 @@ func testConfigStoreProjectCRUDCoverageWorkflows(t *testing.T) {
 	if runs, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{Limit: 500, Offset: -1}); err != nil || len(runs) != 1 {
 		t.Fatalf("ListProjectRunsByOptions unfiltered runs=%#v err=%v", runs, err)
 	}
-	if runs, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{ProjectID: project.ID, AgentName: "worker", SandboxID: "session-1", SchedulerID: scheduler.SchedulerID, Status: domain.ProjectRunStatusRunning, Source: domain.ProjectRunSourceAPI, Limit: 10}); err != nil || len(runs) != 1 {
+	if runs, err := store.ListProjectRunsByOptions(ctx, domain.ProjectRunListOptions{ProjectID: project.ID, AgentName: "worker", SandboxID: "sandbox-1", SchedulerID: scheduler.SchedulerID, Status: domain.ProjectRunStatusRunning, Source: domain.ProjectRunSourceAPI, Limit: 10}); err != nil || len(runs) != 1 {
 		t.Fatalf("ListProjectRunsByOptions runs=%#v err=%v", runs, err)
 	}
-	if runs, err := store.ListProjectSandboxRuns(ctx, domain.ProjectSandboxRelationFilter{ProjectID: project.ID, AgentName: "worker", SandboxID: "session-1", Statuses: []string{domain.ProjectRunStatusRunning}, Limit: 10}); err != nil || len(runs) != 1 {
+	if runs, err := store.ListProjectSandboxRuns(ctx, domain.ProjectSandboxRelationFilter{ProjectID: project.ID, AgentName: "worker", SandboxID: "sandbox-1", Statuses: []string{domain.ProjectRunStatusRunning}, Limit: 10}); err != nil || len(runs) != 1 {
 		t.Fatalf("ListProjectSandboxRuns runs=%#v err=%v", runs, err)
 	}
-	if runs, err := store.ListProjectRunsForSandbox(ctx, "session-1"); err != nil || len(runs) != 1 {
+	if runs, err := store.ListProjectRunsForSandbox(ctx, "sandbox-1"); err != nil || len(runs) != 1 {
 		t.Fatalf("ListProjectRunsForSandbox runs=%#v err=%v", runs, err)
 	}
 	if _, err := store.MarkProjectRemoved(ctx, ""); err == nil {
@@ -495,13 +495,13 @@ func testConfigStoreTopicEventCoverageWorkflows(t *testing.T) {
 	if deliveries, err := store.ListEventDeliveries(ctx, []string{"", event.ID, event.ID}); err != nil || len(deliveries) != 1 {
 		t.Fatalf("ListEventDeliveries deliveries=%#v err=%v", deliveries, err)
 	}
-	if err := store.AddEventSandboxLink(ctx, domain.EventSandboxLink{EventID: event.ID, SandboxID: "session-1", Relation: "created", LoaderID: "loader-1", RunID: "run-1", TriggerID: "trigger-1", LoaderEventID: "loader-event-1"}); err != nil {
+	if err := store.AddEventSandboxLink(ctx, domain.EventSandboxLink{EventID: event.ID, SandboxID: "sandbox-1", Relation: "created", LoaderID: "loader-1", RunID: "run-1", TriggerID: "trigger-1", LoaderEventID: "loader-event-1"}); err != nil {
 		t.Fatalf("AddEventSandboxLink returned error: %v", err)
 	}
 	if err := store.AddEventSandboxLink(ctx, domain.EventSandboxLink{}); err == nil {
 		t.Fatalf("AddEventSandboxLink empty link returned nil error")
 	}
-	if links, err := store.ListEventSandboxLinks(ctx, []string{event.ID}); err != nil || len(links) != 1 {
+	if links, err := store.ListEventSandboxLinks(ctx, []string{event.ID}); err != nil || len(links) != 1 || links[0].SandboxID != "sandbox-1" {
 		t.Fatalf("ListEventSandboxLinks links=%#v err=%v", links, err)
 	}
 	if links, err := store.ListEventSandboxLinks(ctx, nil); err != nil || len(links) != 0 {
@@ -754,10 +754,10 @@ func testConfigStoreCRUDCoverageWorkflows(t *testing.T) {
 	if err := store.SetLoaderState(ctx, "", "key", `{}`); err == nil {
 		t.Fatalf("SetLoaderState empty loader returned nil error")
 	}
-	if err := store.UpsertLoaderBinding(ctx, domain.LoaderBinding{LoaderID: loader.Summary.ID, SandboxID: "session-1"}); err != nil {
+	if err := store.UpsertLoaderBinding(ctx, domain.LoaderBinding{LoaderID: loader.Summary.ID, SandboxID: "sandbox-1"}); err != nil {
 		t.Fatalf("UpsertLoaderBinding returned error: %v", err)
 	}
-	if binding, found, err := store.GetLoaderBinding(ctx, loader.Summary.ID); err != nil || !found || binding.SandboxID != "session-1" {
+	if binding, found, err := store.GetLoaderBinding(ctx, loader.Summary.ID); err != nil || !found || binding.SandboxID != "sandbox-1" {
 		t.Fatalf("GetLoaderBinding binding=%#v found=%v err=%v", binding, found, err)
 	}
 	if binding, found, err := store.GetLoaderBinding(ctx, "missing"); err != nil || found || binding.LoaderID != "" {
@@ -787,13 +787,13 @@ func testConfigStoreCRUDCoverageWorkflows(t *testing.T) {
 	}
 	rawToken := "raw-token"
 	hash, fingerprint := llms.HashFacadeToken(rawToken)
-	if err := store.SaveLLMFacadeToken(ctx, llms.FacadeToken{SandboxID: "session-1", TokenHash: hash, TokenFingerprint: fingerprint, Model: "model-1", ProviderID: "provider-1"}); err != nil {
+	if err := store.SaveLLMFacadeToken(ctx, llms.FacadeToken{SandboxID: "sandbox-1", TokenHash: hash, TokenFingerprint: fingerprint, Model: "model-1", ProviderID: "provider-1"}); err != nil {
 		t.Fatalf("SaveLLMFacadeToken returned error: %v", err)
 	}
-	if token, err := store.GetLLMFacadeToken(ctx, rawToken); err != nil || token.SandboxID != "session-1" {
+	if token, err := store.GetLLMFacadeToken(ctx, rawToken); err != nil || token.SandboxID != "sandbox-1" {
 		t.Fatalf("GetLLMFacadeToken token=%#v err=%v", token, err)
 	}
-	if err := store.RevokeLLMFacadeTokensForSandbox(ctx, "session-1"); err != nil {
+	if err := store.RevokeLLMFacadeTokensForSandbox(ctx, "sandbox-1"); err != nil {
 		t.Fatalf("RevokeLLMFacadeTokensForSandbox returned error: %v", err)
 	}
 	if err := store.DeleteLLMFacadeToken(ctx, rawToken); err != nil {
@@ -840,7 +840,7 @@ func testConfigStoreLLMBootstrapResolveCoverage(t *testing.T, ctx context.Contex
 	if target.Provider.ID != llms.ProviderIDDefaultOpenAI || target.Provider.APIKey != "global-key" || target.Model.ID != "global-model" || target.WireAPI != llms.APIProtocolChatCompletions {
 		t.Fatalf("OpenAI resolved target = %#v", target)
 	}
-	runtimeTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, "session-1", llms.ProviderFamilyOpenAI, "session-model", "", []domain.SandboxEnvVar{
+	runtimeTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, "sandbox-1", llms.ProviderFamilyOpenAI, "session-model", "", []domain.SandboxEnvVar{
 		{Name: "LLM_API_ENDPOINT", Value: "https://session.example/v1"},
 		{Name: "LLM_API_KEY", Value: "session-key", Secret: true},
 		{Name: "LLM_MODEL", Value: "session-model"},
@@ -854,7 +854,7 @@ func testConfigStoreLLMBootstrapResolveCoverage(t *testing.T, ctx context.Contex
 	if llms.HasEnabledLLMProviderID(ctx, store, runtimeTarget.Provider.ID) != true {
 		t.Fatalf("expected session provider to be enabled")
 	}
-	reusedRuntimeTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, "session-1", llms.ProviderFamilyOpenAI, "session-model", "", nil)
+	reusedRuntimeTarget, err := llms.ResolveRuntimeLLMTargetWithEnv(ctx, config, store, "sandbox-1", llms.ProviderFamilyOpenAI, "session-model", "", nil)
 	if err != nil || reusedRuntimeTarget.Provider.ID != runtimeTarget.Provider.ID {
 		t.Fatalf("reused session OpenAI target=%#v err=%v", reusedRuntimeTarget, err)
 	}

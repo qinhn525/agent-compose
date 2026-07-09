@@ -728,25 +728,41 @@
       - `pkg/storage/configstore` sticky binding schema 已是 `loader_id -> sandbox_id`，本任务未做 schema 变更。
     - 下一目标：8.3。
 
-- [ ] 8.3 迁移 capability token 和 topic event link
+- [x] 8.3 迁移 capability token 和 topic event link
   - 依赖：5.1、8.2。
   - 工作内容：
     - capability token 索引改为 token -> sandbox/capset。
     - 启动重建、sandbox 创建/停止时增量更新和撤销。
     - topic event link 使用 `event_sandbox_link`，loader 派生 event 和 run 查询按 sandbox 关联。
   - 可并行子任务：
-    - [ ] 可并行：迁移 capability provider/gateway/capproxy tests。
-    - [ ] 可并行：迁移 topic event query/link tests。
+    - [x] 可并行：迁移 capability provider/gateway/capproxy tests。
+    - [x] 可并行：迁移 topic event query/link tests。
   - 测试方案：
     - `go test ./pkg/capabilities ./pkg/capproxy ./pkg/events/... ./pkg/loaders`
   - 验收标准：
     - StopSandbox 撤销 sandbox-scoped LLM facade token 和 capability token。
     - loader/topic event 可以按 sandbox 关联回溯。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - `CapabilitySessionResolver` 收敛为 `CapabilitySandboxResolver`，维护内存索引 `token -> sandbox/capset` 与 `sandbox_id -> token` 反向索引；支持启动 `Rebuild`、增量 `IndexSandbox`、`RevokeSandbox` 和懒初始化 fallback。
+      - `capproxy` API 改为 `SandboxBinding`、`SandboxResolver.ResolveCapabilitySandbox` 和新 metadata `x-capability-sandbox-token`；旧 `x-capability-session-token` 仅作为 deprecated fallback 接收，并在转发到 OctoBus 前删除。
+      - capability gateway helper 改为 `BuildGatewaySandboxVars`、`SandboxToken`、`SandboxCapsets`、`SandboxGuidePath`、`SandboxRuntimeDir`；env 变量值仍为 guest 内部 `CAP_TOKEN`。
+      - app DI 共享同一个 capability sandbox resolver；background startup 在 sandbox runtime reconcile 后重建 token index。
+      - sandbox 创建/恢复/停止路径在 `SandboxRPCBridge`、`LoaderSandboxRunner`、project run controller 中增量 index/revoke capability token；`StopSandboxVM` 既有 LLM facade token revoke 保持不变，`StopSandbox` 现在同时撤销 capability token index。
+      - loader topic event link 回调改为 `LinkedSandboxIDFromJSON` / `LoaderSandboxRPCLinkedSandboxID`，loader host 写入 `event_sandbox_link.sandbox_id`；manual trigger env 解析改为读取 `LoaderAgentSandboxEnv`，仍通过 domain helper 兼容 deprecated alias。
+      - storage/topic event tests 明确断言 `event_sandbox_link` 返回 `sandbox_id`，相关 fixture 从 `session-*` 归一为 `sandbox-*`。
+    - 验证：
+      - `go test ./pkg/capabilities ./pkg/capproxy ./pkg/events/... ./pkg/loaders`
+      - `go test ./pkg/agentcompose/adapters ./pkg/agentcompose/app ./pkg/runs`
+      - `git diff --check`
+      - `rg -n "CapabilitySession|ResolveCapabilitySession|SessionBinding|SessionResolver|SessionTokenMetadata|SessionTokenEnvName|BuildGatewaySessionVars|SessionCapsets|SessionGuidePath|SessionRuntimeDir|SessionToken\\(|LoaderSessionRPCLinkedSessionID|LinkedSessionIDFromJSON|loaderSessionIDFromJSON|event_session_link|llm_facade_token\\.session_id" pkg/capabilities pkg/capproxy pkg/agentcompose pkg/loaders pkg/events pkg/runs pkg/storage/configstore -S`
+      - `rg -n "scheduler\\.session|CallSessionRPC|sessionEnv|session_env|sessionPolicy|session_policy|LinkedSession|SessionRPC" pkg/loaders pkg/runs pkg/agentcompose/adapters pkg/agentcompose/app -S`
+    - 审计与例外：
+      - `event_session_link` / `llm_facade_token.session_id` 残留仅存在于 legacy SQLite schema 拒绝检查及其测试断言中。
+      - `x-capability-session-token` 残留仅作为 capproxy deprecated compatibility fallback，并有接受旧 header、删除旧 header 不转发的测试。
+      - `scheduler.session.*`、`sessionPolicy/sessionEnv`、`CallSessionRPC` 残留为 8.2 保留的 deprecated loader alias 与 v1 bridge compatibility；新 topic link、loader events 和 event relation 均使用 sandbox 命名。
+      - 本任务未修改 `proto/agentcompose/v1/*`、v2 proto 或 generated code；CLI/session 文本残留保留到 9.1/10.3。
     - 下一目标：9.1。
 
 ## 9. 阶段 9：CLI 用户界面和 E2E workflow

@@ -1000,7 +1000,7 @@ func TestRunsControllerRunProjectAgentManualTriggerResolution(t *testing.T) {
 				ManagedAgentName:   "worker",
 				ManagedSchedulerID: "scheduler-1",
 			},
-			Script:   `scheduler.interval("trigger-1", async function() { return scheduler.agent("resolved prompt", { sessionEnv: [{ name: "TRIGGER_ENV", value: "yes" }] }); }, 1000);`,
+			Script:   `scheduler.interval("trigger-1", async function() { return scheduler.agent("resolved prompt", { sandboxEnv: [{ name: "TRIGGER_ENV", value: "yes" }] }); }, 1000);`,
 			Triggers: []domain.LoaderTrigger{trigger},
 		},
 	}
@@ -1096,7 +1096,7 @@ func TestManualTriggerCaptureHostUnavailableMethodsAndEnvSpecs(t *testing.T) {
 		t.Fatalf("CallSessionRPC error = %v", err)
 	}
 
-	specs := envVarSpecsFromSessionEnv([]domain.SandboxEnvVar{
+	specs := envVarSpecsFromSandboxEnv([]domain.SandboxEnvVar{
 		{Name: " A ", Value: "1", Secret: true},
 		{Name: " ", Value: "ignored"},
 		{Name: "B", Value: "2"},
@@ -1267,8 +1267,8 @@ func TestRunsControllerHelperEdgeWorkflows(t *testing.T) {
 	streams := sessions.NewStreamBrokerForTest()
 	ch, unsubscribe := streams.Subscribe(session.Summary.ID)
 	defer unsubscribe()
-	writeCapabilityGuide(context.Background(), provider, guideStore, streams, session, capabilities.SessionCapsets(session))
-	guidePath := capabilities.SessionGuidePath(session)
+	writeCapabilityGuide(context.Background(), provider, guideStore, streams, session, capabilities.SandboxCapsets(session))
+	guidePath := capabilities.SandboxGuidePath(session)
 	data, err := os.ReadFile(guidePath)
 	if err != nil {
 		t.Fatalf("read capability guide: %v", err)

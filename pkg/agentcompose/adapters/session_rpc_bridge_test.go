@@ -168,6 +168,7 @@ func TestSandboxRPCBridgeCapabilityGuideLifecycle(t *testing.T) {
 			return []byte(catalog), nil
 		},
 	}
+	bridge.capTokens = NewCapabilitySandboxResolver(bridge.store)
 
 	resp, err := bridge.CreateSession(ctx, connect.NewRequest(&agentcomposev1.CreateSessionRequest{
 		Title:     "capability",
@@ -180,7 +181,7 @@ func TestSandboxRPCBridgeCapabilityGuideLifecycle(t *testing.T) {
 	for _, item := range resp.Msg.GetSession().GetEnvItems() {
 		env[item.GetName()] = item.GetValue()
 	}
-	if env[capabilities.ProxyTargetEnvName] != "agent-compose:9100" || env[capabilities.SessionTokenEnvName] == "" {
+	if env[capabilities.ProxyTargetEnvName] != "agent-compose:9100" || env[capabilities.SandboxTokenEnvName] == "" {
 		t.Fatalf("capability gateway vars not injected: %+v", env)
 	}
 	sessionID := resp.Msg.GetSession().GetSummary().GetSessionId()
@@ -188,13 +189,18 @@ func TestSandboxRPCBridgeCapabilityGuideLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if capsets := capabilities.SessionCapsets(session); len(capsets) != 1 || capsets[0] != "dev" {
+	capabilityToken := capabilities.SandboxToken(session)
+	binding, err := bridge.capTokens.ResolveCapabilitySandbox(ctx, capabilityToken)
+	if err != nil || binding.SandboxID != sessionID || len(binding.CapsetIDs) != 1 || binding.CapsetIDs[0] != "dev" {
+		t.Fatalf("capability token binding = %#v err=%v", binding, err)
+	}
+	if capsets := capabilities.SandboxCapsets(session); len(capsets) != 1 || capsets[0] != "dev" {
 		t.Fatalf("capset tag not injected: %+v", capsets)
 	}
 	if _, err := os.Stat(filepath.Join(session.Summary.WorkspacePath, "CAPABILITIES.md")); !os.IsNotExist(err) {
 		t.Fatalf("capability guide must not be written into workspace, stat err = %v", err)
 	}
-	guidePath := capabilities.SessionGuidePath(session)
+	guidePath := capabilities.SandboxGuidePath(session)
 	guide, err := os.ReadFile(guidePath)
 	if err != nil {
 		t.Fatalf("capability guide not written: %v", err)
@@ -210,8 +216,14 @@ func TestSandboxRPCBridgeCapabilityGuideLifecycle(t *testing.T) {
 	if _, err := bridge.StopSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: sessionID})); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := bridge.capTokens.ResolveCapabilitySandbox(ctx, capabilityToken); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("stopped sandbox token resolve error = %v", err)
+	}
 	if _, err := bridge.ResumeSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: sessionID})); err != nil {
 		t.Fatal(err)
+	}
+	if binding, err := bridge.capTokens.ResolveCapabilitySandbox(ctx, capabilityToken); err != nil || binding.SandboxID != sessionID {
+		t.Fatalf("resumed sandbox token binding = %#v err=%v", binding, err)
 	}
 	guide, err = os.ReadFile(guidePath)
 	if err != nil {
@@ -243,7 +255,7 @@ func TestSandboxRPCBridgeCapabilityGuideIsBestEffort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(capabilities.SessionGuidePath(session)); !os.IsNotExist(err) {
+	if _, err := os.Stat(capabilities.SandboxGuidePath(session)); !os.IsNotExist(err) {
 		t.Fatalf("expected no capability guide when provider fails, stat err = %v", err)
 	}
 	events, err := bridge.store.ListEvents(ctx, session.Summary.ID)
@@ -339,6 +351,7 @@ func newTestSandboxRPCBridge(t *testing.T) (*SandboxRPCBridge, *fakeRPCSandboxDr
 		sessions.NewStreamBrokerForTest(),
 		testCapabilityProvider{},
 		nil,
+		nil,
 	), driver
 }
 
@@ -367,7 +380,7 @@ func TestSandboxRPCBridgeCapabilityGuideFromHTTPProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	guide, err := os.ReadFile(capabilities.SessionGuidePath(session))
+	guide, err := os.ReadFile(capabilities.SandboxGuidePath(session))
 	if err != nil {
 		t.Fatalf("capability guide not written: %v", err)
 	}

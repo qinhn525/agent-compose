@@ -33,18 +33,18 @@ func TestAdapterHelperCoverage(t *testing.T) {
 		}
 	})
 
-	t.Run("loader sandbox rpc linked session id", func(t *testing.T) {
-		if got := LoaderSessionRPCLinkedSessionID("CreateSession", `{"sessionId":"request-session"}`, `{"session":{"summary":{"sessionId":"response-session"}}}`); got != "response-session" {
-			t.Fatalf("response session id = %q", got)
+	t.Run("loader sandbox rpc linked sandbox id", func(t *testing.T) {
+		if got := LoaderSandboxRPCLinkedSandboxID("CreateSession", `{"sessionId":"request-sandbox"}`, `{"session":{"summary":{"sessionId":"response-sandbox"}}}`); got != "response-sandbox" {
+			t.Fatalf("response sandbox id = %q", got)
 		}
-		if got := LoaderSessionRPCLinkedSessionID("StopSession", `{"sessionId":" request-session "}`, `{bad`); got != "request-session" {
-			t.Fatalf("request session id = %q", got)
+		if got := LoaderSandboxRPCLinkedSandboxID("StopSession", `{"sessionId":" request-sandbox "}`, `{bad`); got != "request-sandbox" {
+			t.Fatalf("request sandbox id = %q", got)
 		}
-		if got := LoaderSessionRPCLinkedSessionID("ListSessions", `{"sessionId":"ignored"}`, `{}`); got != "" {
+		if got := LoaderSandboxRPCLinkedSandboxID("ListSessions", `{"sessionId":"ignored"}`, `{}`); got != "" {
 			t.Fatalf("ListSessions linked id = %q, want empty", got)
 		}
-		if got := loaderSessionIDFromJSON(`{"session":{"summary":{"sessionId":" nested "}}}`); got != "nested" {
-			t.Fatalf("nested session id = %q", got)
+		if got := loaderSandboxIDFromJSON(`{"session":{"summary":{"sessionId":" nested "}}}`); got != "nested" {
+			t.Fatalf("nested sandbox id = %q", got)
 		}
 	})
 
@@ -174,41 +174,50 @@ func float64PtrForAdapter(value float64) *float64 {
 	return &value
 }
 
-func TestCapabilitySessionResolverCoverage(t *testing.T) {
+func TestCapabilitySandboxResolverCoverage(t *testing.T) {
 	ctx := context.Background()
 	running := &domain.Sandbox{
 		Summary: domain.SandboxSummary{
-			ID:       "session-running",
+			ID:       "sandbox-running",
 			VMStatus: domain.VMStatusRunning,
 			Tags: []domain.SandboxTag{
 				{Name: capabilities.CapsetTagName, Value: "dev"},
 				{Name: capabilities.CapsetTagName, Value: " dev "},
 			},
 		},
-		EnvItems: []domain.SandboxEnvVar{{Name: capabilities.SessionTokenEnvName, Value: "token-2", Secret: true}},
+		EnvItems: []domain.SandboxEnvVar{{Name: capabilities.SandboxTokenEnvName, Value: "token-2", Secret: true}},
 	}
 	stopped := &domain.Sandbox{
-		Summary:  domain.SandboxSummary{ID: "session-stopped", VMStatus: domain.VMStatusStopped, Tags: []domain.SandboxTag{{Name: capabilities.CapsetTagName, Value: "dev"}}},
-		EnvItems: []domain.SandboxEnvVar{{Name: capabilities.SessionTokenEnvName, Value: "token-stopped", Secret: true}},
+		Summary:  domain.SandboxSummary{ID: "sandbox-stopped", VMStatus: domain.VMStatusStopped, Tags: []domain.SandboxTag{{Name: capabilities.CapsetTagName, Value: "dev"}}},
+		EnvItems: []domain.SandboxEnvVar{{Name: capabilities.SandboxTokenEnvName, Value: "token-stopped", Secret: true}},
 	}
 	noCapset := &domain.Sandbox{
-		Summary:  domain.SandboxSummary{ID: "session-no-capset", VMStatus: domain.VMStatusRunning},
-		EnvItems: []domain.SandboxEnvVar{{Name: capabilities.SessionTokenEnvName, Value: "token-no-capset", Secret: true}},
+		Summary:  domain.SandboxSummary{ID: "sandbox-no-capset", VMStatus: domain.VMStatusRunning},
+		EnvItems: []domain.SandboxEnvVar{{Name: capabilities.SandboxTokenEnvName, Value: "token-no-capset", Secret: true}},
 	}
-	store := &fakeCapabilitySessionStore{pages: []domain.SandboxListResult{
-		{Sandboxes: []*domain.Sandbox{{Summary: domain.SandboxSummary{ID: "session-other", VMStatus: domain.VMStatusRunning}}}, HasMore: true, NextOffset: 200},
+	store := &fakeCapabilitySandboxStore{pages: []domain.SandboxListResult{
+		{Sandboxes: []*domain.Sandbox{{Summary: domain.SandboxSummary{ID: "sandbox-other", VMStatus: domain.VMStatusRunning}}}, HasMore: true, NextOffset: 200},
 		{Sandboxes: []*domain.Sandbox{nil, running, stopped, noCapset}},
 	}}
-	resolver := NewCapabilitySessionResolver(store)
-	binding, err := resolver.ResolveCapabilitySession(ctx, " token-2 ")
+	resolver := NewCapabilitySandboxResolver(store)
+	binding, err := resolver.ResolveCapabilitySandbox(ctx, " token-2 ")
 	if err != nil {
-		t.Fatalf("ResolveCapabilitySession returned error: %v", err)
+		t.Fatalf("ResolveCapabilitySandbox returned error: %v", err)
 	}
-	if binding.SessionID != "session-running" || len(binding.CapsetIDs) != 1 || binding.CapsetIDs[0] != "dev" {
+	if binding.SandboxID != "sandbox-running" || len(binding.CapsetIDs) != 1 || binding.CapsetIDs[0] != "dev" {
 		t.Fatalf("binding = %#v", binding)
 	}
 	if len(store.offsets) != 2 || store.offsets[0] != 0 || store.offsets[1] != 200 {
 		t.Fatalf("offsets = %#v", store.offsets)
+	}
+	resolver.RevokeSandbox("sandbox-running")
+	if _, err := resolver.ResolveCapabilitySandbox(ctx, "token-2"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("revoked token error = %v", err)
+	}
+	resolver.IndexSandbox(running)
+	binding, err = resolver.ResolveCapabilitySandbox(ctx, "token-2")
+	if err != nil || binding.SandboxID != "sandbox-running" {
+		t.Fatalf("indexed binding = %#v err=%v", binding, err)
 	}
 
 	for _, tc := range []struct {
@@ -217,34 +226,35 @@ func TestCapabilitySessionResolverCoverage(t *testing.T) {
 		part  string
 	}{
 		{name: "empty token", token: " ", part: "required"},
-		{name: "stopped session", token: "token-stopped", part: "not active"},
-		{name: "no capset", token: "token-no-capset", part: "no capability capset"},
+		{name: "stopped sandbox", token: "token-stopped", part: "not found"},
+		{name: "no capset", token: "token-no-capset", part: "not found"},
 		{name: "not found", token: "missing", part: "not found"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := resolver.ResolveCapabilitySession(ctx, tc.token)
+			_, err := resolver.ResolveCapabilitySandbox(ctx, tc.token)
 			if err == nil || !strings.Contains(err.Error(), tc.part) {
-				t.Fatalf("ResolveCapabilitySession error = %v, want %q", err, tc.part)
+				t.Fatalf("ResolveCapabilitySandbox error = %v, want %q", err, tc.part)
 			}
 		})
 	}
 
-	if _, err := (*CapabilitySessionResolver)(nil).ResolveCapabilitySession(ctx, "token"); err == nil || !strings.Contains(err.Error(), "store") {
+	if _, err := (*CapabilitySandboxResolver)(nil).ResolveCapabilitySandbox(ctx, "token"); err == nil || !strings.Contains(err.Error(), "store") {
 		t.Fatalf("nil resolver error = %v", err)
 	}
-	store.err = errors.New("list failed")
-	if _, err := resolver.ResolveCapabilitySession(ctx, "token-2"); !errors.Is(err, store.err) {
-		t.Fatalf("store error = %v, want %v", err, store.err)
+	listErr := errors.New("list failed")
+	failing := NewCapabilitySandboxResolver(&fakeCapabilitySandboxStore{err: listErr})
+	if _, err := failing.ResolveCapabilitySandbox(ctx, "token-2"); !errors.Is(err, listErr) {
+		t.Fatalf("store error = %v, want %v", err, listErr)
 	}
 }
 
-type fakeCapabilitySessionStore struct {
+type fakeCapabilitySandboxStore struct {
 	pages   []domain.SandboxListResult
 	offsets []int
 	err     error
 }
 
-func (s *fakeCapabilitySessionStore) ListSandboxes(_ context.Context, opts domain.SandboxListOptions) (domain.SandboxListResult, error) {
+func (s *fakeCapabilitySandboxStore) ListSandboxes(_ context.Context, opts domain.SandboxListOptions) (domain.SandboxListResult, error) {
 	s.offsets = append(s.offsets, opts.Offset)
 	if s.err != nil {
 		return domain.SandboxListResult{}, s.err

@@ -56,6 +56,11 @@ type DashboardNotifier interface {
 	Notify(reason string)
 }
 
+type CapabilitySandboxIndexer interface {
+	IndexSandbox(*domain.Sandbox)
+	RevokeSandbox(string)
+}
+
 type VolumeResolver interface {
 	ResolveMounts(ctx context.Context, specs []domain.VolumeMountSpec, options volumes.ResolveOptions) ([]domain.SandboxVolumeMount, []string, error)
 }
@@ -104,6 +109,7 @@ type Controller struct {
 	streams      *sessions.StreamBroker
 	bus          TopicPublisher
 	dashboard    DashboardNotifier
+	capTokens    CapabilitySandboxIndexer
 }
 
 type ControllerDependencies struct {
@@ -120,6 +126,7 @@ type ControllerDependencies struct {
 	Streams      *sessions.StreamBroker
 	Bus          TopicPublisher
 	Dashboard    DashboardNotifier
+	CapTokens    CapabilitySandboxIndexer
 }
 
 func NewController(deps ControllerDependencies) *Controller {
@@ -137,6 +144,7 @@ func NewController(deps ControllerDependencies) *Controller {
 		streams:      deps.Streams,
 		bus:          deps.Bus,
 		dashboard:    deps.Dashboard,
+		capTokens:    deps.CapTokens,
 	}
 }
 
@@ -644,7 +652,7 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 		return SandboxResult{}, err
 	}
 	tags := SandboxTags(run)
-	capabilityVars, capabilityTags := capabilities.BuildGatewaySessionVars(capabilities.ProxyTarget(c.cap), prepared.CapsetIDs)
+	capabilityVars, capabilityTags := capabilities.BuildGatewaySandboxVars(capabilities.ProxyTarget(c.cap), prepared.CapsetIDs)
 	tags = append(tags, capabilityTags...)
 	if sandboxID := strings.TrimSpace(req.SandboxID); sandboxID != "" {
 		if len(req.Volumes) > 0 {
@@ -784,7 +792,7 @@ func (c *Controller) startProjectRunSandbox(ctx context.Context, sandbox *domain
 		_ = c.store.UpdateSandbox(ctx, sandbox)
 		return err
 	}
-	writeCapabilityGuide(ctx, c.cap, c.store, c.streams, sandbox, capabilities.SessionCapsets(sandbox))
+	writeCapabilityGuide(ctx, c.cap, c.store, c.streams, sandbox, capabilities.SandboxCapsets(sandbox))
 	if sandbox.Summary.VMStatus != domain.VMStatusRunning {
 		if err := c.driver.StartSandboxVM(ctx, sandbox); err != nil {
 			sandbox.Summary.VMStatus = domain.VMStatusFailed
@@ -803,6 +811,7 @@ func (c *Controller) startProjectRunSandbox(ctx context.Context, sandbox *domain
 	}
 	domain.RestoreSandboxTransientFields(loaded, sandbox)
 	*sandbox = *loaded
+	c.indexCapabilitySandbox(sandbox)
 	return nil
 }
 
@@ -887,6 +896,7 @@ func (c *Controller) stopProjectRunSandbox(ctx context.Context, sandbox *domain.
 		return err
 	}
 	if loaded.Summary.VMStatus != domain.VMStatusRunning {
+		c.revokeCapabilitySandbox(loaded.Summary.ID)
 		return nil
 	}
 	if c.driver == nil {
@@ -905,7 +915,20 @@ func (c *Controller) stopProjectRunSandbox(ctx context.Context, sandbox *domain.
 		c.streams.PublishSandboxUpdated(&loaded.Summary)
 		c.streams.PublishEventAdded(loaded.Summary.ID, event)
 	}
+	c.revokeCapabilitySandbox(loaded.Summary.ID)
 	return nil
+}
+
+func (c *Controller) indexCapabilitySandbox(sandbox *domain.Sandbox) {
+	if c != nil && c.capTokens != nil {
+		c.capTokens.IndexSandbox(sandbox)
+	}
+}
+
+func (c *Controller) revokeCapabilitySandbox(sandboxID string) {
+	if c != nil && c.capTokens != nil {
+		c.capTokens.RevokeSandbox(sandboxID)
+	}
 }
 
 func writeCapabilityGuide(ctx context.Context, provider capabilities.Provider, store SandboxRuntimeStore, streams *sessions.StreamBroker, sandbox *domain.Sandbox, capsetIDs []string) {
@@ -913,7 +936,7 @@ func writeCapabilityGuide(ctx context.Context, provider capabilities.Provider, s
 	if len(ids) == 0 || provider == nil || sandbox == nil {
 		return
 	}
-	catalogPath := capabilities.SessionGuidePath(sandbox)
+	catalogPath := capabilities.SandboxGuidePath(sandbox)
 	if catalogPath == "" {
 		return
 	}

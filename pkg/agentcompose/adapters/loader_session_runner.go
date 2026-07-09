@@ -38,10 +38,11 @@ type LoaderSandboxRunner struct {
 	Volumes   LoaderVolumeResolver
 	Streams   *sessions.StreamBroker
 	Publisher loaders.ControllerPublisher
+	CapTokens *CapabilitySandboxResolver
 }
 
-func NewLoaderSandboxRunner(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, driver sessions.SandboxDriver, cap capabilities.Provider, volumeResolver LoaderVolumeResolver, streams *sessions.StreamBroker, publisher loaders.ControllerPublisher) *LoaderSandboxRunner {
-	return &LoaderSandboxRunner{Config: config, Store: store, ConfigDB: configDB, Driver: driver, Cap: cap, Volumes: volumeResolver, Streams: streams, Publisher: publisher}
+func NewLoaderSandboxRunner(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, driver sessions.SandboxDriver, cap capabilities.Provider, volumeResolver LoaderVolumeResolver, streams *sessions.StreamBroker, publisher loaders.ControllerPublisher, capTokens *CapabilitySandboxResolver) *LoaderSandboxRunner {
+	return &LoaderSandboxRunner{Config: config, Store: store, ConfigDB: configDB, Driver: driver, Cap: cap, Volumes: volumeResolver, Streams: streams, Publisher: publisher, CapTokens: capTokens}
 }
 
 func (r *LoaderSandboxRunner) Shutdown(ctx context.Context, sessionID string) error {
@@ -72,6 +73,7 @@ func (r *LoaderSandboxRunner) Shutdown(ctx context.Context, sessionID string) er
 	if r.Streams != nil {
 		r.Streams.PublishEventAdded(session.Summary.ID, event)
 	}
+	r.revokeCapabilitySandbox(session.Summary.ID)
 	loaded, err := r.Store.GetSandbox(stopCtx, session.Summary.ID)
 	if err != nil {
 		return err
@@ -114,7 +116,7 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 	envItems = domain.MergeEnvItems(envItems, domain.LoaderAgentSandboxEnv(request))
 	providerEnvItems := envItems
 	envItems = llms.FilterPersistedRuntimeEnv(envItems)
-	capabilityVars, capabilityTags := capabilities.BuildGatewaySessionVars(capabilities.ProxyTarget(r.Cap), loader.Summary.CapsetIDs)
+	capabilityVars, capabilityTags := capabilities.BuildGatewaySandboxVars(capabilities.ProxyTarget(r.Cap), loader.Summary.CapsetIDs)
 	envItems = domain.MergeEnvItems(envItems, capabilityVars)
 	tags := []domain.SandboxTag{{Name: "origin", Value: "loader"}, {Name: "loader_id", Value: loader.Summary.ID}, {Name: "loader_name", Value: loader.Summary.Name}}
 	tags = append(tags, capabilityTags...)
@@ -183,6 +185,7 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 		return nil, "", err
 	}
 	domain.RestoreSandboxTransientFields(loaded, session)
+	r.indexCapabilitySandbox(loaded)
 	r.publish("agent-compose.session.created", map[string]any{
 		"sandboxId":     loaded.Summary.ID,
 		"title":         loaded.Summary.Title,
@@ -209,7 +212,7 @@ func (r *LoaderSandboxRunner) LoadOrResume(ctx context.Context, sessionID string
 	if err := workspaces.PrepareSessionWorkspace(ctx, r.Config, r.ConfigDB, session); err != nil {
 		return nil, "", err
 	}
-	writeCapabilityGuide(ctx, r.Cap, r.Store, r.Streams, session, capabilities.SessionCapsets(session))
+	writeCapabilityGuide(ctx, r.Cap, r.Store, r.Streams, session, capabilities.SandboxCapsets(session))
 	if err := r.Driver.StartSandboxVM(ctx, session); err != nil {
 		return nil, "", err
 	}
@@ -230,6 +233,7 @@ func (r *LoaderSandboxRunner) LoadOrResume(ctx context.Context, sessionID string
 		return nil, "", err
 	}
 	domain.RestoreSandboxTransientFields(loaded, session)
+	r.indexCapabilitySandbox(loaded)
 	r.publish("agent-compose.session.resumed", map[string]any{
 		"sandboxId": loaded.Summary.ID,
 		"title":     loaded.Summary.Title,
@@ -237,6 +241,18 @@ func (r *LoaderSandboxRunner) LoadOrResume(ctx context.Context, sessionID string
 		"source":    "loader",
 	})
 	return loaded, "loader.sandbox.resumed", nil
+}
+
+func (r *LoaderSandboxRunner) indexCapabilitySandbox(session *domain.Sandbox) {
+	if r != nil && r.CapTokens != nil {
+		r.CapTokens.IndexSandbox(session)
+	}
+}
+
+func (r *LoaderSandboxRunner) revokeCapabilitySandbox(sandboxID string) {
+	if r != nil && r.CapTokens != nil {
+		r.CapTokens.RevokeSandbox(sandboxID)
+	}
 }
 
 func (r *LoaderSandboxRunner) ResolveLoaderAgentDefinition(ctx context.Context, loader domain.Loader) (*domain.AgentDefinition, error) {
