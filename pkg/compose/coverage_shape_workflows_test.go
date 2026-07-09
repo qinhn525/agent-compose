@@ -55,6 +55,12 @@ func TestIntegrationComposeParseNormalizeAndOutputWorkflows(t *testing.T) {
 	t.Run("hash jupyter", TestSpecHashIncludesJupyterChanges)
 	t.Run("hash defaults", TestSpecHashNormalizesDefaults)
 	t.Run("hash json order", TestSpecHashSupportsJSONInputOrder)
+	t.Run("parse mcp", TestParseMCPConfig)
+	t.Run("parse invalid mcp ref", TestParseRejectsInvalidMCPRefType)
+	t.Run("normalize mcp", TestNormalizeMCPConfig)
+	t.Run("normalize invalid mcp ref", TestNormalizeRejectsUndefinedMCPRef)
+	t.Run("normalize invalid mcp shape", TestNormalizeRejectsInvalidMCPShape)
+	t.Run("redacted mcp", TestRedactedOutputDoesNotLeakMCPSecrets)
 }
 
 func TestE2EComposeParseNormalizeAndOutputWorkflows(t *testing.T) {

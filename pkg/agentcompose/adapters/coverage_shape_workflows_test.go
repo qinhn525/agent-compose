@@ -6,6 +6,7 @@ func TestIntegrationAdapterRuntimeWorkflows(t *testing.T) {
 	t.Run("agent executor", TestAgentExecutorExecuteAgentRequestPersistsCellAndEvents)
 	t.Run("agent executor stream failure", TestAgentExecutorPersistsFailedCellWhenStreamCallbackFails)
 	t.Run("agent runner", TestAgentRunnerExecuteAgentRunWritesSystemPromptAndParsesResult)
+	t.Run("agent runner mcp", TestAgentRunnerPrepareManagedMCPConfigForProviders)
 	t.Run("cell executor", TestCellExecutorExecuteCellPersistsCellAndEvent)
 	t.Run("sandbox driver", TestSandboxDriverStartSandboxVMSavesRuntimeState)
 	t.Run("sandbox rpc", TestSandboxRPCBridgeCallJSONSupportsSessionRPCs)

@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -139,4 +140,107 @@ func TestAgentRunnerResolveAgentSystemPromptBranches(t *testing.T) {
 	if prompt, err := runner.ResolveAgentSystemPrompt(ctx, untagged, ""); err != nil || prompt != "" {
 		t.Fatalf("untagged prompt = %q err=%v", prompt, err)
 	}
+}
+
+func TestAgentRunnerPrepareManagedMCPConfigForProviders(t *testing.T) {
+	t.Run("codex writes state and native config", func(t *testing.T) {
+		root := t.TempDir()
+		session := &domain.Session{Summary: domain.SessionSummary{WorkspacePath: filepath.Join(root, "workspace")}}
+		payload, err := json.Marshal(map[string]any{
+			"mcps": map[string]any{
+				"filesystem": map[string]any{"type": "local", "command": "npx", "args": []string{"-y", "server"}},
+				"docs":       map[string]any{"type": "remote", "transport": "http", "url": "https://docs.example/mcp"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Marshal returned error: %v", err)
+		}
+		runner := &AgentRunner{agents: fakeAgentDefinitionStore{agent: domain.AgentDefinition{ConfigJSON: string(payload)}}}
+		if err := runner.prepareAgentMCPConfig(context.Background(), session, "agent-1", "codex"); err != nil {
+			t.Fatalf("prepareAgentMCPConfig returned error: %v", err)
+		}
+		stateConfig, err := os.ReadFile(execution.HostAgentMCPConfigPath(session))
+		if err != nil || !strings.Contains(string(stateConfig), `"filesystem"`) {
+			t.Fatalf("state mcp config=%q err=%v", string(stateConfig), err)
+		}
+		codexConfig, err := os.ReadFile(filepath.Join(execution.HostSessionHome(session), ".codex", "config.toml"))
+		if err != nil || !strings.Contains(string(codexConfig), `[mcp_servers.filesystem]`) {
+			t.Fatalf("codex mcp config=%q err=%v", string(codexConfig), err)
+		}
+	})
+
+	t.Run("opencode writes state and native config", func(t *testing.T) {
+		root := t.TempDir()
+		session := &domain.Session{Summary: domain.SessionSummary{WorkspacePath: filepath.Join(root, "workspace")}}
+		payload, err := json.Marshal(map[string]any{
+			"mcps": map[string]any{
+				"filesystem": map[string]any{"type": "local", "command": "npx", "args": []string{"-y", "server"}, "env": map[string]any{"TOKEN": map[string]any{"value": "secret"}}},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Marshal returned error: %v", err)
+		}
+		runner := &AgentRunner{agents: fakeAgentDefinitionStore{agent: domain.AgentDefinition{ConfigJSON: string(payload)}}}
+		if err := runner.prepareAgentMCPConfig(context.Background(), session, "agent-1", "opencode"); err != nil {
+			t.Fatalf("prepareAgentMCPConfig returned error: %v", err)
+		}
+		openCodeConfig, err := os.ReadFile(filepath.Join(execution.HostSessionHome(session), ".config", "opencode", "opencode.json"))
+		if err != nil || !strings.Contains(string(openCodeConfig), `"mcp"`) || !strings.Contains(string(openCodeConfig), `"filesystem"`) {
+			t.Fatalf("opencode mcp config=%q err=%v", string(openCodeConfig), err)
+		}
+	})
+
+	t.Run("claude writes only unified state config", func(t *testing.T) {
+		root := t.TempDir()
+		session := &domain.Session{Summary: domain.SessionSummary{WorkspacePath: filepath.Join(root, "workspace")}}
+		payload, err := json.Marshal(map[string]any{
+			"mcps": map[string]any{
+				"docs": map[string]any{"type": "remote", "transport": "sse", "url": "https://docs.example/sse"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Marshal returned error: %v", err)
+		}
+		runner := &AgentRunner{agents: fakeAgentDefinitionStore{agent: domain.AgentDefinition{ConfigJSON: string(payload)}}}
+		if err := runner.prepareAgentMCPConfig(context.Background(), session, "agent-1", "claude"); err != nil {
+			t.Fatalf("prepareAgentMCPConfig returned error: %v", err)
+		}
+		if _, err := os.Stat(execution.HostAgentMCPConfigPath(session)); err != nil {
+			t.Fatalf("expected state mcp config, err=%v", err)
+		}
+		if _, err := os.Stat(filepath.Join(execution.HostSessionHome(session), ".codex", "config.toml")); !os.IsNotExist(err) {
+			t.Fatalf("unexpected codex config stat err=%v", err)
+		}
+	})
+
+	t.Run("missing agent clears stale provider config", func(t *testing.T) {
+		root := t.TempDir()
+		session := &domain.Session{Summary: domain.SessionSummary{WorkspacePath: filepath.Join(root, "workspace")}}
+		if err := os.MkdirAll(filepath.Join(execution.HostSessionHome(session), ".codex"), 0o755); err != nil {
+			t.Fatalf("MkdirAll returned error: %v", err)
+		}
+		if err := os.WriteFile(execution.HostAgentMCPConfigPath(session), []byte(`{"mcps":{"old":{}}}`), 0o644); err == nil {
+			// ignore; directory may not exist yet, the codex config below is the important stale native config assertion
+		}
+		if err := os.WriteFile(filepath.Join(execution.HostSessionHome(session), ".codex", "config.toml"), []byte("# agent-compose managed mcp start\n[mcp_servers.old]\ncommand = \"old\"\n# agent-compose managed mcp end\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile returned error: %v", err)
+		}
+		runner := &AgentRunner{agents: fakeAgentDefinitionStore{err: errors.New("boom")}}
+		if err := runner.prepareAgentMCPConfig(context.Background(), session, "agent-1", "codex"); err != nil {
+			t.Fatalf("prepareAgentMCPConfig returned error: %v", err)
+		}
+		if _, err := os.Stat(execution.HostAgentMCPConfigPath(session)); !os.IsNotExist(err) {
+			t.Fatalf("expected state mcp config removed, err=%v", err)
+		}
+		data, err := os.ReadFile(filepath.Join(execution.HostSessionHome(session), ".codex", "config.toml"))
+		if os.IsNotExist(err) {
+			return
+		}
+		if err != nil {
+			t.Fatalf("ReadFile returned error: %v", err)
+		}
+		if strings.Contains(string(data), "mcp_servers.old") {
+			t.Fatalf("stale codex config not cleared: %q", string(data))
+		}
+	})
 }
