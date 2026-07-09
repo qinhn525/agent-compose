@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -75,6 +76,54 @@ func TestSetupRegistersServiceGraph(t *testing.T) {
 	app.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("proxy route status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+}
+
+func TestRegisterRejectsLegacySessionsRootBeforeConfigStoreSchema(t *testing.T) {
+	root := t.TempDir()
+	legacyRoot := filepath.Join(root, "sessions")
+	if err := os.MkdirAll(legacyRoot, 0o755); err != nil {
+		t.Fatalf("create legacy root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyRoot, "metadata.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write legacy fixture: %v", err)
+	}
+	t.Setenv("DATA_ROOT", root)
+	t.Setenv("RUNTIME_DRIVER", driverpkg.RuntimeDriverDocker)
+	t.Setenv("LLM_API_ENDPOINT", "")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	di := do.New()
+	appconfig.Setup(di)
+	do.ProvideValue(di, ctx)
+	do.ProvideValue(di, slog.Default())
+	do.ProvideValue(di, echo.New())
+
+	var panicValue any
+	func() {
+		defer func() {
+			panicValue = recover()
+		}()
+		Register(di)
+	}()
+	if panicValue == nil {
+		t.Fatalf("Register completed without rejecting legacy sessions root")
+	}
+	message := fmt.Sprint(panicValue)
+	for _, want := range []string{
+		legacyRoot,
+		filepath.Join(root, "sandboxes"),
+		"automatic migration",
+		"clear the old data root",
+		"new data root",
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("Register panic = %q, want substring %q", message, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "data.db")); !os.IsNotExist(err) {
+		t.Fatalf("data.db stat error = %v, want not exist", err)
 	}
 }
 

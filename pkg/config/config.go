@@ -38,6 +38,7 @@ type Config struct {
 	DbTimeout                  time.Duration
 	DataRoot                   string
 	SandboxRoot                string
+	SandboxRootExplicit        bool
 	HttpListen                 string
 	AgentComposeSocket         string
 	AgentComposeHost           string
@@ -111,6 +112,7 @@ func NewConfig(di do.Injector) (*Config, error) {
 		}
 	}
 
+	sandboxRootExplicit := strings.TrimSpace(os.Getenv("SANDBOX_ROOT")) != ""
 	sandboxRoot, err := envWithLegacy(logger, "SANDBOX_ROOT", "SESSION_ROOT")
 	if err != nil {
 		return nil, err
@@ -416,6 +418,7 @@ func NewConfig(di do.Injector) (*Config, error) {
 		DbTimeout:                  dbTimeout,
 		DataRoot:                   dataRoot,
 		SandboxRoot:                sandboxRoot,
+		SandboxRootExplicit:        sandboxRootExplicit,
 		HttpListen:                 httpListen,
 		AgentComposeSocket:         agentComposeSocket,
 		AgentComposeHost:           agentComposeHost,

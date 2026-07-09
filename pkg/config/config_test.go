@@ -193,6 +193,9 @@ func testNewConfigAllowsDefaultRootsAndRequiresValidDriver(t *testing.T) {
 	if config.SandboxRoot != filepath.Join(root, "data", "sandboxes") {
 		t.Fatalf("SandboxRoot = %q, want default sandboxes root", config.SandboxRoot)
 	}
+	if config.SandboxRootExplicit {
+		t.Fatalf("SandboxRootExplicit = true, want false for default root")
+	}
 
 	t.Setenv("RUNTIME_DRIVER", "bad-driver")
 	if _, err := NewConfig(di); err == nil {
@@ -251,6 +254,9 @@ func TestNewConfigUsesSandboxEnvironmentWhenLegacyAlsoSet(t *testing.T) {
 		config.SandboxStartTimeout != 2*time.Second ||
 		config.SandboxStopTimeout != 4*time.Second {
 		t.Fatalf("sandbox env config = %#v", config)
+	}
+	if !config.SandboxRootExplicit {
+		t.Fatalf("SandboxRootExplicit = false, want true when SANDBOX_ROOT is set")
 	}
 	for _, legacy := range []string{"SESSION_ROOT", "DOCKER_HOST_SESSION_ROOT", "SESSION_START_TIMEOUT", "SESSION_STOP_TIMEOUT"} {
 		if !strings.Contains(logs.String(), "deprecated environment variable ignored") || !strings.Contains(logs.String(), legacy) {

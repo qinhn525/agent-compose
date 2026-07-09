@@ -196,25 +196,37 @@
       - 旧 `<DATA_ROOT>/sessions` 拒绝路径尚未实现，按计划留给 3.2。
     - 下一目标：3.2。
 
-- [ ] 3.2 实现旧 `sessions` 目录拒绝路径
+- [x] 3.2 实现旧 `sessions` 目录拒绝路径
   - 依赖：3.1。
   - 工作内容：
     - store 初始化时检测 `<DATA_ROOT>/sessions` 存在且非空，同时 `SANDBOX_ROOT` 未显式指向其他新路径。
     - 返回可诊断错误，包含旧路径、新路径和首版不支持自动迁移说明。
     - 确保拒绝路径不会创建新 schema 或隐藏旧数据。
   - 可并行子任务：
-    - [ ] 可并行：编写旧目录 fixture 和错误断言 tests。
-    - [ ] 可并行：审计启动路径和 store 初始化路径是否都触发检测。
+    - [x] 可并行：编写旧目录 fixture 和错误断言 tests。
+    - [x] 可并行：审计启动路径和 store 初始化路径是否都触发检测。
   - 测试方案：
     - `go test ./pkg/storage/... ./pkg/agentcompose/app`
   - 验收标准：
     - 旧目录拒绝路径有单元测试和至少一个启动/初始化路径测试。
     - 错误文案可定位操作者需要清空旧数据根或使用全新数据根。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - `Config` 增加 `SandboxRootExplicit`，由 `SANDBOX_ROOT` 是否显式设置派生，用于区分默认 `<DATA_ROOT>/sandboxes` 和操作者主动指定的新 sandbox root。
+      - `sessionstore.NewWithConfig` 在创建 `SandboxRoot` 前检测 `<DATA_ROOT>/sessions`；当旧路径存在且非空、且未显式指定其他 `SANDBOX_ROOT` 时返回诊断错误。
+      - 错误信息包含旧 `sessions` 路径、期望的新 sandbox 路径、`SANDBOX_ROOT`、首版不支持自动迁移说明，以及清空旧 data root 或使用新 data root 的操作指引。
+      - 空旧 `sessions` 目录允许启动；显式指定其他新 `SANDBOX_ROOT` 时允许与旧非空 `sessions` 目录并存。
+      - app 注册路径新增启动/初始化测试，验证旧目录拒绝发生在 SQLite `data.db` schema 创建前。
+    - 验证：
+      - `go test ./pkg/storage/... ./pkg/agentcompose/app ./pkg/config`
+      - `git diff --check`
+      - `rg -n "SandboxRootExplicit|legacy sessions data detected|automatic migration|<DATA_ROOT>/sessions|SANDBOX_ROOT" pkg/config pkg/storage/sessionstore pkg/agentcompose/app`
+    - 审计与例外：
+      - store 单元测试覆盖非空旧目录拒绝、错误文案、拒绝时不创建 sandbox root、空旧目录允许、显式新 `SANDBOX_ROOT` 允许。
+      - app/startup 初始化测试覆盖默认 `SANDBOX_ROOT` 下非空旧目录拒绝，并断言 `data.db` 未创建。
+      - `NewConfig` 仍会按既有行为确保 `DATA_ROOT`、`SANDBOX_ROOT` 等配置目录存在；本任务保证 store 初始化拒绝路径不创建 sandbox store 根，并且启动路径不创建 SQLite schema。
+      - 未修改 v1 proto、v1 generated Go 或 v1 Connect service 名称；未实现旧目录自动迁移。
     - 下一目标：4.1。
 
 ## 4. 阶段 4：核心 domain、runtime driver 和 app service graph 重命名

@@ -3,6 +3,7 @@ package sessionstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -359,6 +360,81 @@ func TestIntegrationStoreCreateAndRemoveWorkflows(t *testing.T) {
 
 func TestE2EStoreCreateAndRemoveWorkflows(t *testing.T) {
 	TestIntegrationStoreCreateAndRemoveWorkflows(t)
+}
+
+func TestNewWithConfigRejectsNonEmptyLegacySessionsRoot(t *testing.T) {
+	dataRoot := t.TempDir()
+	legacyRoot := filepath.Join(dataRoot, "sessions")
+	if err := os.MkdirAll(legacyRoot, 0o755); err != nil {
+		t.Fatalf("create legacy root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyRoot, "metadata.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write legacy fixture: %v", err)
+	}
+	sandboxRoot := filepath.Join(dataRoot, "sandboxes")
+
+	_, err := NewWithConfig(&appconfig.Config{
+		DataRoot:    dataRoot,
+		SandboxRoot: sandboxRoot,
+	})
+	if err == nil {
+		t.Fatalf("NewWithConfig returned nil error for non-empty legacy sessions root")
+	}
+	for _, want := range []string{
+		legacyRoot,
+		sandboxRoot,
+		"automatic migration",
+		"clear the old data root",
+		"new data root",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("NewWithConfig error = %q, want substring %q", err.Error(), want)
+		}
+	}
+	if _, statErr := os.Stat(sandboxRoot); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("sandbox root stat error = %v, want not exist", statErr)
+	}
+}
+
+func TestNewWithConfigAllowsEmptyLegacySessionsRoot(t *testing.T) {
+	dataRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dataRoot, "sessions"), 0o755); err != nil {
+		t.Fatalf("create empty legacy root: %v", err)
+	}
+	sandboxRoot := filepath.Join(dataRoot, "sandboxes")
+
+	if _, err := NewWithConfig(&appconfig.Config{
+		DataRoot:    dataRoot,
+		SandboxRoot: sandboxRoot,
+	}); err != nil {
+		t.Fatalf("NewWithConfig returned error for empty legacy root: %v", err)
+	}
+	if info, err := os.Stat(sandboxRoot); err != nil || !info.IsDir() {
+		t.Fatalf("sandbox root stat = %v/%v, want directory", info, err)
+	}
+}
+
+func TestNewWithConfigAllowsExplicitSandboxRootBesideLegacySessionsRoot(t *testing.T) {
+	dataRoot := t.TempDir()
+	legacyRoot := filepath.Join(dataRoot, "sessions")
+	if err := os.MkdirAll(legacyRoot, 0o755); err != nil {
+		t.Fatalf("create legacy root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyRoot, "metadata.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write legacy fixture: %v", err)
+	}
+	sandboxRoot := filepath.Join(t.TempDir(), "fresh-sandboxes")
+
+	if _, err := NewWithConfig(&appconfig.Config{
+		DataRoot:            dataRoot,
+		SandboxRoot:         sandboxRoot,
+		SandboxRootExplicit: true,
+	}); err != nil {
+		t.Fatalf("NewWithConfig returned error for explicit sandbox root: %v", err)
+	}
+	if info, err := os.Stat(sandboxRoot); err != nil || !info.IsDir() {
+		t.Fatalf("sandbox root stat = %v/%v, want directory", info, err)
+	}
 }
 
 func testStoreLegacyWrappersAndMissingStateWorkflows(t *testing.T) {
