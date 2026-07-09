@@ -49,7 +49,7 @@ func (e *CellExecutor) executeCell(ctx context.Context, session *domain.Session,
 		return domain.NotebookCell{}, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, e.config.SessionStartTimeout)
+	ctx, cancel := context.WithTimeout(ctx, e.config.SandboxStartTimeout)
 	defer cancel()
 	execCtx, execCancel := context.WithCancel(ctx)
 	defer execCancel()

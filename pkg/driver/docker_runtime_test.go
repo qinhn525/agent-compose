@@ -13,18 +13,18 @@ import (
 	networkapi "github.com/docker/docker/api/types/network"
 )
 
-func TestDockerRuntimeBindRuntimeMountSourceUsesHostSessionRoot(t *testing.T) {
+func TestDockerRuntimeBindRuntimeMountSourceUsesHostSandboxRoot(t *testing.T) {
 	config := &appconfig.Config{
-		SessionRoot:           "/data/sessions",
-		DockerHostSessionRoot: "/srv/agent-compose/sessions",
+		SandboxRoot:           "/data/sandboxes",
+		DockerHostSandboxRoot: "/srv/agent-compose/sandboxes",
 	}
 	runtime := &dockerRuntime{config: config}
 
-	got, err := runtime.bindRuntimeMountSource(context.Background(), nil, "/data/sessions/session-1/workspace")
+	got, err := runtime.bindRuntimeMountSource(context.Background(), nil, "/data/sandboxes/session-1/workspace")
 	if err != nil {
 		t.Fatalf("bindRuntimeMountSource returned error: %v", err)
 	}
-	want := filepath.Join("/srv/agent-compose/sessions", "session-1", "workspace")
+	want := filepath.Join("/srv/agent-compose/sandboxes", "session-1", "workspace")
 	if got != want {
 		t.Fatalf("bindRuntimeMountSource returned %q, want %q", got, want)
 	}
@@ -168,22 +168,22 @@ func TestDockerStatsFromResponseMapsStableMetrics(t *testing.T) {
 }
 
 func TestDockerRuntimeBindRuntimeMountSourceKeepsSourceWithoutHostRoot(t *testing.T) {
-	config := &appconfig.Config{SessionRoot: "/data/sessions"}
+	config := &appconfig.Config{SandboxRoot: "/data/sandboxes"}
 	runtime := &dockerRuntime{config: config}
 
-	got, err := runtime.bindRuntimeMountSource(context.Background(), nil, "/data/sessions/session-1/workspace")
+	got, err := runtime.bindRuntimeMountSource(context.Background(), nil, "/data/sandboxes/session-1/workspace")
 	if err != nil {
 		t.Fatalf("bindRuntimeMountSource returned error: %v", err)
 	}
-	if got != "/data/sessions/session-1/workspace" {
+	if got != "/data/sandboxes/session-1/workspace" {
 		t.Fatalf("bindRuntimeMountSource returned %q, want original source", got)
 	}
 }
 
-func TestDockerRuntimeBindRuntimeMountSourceRejectsOutsideSessionRoot(t *testing.T) {
+func TestDockerRuntimeBindRuntimeMountSourceRejectsOutsideSandboxRoot(t *testing.T) {
 	config := &appconfig.Config{
-		SessionRoot:           "/data/sessions",
-		DockerHostSessionRoot: "/srv/agent-compose/sessions",
+		SandboxRoot:           "/data/sandboxes",
+		DockerHostSandboxRoot: "/srv/agent-compose/sandboxes",
 	}
 	runtime := &dockerRuntime{config: config}
 
@@ -250,15 +250,15 @@ func TestRebasePathUnderRootDoesNotTreatLinuxBackslashAsWindowsRoot(t *testing.T
 func TestDockerRuntimeMountsConsumeManifestAndRebaseEachSource(t *testing.T) {
 	root := t.TempDir()
 	config := &appconfig.Config{
-		SessionRoot:           filepath.Join(root, "sessions"),
-		DockerHostSessionRoot: filepath.Join(root, "docker-host-sessions"),
+		SandboxRoot:           filepath.Join(root, "sandboxes"),
+		DockerHostSandboxRoot: filepath.Join(root, "docker-host-sandboxes"),
 		GuestWorkspacePath:    "/workspace",
 		GuestHomePath:         "/root",
 		GuestStateRoot:        "/data/state",
 		GuestRuntimeRoot:      "/data/runtime",
 		GuestLogRoot:          "/data/logs",
 	}
-	sessionRoot := filepath.Join(config.SessionRoot, "session-1")
+	sessionRoot := filepath.Join(config.SandboxRoot, "session-1")
 	session := testRuntimeMountSession(sessionRoot)
 	if _, err := prepareRuntimeMountManifest(config, session, RuntimeDriverDocker); err != nil {
 		t.Fatalf("prepareRuntimeMountManifest returned error: %v", err)
@@ -276,11 +276,11 @@ func TestDockerRuntimeMountsConsumeManifestAndRebaseEachSource(t *testing.T) {
 		}
 		got[mount.Target] = mount.Source
 	}
-	wantWorkspace := filepath.Join(config.DockerHostSessionRoot, "session-1", "workspace")
+	wantWorkspace := filepath.Join(config.DockerHostSandboxRoot, "session-1", "workspace")
 	if got["/workspace"] != wantWorkspace {
 		t.Fatalf("/workspace source = %q, want %q", got["/workspace"], wantWorkspace)
 	}
-	wantCodex := filepath.Join(config.DockerHostSessionRoot, "session-1", "home", ".codex")
+	wantCodex := filepath.Join(config.DockerHostSandboxRoot, "session-1", "home", ".codex")
 	if got["/root/.codex"] != wantCodex {
 		t.Fatalf("/root/.codex source = %q, want %q", got["/root/.codex"], wantCodex)
 	}
@@ -288,7 +288,7 @@ func TestDockerRuntimeMountsConsumeManifestAndRebaseEachSource(t *testing.T) {
 		"/root/.claude.json": filepath.Join("home", ".claude.json"),
 		"/root/.gitconfig":   filepath.Join("home", ".gitconfig"),
 	} {
-		wantSource := filepath.Join(config.DockerHostSessionRoot, "session-1", relHostPath)
+		wantSource := filepath.Join(config.DockerHostSandboxRoot, "session-1", relHostPath)
 		if got[guestPath] != wantSource {
 			t.Fatalf("%s source = %q, want rebased file source %q", guestPath, got[guestPath], wantSource)
 		}

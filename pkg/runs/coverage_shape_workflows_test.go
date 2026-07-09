@@ -238,7 +238,7 @@ func TestRunsControllerRunProjectAgentSuccessWorkflow(t *testing.T) {
 	root := t.TempDir()
 	config := &appconfig.Config{
 		DataRoot:      root,
-		SessionRoot:   filepath.Join(root, "sessions"),
+		SandboxRoot:   filepath.Join(root, "sessions"),
 		RuntimeDriver: "boxlite",
 		DefaultImage:  "guest:latest",
 	}
@@ -333,7 +333,7 @@ func TestRunsControllerRunProjectAgentResolvesJupyterConfig(t *testing.T) {
 	root := t.TempDir()
 	config := &appconfig.Config{
 		DataRoot:             root,
-		SessionRoot:          filepath.Join(root, "sessions"),
+		SandboxRoot:          filepath.Join(root, "sessions"),
 		RuntimeDriver:        "boxlite",
 		DefaultImage:         "guest:latest",
 		JupyterGuestPort:     8888,
@@ -474,7 +474,7 @@ func TestRunsControllerRunProjectAgentCommandWorkflow(t *testing.T) {
 	root := t.TempDir()
 	config := &appconfig.Config{
 		DataRoot:      root,
-		SessionRoot:   filepath.Join(root, "sessions"),
+		SandboxRoot:   filepath.Join(root, "sessions"),
 		RuntimeDriver: "boxlite",
 		DefaultImage:  "guest:latest",
 	}
@@ -580,7 +580,7 @@ func TestRunsControllerRunProjectAgentCommandNonZeroExitPreservesOutput(t *testi
 	root := t.TempDir()
 	config := &appconfig.Config{
 		DataRoot:      root,
-		SessionRoot:   filepath.Join(root, "sessions"),
+		SandboxRoot:   filepath.Join(root, "sessions"),
 		RuntimeDriver: "boxlite",
 		DefaultImage:  "guest:latest",
 	}
@@ -654,7 +654,7 @@ func TestRunsControllerExecuteProjectRunCommandEdgeBranches(t *testing.T) {
 	root := t.TempDir()
 	config := &appconfig.Config{
 		DataRoot:       root,
-		SessionRoot:    filepath.Join(root, "sessions"),
+		SandboxRoot:    filepath.Join(root, "sessions"),
 		RuntimeDriver:  "boxlite",
 		DefaultImage:   "guest:latest",
 		GuestStateRoot: "/guest/state",
@@ -778,7 +778,7 @@ func newControllerRunFixture(t *testing.T) *controllerRunFixture {
 	root := t.TempDir()
 	config := &appconfig.Config{
 		DataRoot:      root,
-		SessionRoot:   filepath.Join(root, "sessions"),
+		SandboxRoot:   filepath.Join(root, "sessions"),
 		RuntimeDriver: "boxlite",
 		DefaultImage:  "guest:latest",
 	}

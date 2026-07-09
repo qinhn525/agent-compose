@@ -113,7 +113,7 @@ func TestAgentSessionJSONLSelectionAndResumeInfo(t *testing.T) {
 	}
 }
 
-func TestAgentSessionRootsAndTraceDetails(t *testing.T) {
+func TestAgentSandboxRootsAndTraceDetails(t *testing.T) {
 	home := t.TempDir()
 	if roots := AgentSessionJSONLRoots(home, "claude"); len(roots) != 3 || !strings.Contains(roots[0], ".claude") {
 		t.Fatalf("claude roots = %#v", roots)

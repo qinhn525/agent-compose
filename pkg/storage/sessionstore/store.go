@@ -61,7 +61,7 @@ func NewStore(di do.Injector) (*Store, error) {
 }
 
 func NewWithConfig(config *appconfig.Config) (*Store, error) {
-	if err := os.MkdirAll(config.SessionRoot, 0o755); err != nil {
+	if err := os.MkdirAll(config.SandboxRoot, 0o755); err != nil {
 		return nil, fmt.Errorf("create session root: %w", err)
 	}
 	return &Store{config: config}, nil
@@ -205,7 +205,7 @@ func (s *Store) GetSession(_ context.Context, id string) (*Session, error) {
 }
 
 func (s *Store) ListSessions(_ context.Context, options SessionListOptions) (SessionListResult, error) {
-	entries, err := os.ReadDir(s.config.SessionRoot)
+	entries, err := os.ReadDir(s.config.SandboxRoot)
 	if err != nil {
 		return SessionListResult{}, fmt.Errorf("read session root: %w", err)
 	}
@@ -381,7 +381,7 @@ func (s *Store) ListEvents(_ context.Context, id string) ([]SessionEvent, error)
 }
 
 func (s *Store) sessionDir(id string) string {
-	return filepath.Join(s.config.SessionRoot, sessionDirName(id))
+	return filepath.Join(s.config.SandboxRoot, sessionDirName(id))
 }
 
 func (s *Store) SessionDir(id string) string {

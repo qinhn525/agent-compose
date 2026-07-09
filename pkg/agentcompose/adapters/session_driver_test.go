@@ -106,14 +106,14 @@ func TestSessionDriverStartSessionVMSavesRuntimeState(t *testing.T) {
 	root := t.TempDir()
 	config := &appconfig.Config{
 		DataRoot:             root,
-		SessionRoot:          filepath.Join(root, "sessions"),
+		SandboxRoot:          filepath.Join(root, "sessions"),
 		RuntimeDriver:        driverpkg.RuntimeDriverBoxlite,
 		BoxliteHome:          filepath.Join(root, "boxlite"),
 		DefaultImage:         "guest:latest",
 		GuestWorkspacePath:   "/workspace",
 		JupyterGuestPort:     8888,
 		JupyterProxyBasePath: "/agent-compose/session",
-		SessionStartTimeout:  2 * time.Second,
+		SandboxStartTimeout:  2 * time.Second,
 	}
 	store, err := sessionstore.NewWithConfig(config)
 	if err != nil {
@@ -161,12 +161,12 @@ func TestSessionDriverStopSessionVMAddsDockerStopContextMargin(t *testing.T) {
 	root := t.TempDir()
 	config := &appconfig.Config{
 		DataRoot:            root,
-		SessionRoot:         filepath.Join(root, "sessions"),
+		SandboxRoot:         filepath.Join(root, "sessions"),
 		RuntimeDriver:       driverpkg.RuntimeDriverDocker,
 		DefaultImage:        "guest:latest",
 		GuestWorkspacePath:  "/workspace",
-		SessionStartTimeout: 2 * time.Second,
-		SessionStopTimeout:  2 * time.Second,
+		SandboxStartTimeout: 2 * time.Second,
+		SandboxStopTimeout:  2 * time.Second,
 	}
 	store, err := sessionstore.NewWithConfig(config)
 	if err != nil {
@@ -182,7 +182,7 @@ func TestSessionDriverStopSessionVMAddsDockerStopContextMargin(t *testing.T) {
 	if err := driver.StopSessionVM(ctx, session); err != nil {
 		t.Fatalf("StopSessionVM returned error: %v", err)
 	}
-	if runtime.remaining <= config.SessionStopTimeout+4*time.Second {
+	if runtime.remaining <= config.SandboxStopTimeout+4*time.Second {
 		t.Fatalf("StopSessionVM context remaining = %s, want docker stop timeout plus API margin", runtime.remaining)
 	}
 	vmState, err := store.GetVMState(session.Summary.ID)
@@ -200,14 +200,14 @@ func TestSessionDriverStartSessionVMInjectsOpenAIAndAnthropicFacadeEnv(t *testin
 	config := &appconfig.Config{
 		DataRoot:             root,
 		DbAddr:               filepath.Join(root, "data.db"),
-		SessionRoot:          filepath.Join(root, "sessions"),
+		SandboxRoot:          filepath.Join(root, "sessions"),
 		RuntimeDriver:        driverpkg.RuntimeDriverMicrosandbox,
 		MicrosandboxHome:     filepath.Join(root, "microsandbox"),
 		DefaultImage:         "guest:latest",
 		GuestWorkspacePath:   "/workspace",
 		JupyterGuestPort:     8888,
 		JupyterProxyBasePath: "/agent-compose/session",
-		SessionStartTimeout:  2 * time.Second,
+		SandboxStartTimeout:  2 * time.Second,
 		RuntimeBaseURL:       "http://agent-compose.test:7410",
 	}
 	store, err := sessionstore.NewWithConfig(config)
@@ -306,14 +306,14 @@ func TestSessionDriverStartSessionVMIgnoresOptionalClaudeConfigError(t *testing.
 	config := &appconfig.Config{
 		DataRoot:             root,
 		DbAddr:               filepath.Join(root, "data.db"),
-		SessionRoot:          filepath.Join(root, "sessions"),
+		SandboxRoot:          filepath.Join(root, "sessions"),
 		RuntimeDriver:        driverpkg.RuntimeDriverMicrosandbox,
 		MicrosandboxHome:     filepath.Join(root, "microsandbox"),
 		DefaultImage:         "guest:latest",
 		GuestWorkspacePath:   "/workspace",
 		JupyterGuestPort:     8888,
 		JupyterProxyBasePath: "/agent-compose/session",
-		SessionStartTimeout:  2 * time.Second,
+		SandboxStartTimeout:  2 * time.Second,
 		RuntimeBaseURL:       "http://agent-compose.test:7410",
 	}
 	store, err := sessionstore.NewWithConfig(config)

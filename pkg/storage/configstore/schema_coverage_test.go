@@ -976,7 +976,7 @@ func testConfigStoreProjectSchemaMigrationWorkflows(t *testing.T) {
 	}
 
 	sessionStore, err := sessionstore.NewWithConfig(&appconfig.Config{
-		SessionRoot:          filepath.Join(t.TempDir(), "sessions"),
+		SandboxRoot:          filepath.Join(t.TempDir(), "sessions"),
 		RuntimeDriver:        driverpkg.RuntimeDriverBoxlite,
 		DefaultImage:         "guest:latest",
 		JupyterProxyBasePath: "/agent-compose/session",

@@ -55,7 +55,7 @@ func newRuntimeSmokeConfig(t *testing.T, driver string) *appconfig.Config {
 	repoRoot := runtimeSmokeRepoRoot(t)
 	config := &appconfig.Config{
 		DataRoot:                 root,
-		SessionRoot:              filepath.Join(root, "sessions"),
+		SandboxRoot:              filepath.Join(root, "sessions"),
 		RuntimeDriver:            driver,
 		BoxliteHome:              filepath.Join(root, "boxlite"),
 		DockerHome:               filepath.Join(root, "docker"),
@@ -77,10 +77,10 @@ func newRuntimeSmokeConfig(t *testing.T, driver string) *appconfig.Config {
 		GuestLogRoot:             "/data/logs",
 		JupyterGuestPort:         8888,
 		JupyterProxyBasePath:     "/agent-compose/session",
-		SessionStartTimeout:      3 * time.Minute,
-		SessionStopTimeout:       30 * time.Second,
+		SandboxStartTimeout:      3 * time.Minute,
+		SandboxStopTimeout:       30 * time.Second,
 	}
-	if err := os.MkdirAll(config.SessionRoot, 0o755); err != nil {
+	if err := os.MkdirAll(config.SandboxRoot, 0o755); err != nil {
 		t.Fatalf("create session root: %v", err)
 	}
 	return config
@@ -107,7 +107,7 @@ func runtimeSmokeRepoRoot(t *testing.T) string {
 func newRuntimeSmokeSession(t *testing.T, _ context.Context, config *appconfig.Config, driver string) (*Session, VMState, ProxyState) {
 	t.Helper()
 	sessionID := "runtime-mount-smoke-" + driver + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	sessionRoot := filepath.Join(config.SessionRoot, sessionID)
+	sessionRoot := filepath.Join(config.SandboxRoot, sessionID)
 	session := &Session{
 		Summary: SessionSummary{
 			ID:            sessionID,

@@ -41,7 +41,7 @@ func TestRemoveSessionDeletesSessionDirectory(t *testing.T) {
 
 func TestRemoveSessionRejectsUnsafeIDs(t *testing.T) {
 	store := newRemoveSessionTestStore(t)
-	outside := filepath.Join(filepath.Dir(store.config.SessionRoot), "outside")
+	outside := filepath.Join(filepath.Dir(store.config.SandboxRoot), "outside")
 	if err := os.MkdirAll(outside, 0o755); err != nil {
 		t.Fatalf("create outside dir: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestRemoveSessionMissingDirectoryReturnsError(t *testing.T) {
 
 func newRemoveSessionTestStore(t *testing.T) *Store {
 	t.Helper()
-	store, err := NewWithConfig(&appconfig.Config{SessionRoot: filepath.Join(t.TempDir(), "sessions")})
+	store, err := NewWithConfig(&appconfig.Config{SandboxRoot: filepath.Join(t.TempDir(), "sessions")})
 	if err != nil {
 		t.Fatalf("NewWithConfig returned error: %v", err)
 	}

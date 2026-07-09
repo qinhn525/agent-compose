@@ -64,7 +64,7 @@ func TestLifecycleEnsureProxyReadyBranches(t *testing.T) {
 	t.Run("proxy disabled", func(t *testing.T) {
 		session := lifecycleTestSession("session-disabled", driverpkg.RuntimeDriverDocker, domain.VMStatusStopped)
 		lifecycle := Lifecycle{
-			Config: &appconfig.Config{SessionStartTimeout: time.Second},
+			Config: &appconfig.Config{SandboxStartTimeout: time.Second},
 			Store:  &fakeLifecycleStore{session: session, proxyState: domain.ProxyState{}},
 		}
 		_, _, err := lifecycle.EnsureProxyReady(context.Background(), session.Summary.ID)
@@ -77,7 +77,7 @@ func TestLifecycleEnsureProxyReadyBranches(t *testing.T) {
 		session := lifecycleTestSession("session-start-fail", driverpkg.RuntimeDriverDocker, domain.VMStatusStopped)
 		store := &fakeLifecycleStore{session: session, proxyState: domain.ProxyState{Enabled: true, HostPort: unusedTCPPort(t), GuestPort: 8888}}
 		lifecycle := Lifecycle{
-			Config: &appconfig.Config{SessionStartTimeout: time.Second},
+			Config: &appconfig.Config{SandboxStartTimeout: time.Second},
 			Store:  store,
 			Driver: fakeSessionDriver{startErr: errors.New("start failed")},
 		}
@@ -93,7 +93,7 @@ func TestLifecycleEnsureProxyReadyBranches(t *testing.T) {
 		store := &fakeLifecycleStore{session: session, proxyState: proxyState}
 		driver := &recordingSessionDriver{}
 		lifecycle := Lifecycle{
-			Config: &appconfig.Config{SessionStartTimeout: time.Second},
+			Config: &appconfig.Config{SandboxStartTimeout: time.Second},
 			Store:  store,
 			Driver: driver,
 		}

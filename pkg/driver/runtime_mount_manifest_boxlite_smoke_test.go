@@ -27,7 +27,7 @@ func TestSmokeBoxLiteRuntimeMountManifestDirectoryOnlyStarts(t *testing.T) {
 		if t.Failed() && runtimeSmokeKeepTmp() {
 			return
 		}
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), config.SessionStopTimeout)
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), config.SandboxStopTimeout)
 		defer stopCancel()
 		_, _ = runtime.StopSession(stopCtx, session, vmState)
 	})
@@ -56,7 +56,7 @@ func TestSmokeBoxLiteUsesGoContainerRegistryOCIImage(t *testing.T) {
 		if t.Failed() && runtimeSmokeKeepTmp() {
 			return
 		}
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), config.SessionStopTimeout)
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), config.SandboxStopTimeout)
 		defer stopCancel()
 		_, _ = runtime.StopSession(stopCtx, session, vmState)
 	})

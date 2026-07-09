@@ -132,7 +132,7 @@ func (l Lifecycle) EnsureProxyReady(ctx context.Context, sessionID string) (*dom
 	if session.Summary.VMStatus == domain.VMStatusRunning && JupyterTargetReachable(proxyState, 1500*time.Millisecond) {
 		return session, proxyState, nil
 	}
-	startCtx, cancel := context.WithTimeout(ctx, l.Config.SessionStartTimeout)
+	startCtx, cancel := context.WithTimeout(ctx, l.Config.SandboxStartTimeout)
 	defer cancel()
 	if err := workspaces.PrepareSessionWorkspace(startCtx, l.Config, l.Workspace, session); err != nil {
 		session.Summary.VMStatus = domain.VMStatusFailed

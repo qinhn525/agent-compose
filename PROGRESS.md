@@ -85,7 +85,7 @@
 
 参考文档：[docs/plan/sandbox-naming-implementation-plan.md](docs/plan/sandbox-naming-implementation-plan.md#阶段-2配置部署默认值和旧-env-拒绝)
 
-- [ ] 2.1 将 daemon 配置字段和 env 切换到 sandbox 命名
+- [x] 2.1 将 daemon 配置字段和 env 切换到 sandbox 命名
   - 依赖：1.1。
   - 工作内容：
     - 将 `Config.SessionRoot`、`DockerHostSessionRoot`、`SessionStartTimeout`、`SessionStopTimeout` 改为 `SandboxRoot`、`DockerHostSandboxRoot`、`SandboxStartTimeout`、`SandboxStopTimeout`。
@@ -94,9 +94,9 @@
     - 检测旧 env：`SESSION_ROOT`、`DOCKER_HOST_SESSION_ROOT`、`SESSION_START_TIMEOUT`、`SESSION_STOP_TIMEOUT`；旧 env 单独出现时报错，新旧同时出现时按 spec 固定冲突或 warning 行为。
     - 更新依赖配置字段的 Go 调用点和测试 helper。
   - 可并行子任务：
-    - [ ] 可并行：更新 `pkg/config` 字段、加载逻辑和 config tests。
-    - [ ] 可并行：更新 `pkg/driver`、`pkg/agentcompose/adapters`、runtime mount manifest 的配置字段使用。
-    - [ ] 可并行：审计 Windows/UNC/path traversal 相关测试并迁移到 sandbox root 命名。
+    - [x] 可并行：更新 `pkg/config` 字段、加载逻辑和 config tests。
+    - [x] 可并行：更新 `pkg/driver`、`pkg/agentcompose/adapters`、runtime mount manifest 的配置字段使用。
+    - [x] 可并行：审计 Windows/UNC/path traversal 相关测试并迁移到 sandbox root 命名。
   - 测试方案：
     - `go test ./pkg/config ./pkg/driver ./pkg/agentcompose/adapters`
     - 覆盖新 env 正常、旧 env 拒绝、新旧同时出现、Windows/UNC host root、path traversal 拒绝。
@@ -105,10 +105,20 @@
     - 默认 sandbox root 为 `<DATA_ROOT>/sandboxes`。
     - 旧 env 错误信息指向新变量名并说明不支持 silent fallback。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - `pkg/config.Config` 已将 `SessionRoot`、`DockerHostSessionRoot`、`SessionStartTimeout`、`SessionStopTimeout` 切换为 `SandboxRoot`、`DockerHostSandboxRoot`、`SandboxStartTimeout`、`SandboxStopTimeout`。
+      - `NewConfig` 默认 sandbox root 改为 `<DATA_ROOT>/sandboxes`，并读取 `SANDBOX_ROOT`、`DOCKER_HOST_SANDBOX_ROOT`、`SANDBOX_START_TIMEOUT`、`SANDBOX_STOP_TIMEOUT`。
+      - 新增 legacy env 检测：旧 env 单独出现时报错并指向新 env；新旧同时出现时使用新 env 并记录 deprecated warning。
+      - 更新 driver、adapter、store、session lifecycle、app/API 测试 helper 和 runtime mount manifest 相关配置字段调用点。
+      - 更新 Docker host sandbox root 的 Windows/UNC/path traversal 测试和 Docker path rebase 测试命名。
+    - 验证：
+      - `go test ./pkg/config ./pkg/driver ./pkg/agentcompose/adapters`
+      - `go test ./pkg/storage/... ./pkg/sessions ./pkg/agentcompose/app`
+    - 审计与例外：
+      - `rg -n "SessionRoot|DockerHostSessionRoot|SessionStartTimeout|SessionStopTimeout|SESSION_ROOT|DOCKER_HOST_SESSION_ROOT|SESSION_START_TIMEOUT|SESSION_STOP_TIMEOUT" cmd pkg` 仅命中 `pkg/config/config.go` 的 legacy rejection 逻辑和 `pkg/config/config_test.go` 的 legacy 行为测试。
+      - 本任务未修改 Dockerfile、Compose、`.env.example` 或 README；部署变量更新留给 2.2。
+      - `pkg/storage/sessionstore` 包名和内部 session domain 命名仍按计划留给阶段 3/4 迁移，本任务只切换配置字段和 env。
     - 下一目标：2.2。
 
 - [ ] 2.2 更新 Docker/Compose 和 `.env.example` 的部署变量

@@ -371,7 +371,7 @@ func testStoreLegacyWrappersAndMissingStateWorkflows(t *testing.T) {
 	if err := os.WriteFile(fileRoot, []byte("not a dir"), 0o644); err != nil {
 		t.Fatalf("write file session root: %v", err)
 	}
-	if _, err := NewWithConfig(&appconfig.Config{SessionRoot: fileRoot}); err == nil {
+	if _, err := NewWithConfig(&appconfig.Config{SandboxRoot: fileRoot}); err == nil {
 		t.Fatalf("NewWithConfig file session root returned nil error")
 	}
 
@@ -693,7 +693,7 @@ func testStoreAgentRunLegacyVMAndListWorkflows(t *testing.T) {
 func newCoverageStore(t *testing.T) *Store {
 	t.Helper()
 	store, err := NewWithConfig(&appconfig.Config{
-		SessionRoot:          filepath.Join(t.TempDir(), "sessions"),
+		SandboxRoot:          filepath.Join(t.TempDir(), "sessions"),
 		RuntimeDriver:        driverpkg.RuntimeDriverBoxlite,
 		DefaultImage:         "default-box:latest",
 		ImageRegistry:        "registry.test",

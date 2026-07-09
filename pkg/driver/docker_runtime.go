@@ -148,7 +148,7 @@ func (r *dockerRuntime) StopSession(ctx context.Context, session *Session, vmSta
 		return true, nil
 	}
 	if containerInfo.State != nil && containerInfo.State.Running {
-		timeoutSeconds := int(math.Ceil(r.config.SessionStopTimeout.Seconds()))
+		timeoutSeconds := int(math.Ceil(r.config.SandboxStopTimeout.Seconds()))
 		if timeoutSeconds < 0 {
 			timeoutSeconds = 0
 		}
@@ -474,9 +474,9 @@ func (r *dockerRuntime) bindRuntimeMountSource(ctx context.Context, dockerClient
 		return "", fmt.Errorf("docker runtime mount source is empty")
 	}
 
-	hostRoot := strings.TrimSpace(r.config.DockerHostSessionRoot)
+	hostRoot := strings.TrimSpace(r.config.DockerHostSandboxRoot)
 	if hostRoot != "" {
-		return rebasePathUnderRoot(hostPath, r.config.SessionRoot, hostRoot)
+		return rebasePathUnderRoot(hostPath, r.config.SandboxRoot, hostRoot)
 	}
 
 	if dockerClient != nil {

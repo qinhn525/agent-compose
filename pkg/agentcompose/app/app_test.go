@@ -26,11 +26,11 @@ import (
 func TestSetupRegistersServiceGraph(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DATA_ROOT", root)
-	t.Setenv("SESSION_ROOT", filepath.Join(root, "sessions"))
+	t.Setenv("SANDBOX_ROOT", filepath.Join(root, "sessions"))
 	t.Setenv("RUNTIME_DRIVER", driverpkg.RuntimeDriverDocker)
 	t.Setenv("DOCKER_IMAGE", "guest:latest")
-	t.Setenv("SESSION_START_TIMEOUT", "1s")
-	t.Setenv("SESSION_STOP_TIMEOUT", "1s")
+	t.Setenv("SANDBOX_START_TIMEOUT", "1s")
+	t.Setenv("SANDBOX_STOP_TIMEOUT", "1s")
 	t.Setenv("JUPYTER_PROXY_BASE", "/agent-compose/jupyter/")
 	t.Setenv("LLM_API_ENDPOINT", "")
 
@@ -81,12 +81,12 @@ func TestSetupRegistersServiceGraph(t *testing.T) {
 func TestCacheServiceRouteUsesRuntimeCacheController(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DATA_ROOT", root)
-	t.Setenv("SESSION_ROOT", filepath.Join(root, "sessions"))
+	t.Setenv("SANDBOX_ROOT", filepath.Join(root, "sessions"))
 	t.Setenv("IMAGE_CACHE_ROOT", filepath.Join(root, "images"))
 	t.Setenv("RUNTIME_DRIVER", driverpkg.RuntimeDriverDocker)
 	t.Setenv("DOCKER_IMAGE", "guest:latest")
-	t.Setenv("SESSION_START_TIMEOUT", "1s")
-	t.Setenv("SESSION_STOP_TIMEOUT", "1s")
+	t.Setenv("SANDBOX_START_TIMEOUT", "1s")
+	t.Setenv("SANDBOX_STOP_TIMEOUT", "1s")
 	t.Setenv("JUPYTER_PROXY_BASE", "/agent-compose/jupyter/")
 	t.Setenv("LLM_API_ENDPOINT", "")
 

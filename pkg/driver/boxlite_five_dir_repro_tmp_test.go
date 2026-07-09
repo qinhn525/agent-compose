@@ -53,7 +53,7 @@ func TestManualBoxLiteFiveDirMountRepro(t *testing.T) {
 			}
 			err = runtime.startBox(ctx, box)
 			if err == nil {
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), config.SessionStopTimeout)
+				stopCtx, stopCancel := context.WithTimeout(context.Background(), config.SandboxStopTimeout)
 				defer stopCancel()
 				_, _ = runtime.StopSession(stopCtx, session, VMState{BoxID: boxID})
 				t.Fatalf("startBox unexpectedly succeeded")

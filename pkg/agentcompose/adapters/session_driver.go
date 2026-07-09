@@ -30,7 +30,7 @@ func NewSessionDriver(config *appconfig.Config, store *sessionstore.Store, confi
 }
 
 func (d *SessionDriver) StartSessionVM(ctx context.Context, session *domain.Session) error {
-	ctx, cancel := context.WithTimeout(ctx, d.Config.SessionStartTimeout)
+	ctx, cancel := context.WithTimeout(ctx, d.Config.SandboxStartTimeout)
 	defer cancel()
 
 	driver, err := driverpkg.ResolveSessionRuntimeDriver(session.Summary.Driver, d.Config.RuntimeDriver)
@@ -84,7 +84,7 @@ func (d *SessionDriver) StopSessionVM(ctx context.Context, session *domain.Sessi
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, driverpkg.SessionStopContextTimeout(driver, d.Config.SessionStopTimeout))
+	ctx, cancel := context.WithTimeout(ctx, driverpkg.SessionStopContextTimeout(driver, d.Config.SandboxStopTimeout))
 	defer cancel()
 
 	runtime, err := d.Runtimes.ForDriver(driver)

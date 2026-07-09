@@ -298,7 +298,7 @@ func newTestSessionRPCBridge(t *testing.T) (*SessionRPCBridge, *fakeRPCSessionDr
 	root := t.TempDir()
 	config := &appconfig.Config{
 		DataRoot:             root,
-		SessionRoot:          filepath.Join(root, "sessions"),
+		SandboxRoot:          filepath.Join(root, "sessions"),
 		DbAddr:               filepath.Join(root, "data.db"),
 		RuntimeDriver:        driverpkg.RuntimeDriverBoxlite,
 		DefaultImage:         "agent-compose-test:latest",
@@ -306,11 +306,11 @@ func newTestSessionRPCBridge(t *testing.T) (*SessionRPCBridge, *fakeRPCSessionDr
 		GuestWorkspacePath:   "/workspace",
 		GuestStateRoot:       "/state",
 		JupyterGuestPort:     8888,
-		SessionStartTimeout:  time.Second,
-		SessionStopTimeout:   time.Second,
+		SandboxStartTimeout:  time.Second,
+		SandboxStopTimeout:   time.Second,
 		JupyterProxyBasePath: "/agent-compose/session",
 	}
-	if err := os.MkdirAll(config.SessionRoot, 0o755); err != nil {
+	if err := os.MkdirAll(config.SandboxRoot, 0o755); err != nil {
 		t.Fatalf("create session root: %v", err)
 	}
 	db, err := sql.Open("sqlite", config.DbAddr)

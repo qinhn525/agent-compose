@@ -32,7 +32,7 @@ func TestSessionHandlerGetAndListSessionsUseStoreAndReconciler(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	store, err := sessionstore.NewWithConfig(&appconfig.Config{
-		SessionRoot:          filepath.Join(root, "sessions"),
+		SandboxRoot:          filepath.Join(root, "sessions"),
 		RuntimeDriver:        driverpkg.RuntimeDriverBoxlite,
 		DefaultImage:         "debian:bookworm-slim",
 		GuestWorkspacePath:   "/workspace",
