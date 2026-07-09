@@ -150,21 +150,14 @@ func agentDefinitionConfigJSON(agent compose.NormalizedAgentSpec, projectMCPs ma
 }
 
 func selectedAgentMCPs(agent compose.NormalizedAgentSpec, projectMCPs map[string]compose.NormalizedMCPServerSpec) map[string]compose.NormalizedMCPServerSpec {
-	if len(agent.MCP) == 0 || len(projectMCPs) == 0 {
-		return nil
-	}
-	result := make(map[string]compose.NormalizedMCPServerSpec, len(agent.MCP))
-	for _, ref := range agent.MCP {
-		server, ok := projectMCPs[ref]
-		if !ok {
-			continue
+	if len(agent.MCPs) > 0 {
+		result := make(map[string]compose.NormalizedMCPServerSpec, len(agent.MCPs))
+		for name, server := range agent.MCPs {
+			result[name] = server
 		}
-		result[ref] = server
+		return result
 	}
-	if len(result) == 0 {
-		return nil
-	}
-	return result
+	return nil
 }
 
 func NewManagedLoaderFromScheduler(project domain.ProjectRecord, scheduler domain.ProjectSchedulerRecord, agent compose.NormalizedAgentSpec) (domain.Loader, error) {

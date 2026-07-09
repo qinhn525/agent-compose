@@ -81,23 +81,23 @@ func TestNewAgentDefinitionFromSpecPreservesMCPConfig(t *testing.T) {
 	agent := compose.NormalizedAgentSpec{
 		Name:     "reviewer",
 		Provider: "codex",
-		MCP:      []string{"filesystem", "docs"},
-	}
-	projectMCPs := map[string]compose.NormalizedMCPServerSpec{
-		"filesystem": {
-			Type:    "local",
-			Command: "npx",
-			Args:    []string{"-y", "@modelcontextprotocol/server-filesystem", "/workspace"},
-		},
-		"docs": {
-			Type:      "remote",
-			Transport: "http",
-			URL:       "https://docs.example.com/mcp",
-			Headers: map[string]compose.EnvVarSpec{
-				"Authorization": {Value: "Bearer secret", Secret: true},
+		MCPs: map[string]compose.NormalizedMCPServerSpec{
+			"filesystem": {
+				Type:    "local",
+				Command: "npx",
+				Args:    []string{"-y", "@modelcontextprotocol/server-filesystem", "/workspace"},
+			},
+			"docs": {
+				Type:      "remote",
+				Transport: "http",
+				URL:       "https://docs.example.com/mcp",
+				Headers: map[string]compose.EnvVarSpec{
+					"Authorization": {Value: "Bearer secret", Secret: true},
+				},
 			},
 		},
 	}
+	projectMCPs := map[string]compose.NormalizedMCPServerSpec{}
 
 	definition, err := NewAgentDefinitionFromSpec(project, 1, agent, projectMCPs)
 	if err != nil {

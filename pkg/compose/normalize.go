@@ -41,20 +41,20 @@ type NormalizedProjectSpec struct {
 }
 
 type NormalizedAgentSpec struct {
-	Name         string                      `yaml:"name" json:"name"`
-	Provider     string                      `yaml:"provider,omitempty" json:"provider,omitempty"`
-	Model        string                      `yaml:"model,omitempty" json:"model,omitempty"`
-	SystemPrompt string                      `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
-	Image        string                      `yaml:"image,omitempty" json:"image,omitempty"`
-	Build        *NormalizedBuildSpec        `yaml:"build,omitempty" json:"build,omitempty"`
-	Driver       *NormalizedDriverSpec       `yaml:"driver" json:"driver"`
-	Env          map[string]EnvVarSpec       `yaml:"env,omitempty" json:"env,omitempty"`
-	MCP          []string                    `yaml:"mcp,omitempty" json:"mcp,omitempty"`
-	CapsetIDs    []string                    `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
-	Volumes      []NormalizedVolumeMountSpec `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	Workspace    *WorkspaceSpec              `yaml:"workspace,omitempty" json:"workspace,omitempty"`
-	Scheduler    *NormalizedSchedulerSpec    `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
-	Jupyter      *JupyterSpec                `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
+	Name         string                             `yaml:"name" json:"name"`
+	Provider     string                             `yaml:"provider,omitempty" json:"provider,omitempty"`
+	Model        string                             `yaml:"model,omitempty" json:"model,omitempty"`
+	SystemPrompt string                             `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
+	Image        string                             `yaml:"image,omitempty" json:"image,omitempty"`
+	Build        *NormalizedBuildSpec               `yaml:"build,omitempty" json:"build,omitempty"`
+	Driver       *NormalizedDriverSpec              `yaml:"driver" json:"driver"`
+	Env          map[string]EnvVarSpec              `yaml:"env,omitempty" json:"env,omitempty"`
+	MCPs         map[string]NormalizedMCPServerSpec `yaml:"mcps,omitempty" json:"mcps,omitempty"`
+	CapsetIDs    []string                           `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
+	Volumes      []NormalizedVolumeMountSpec        `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	Workspace    *WorkspaceSpec                     `yaml:"workspace,omitempty" json:"workspace,omitempty"`
+	Scheduler    *NormalizedSchedulerSpec           `yaml:"scheduler,omitempty" json:"scheduler,omitempty"`
+	Jupyter      *JupyterSpec                       `yaml:"jupyter,omitempty" json:"jupyter,omitempty"`
 }
 
 type NormalizedMCPServerSpec struct {
@@ -220,7 +220,7 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 	if err != nil {
 		return NormalizedAgentSpec{}, err
 	}
-	mcpRefs, err := normalizeMCPRefs(joinPath("agents", name)+".mcp", []string(agent.MCP), projectMCPs)
+	agentMCPs, err := normalizeAgentMCPEntries(joinPath("agents", name), agent.MCPs, projectMCPs, options)
 	if err != nil {
 		return NormalizedAgentSpec{}, err
 	}
@@ -249,7 +249,7 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 		Build:        build,
 		Driver:       driver,
 		Env:          env,
-		MCP:          mcpRefs,
+		MCPs:         agentMCPs,
 		CapsetIDs:    normalizeStringList(agent.CapsetIDs),
 		Volumes:      volumes,
 		Workspace:    workspace,
@@ -455,17 +455,52 @@ func normalizeMCPServer(path string, server MCPServerSpec, options NormalizeOpti
 	}
 }
 
-func normalizeMCPRefs(path string, values []string, projectMCPs map[string]NormalizedMCPServerSpec) ([]string, error) {
-	refs := normalizeStringList(values)
-	if len(refs) == 0 {
+func normalizeAgentMCPEntries(path string, entries AgentMCPEntriesSpec, projectMCPs map[string]NormalizedMCPServerSpec, options NormalizeOptions) (map[string]NormalizedMCPServerSpec, error) {
+	if len(entries) == 0 {
 		return nil, nil
 	}
-	for _, ref := range refs {
-		if _, ok := projectMCPs[ref]; !ok {
-			return nil, &ValidationError{Path: path, Message: fmt.Sprintf("mcp %q is not defined", ref)}
+	result := make(map[string]NormalizedMCPServerSpec, len(entries))
+	seenNames := make(map[string]string, len(entries))
+	for index, entry := range entries {
+		itemPath := fmt.Sprintf("%s.mcps[%d]", path, index)
+		if ref := strings.TrimSpace(entry.Ref); ref != "" {
+			server, ok := projectMCPs[ref]
+			if !ok {
+				return nil, &ValidationError{Path: itemPath, Message: fmt.Sprintf("mcp %q is not defined", ref)}
+			}
+			if _, ok := seenNames[ref]; ok {
+				continue
+			}
+			seenNames[ref] = itemPath
+			result[ref] = server
+			continue
 		}
+		name := strings.TrimSpace(entry.Name)
+		if name == "" {
+			return nil, &ValidationError{Path: itemPath + ".name", Message: "name is required for inline agent mcp"}
+		}
+		if prev, ok := seenNames[name]; ok {
+			return nil, &ValidationError{Path: itemPath + ".name", Message: fmt.Sprintf("mcp %q is already declared at %s", name, prev)}
+		}
+		server, err := normalizeMCPServer(itemPath, MCPServerSpec{
+			Type:      entry.Type,
+			Transport: entry.Transport,
+			Command:   entry.Command,
+			Args:      entry.Args,
+			Env:       entry.Env,
+			URL:       entry.URL,
+			Headers:   entry.Headers,
+		}, options)
+		if err != nil {
+			return nil, err
+		}
+		seenNames[name] = itemPath
+		result[name] = server
 	}
-	return refs, nil
+	if len(result) == 0 {
+		return nil, nil
+	}
+	return result, nil
 }
 
 func normalizeProjectVolumes(values map[string]VolumeSpec) (map[string]NormalizedVolumeSpec, error) {

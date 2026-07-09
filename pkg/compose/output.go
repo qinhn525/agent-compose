@@ -45,7 +45,7 @@ type orderedAgentSpec struct {
 	Build        *NormalizedBuildSpec        `yaml:"build,omitempty" json:"build,omitempty"`
 	Driver       *NormalizedDriverSpec       `yaml:"driver" json:"driver"`
 	Env          []orderedEnvVarSpec         `yaml:"env,omitempty" json:"env,omitempty"`
-	MCP          []string                    `yaml:"mcp,omitempty" json:"mcp,omitempty"`
+	MCPs         []orderedMCPServerSpec      `yaml:"mcps,omitempty" json:"mcps,omitempty"`
 	CapsetIDs    []string                    `yaml:"capset_ids,omitempty" json:"capset_ids,omitempty"`
 	Volumes      []NormalizedVolumeMountSpec `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	Workspace    *WorkspaceSpec              `yaml:"workspace,omitempty" json:"workspace,omitempty"`
@@ -113,7 +113,7 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 			Build:        cloneNormalizedBuildSpec(agent.Build),
 			Driver:       cloneNormalizedDriverSpec(agent.Driver),
 			Env:          orderedEnvVars(agent.Env, redactSecrets),
-			MCP:          slices.Clone(agent.MCP),
+			MCPs:         orderedMCPServers(agent.MCPs, redactSecrets),
 			CapsetIDs:    slices.Clone(agent.CapsetIDs),
 			Volumes:      cloneNormalizedVolumeMountSpecs(agent.Volumes),
 			Workspace:    cloneWorkspaceSpec(agent.Workspace),
@@ -155,7 +155,7 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 			Build:        agent.Build,
 			Driver:       agent.Driver,
 			Env:          envVarMapFromOrdered(agent.Env),
-			MCP:          slices.Clone(agent.MCP),
+			MCPs:         mcpMapFromOrdered(agent.MCPs),
 			CapsetIDs:    slices.Clone(agent.CapsetIDs),
 			Volumes:      cloneNormalizedVolumeMountSpecs(agent.Volumes),
 			Workspace:    agent.Workspace,

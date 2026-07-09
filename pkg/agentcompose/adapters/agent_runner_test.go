@@ -219,9 +219,7 @@ func TestAgentRunnerPrepareManagedMCPConfigForProviders(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(execution.HostSessionHome(session), ".codex"), 0o755); err != nil {
 			t.Fatalf("MkdirAll returned error: %v", err)
 		}
-		if err := os.WriteFile(execution.HostAgentMCPConfigPath(session), []byte(`{"mcps":{"old":{}}}`), 0o644); err == nil {
-			// ignore; directory may not exist yet, the codex config below is the important stale native config assertion
-		}
+		_ = os.WriteFile(execution.HostAgentMCPConfigPath(session), []byte(`{"mcps":{"old":{}}}`), 0o644)
 		if err := os.WriteFile(filepath.Join(execution.HostSessionHome(session), ".codex", "config.toml"), []byte("# agent-compose managed mcp start\n[mcp_servers.old]\ncommand = \"old\"\n# agent-compose managed mcp end\n"), 0o644); err != nil {
 			t.Fatalf("WriteFile returned error: %v", err)
 		}

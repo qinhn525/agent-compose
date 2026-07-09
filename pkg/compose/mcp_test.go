@@ -28,10 +28,15 @@ mcps:
 agents:
   reviewer:
     provider: codex
-    mcp: [filesystem, docs]
+    mcps: [filesystem, docs]
   writer:
     provider: claude
-    mcp: filesystem
+    mcps:
+      - filesystem
+      - name: notes
+        type: local
+        command: uvx
+        args: [notes-server]
 `))
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
@@ -42,27 +47,31 @@ agents:
 	if got := spec.MCPs["filesystem"].Command; got != "npx" {
 		t.Fatalf("filesystem command = %q", got)
 	}
-	if got := []string(spec.Agents["reviewer"].MCP); len(got) != 2 || got[0] != "filesystem" || got[1] != "docs" {
-		t.Fatalf("reviewer mcp = %#v", got)
+	if got := spec.Agents["reviewer"].MCPs; len(got) != 2 || got[0].Ref != "filesystem" || got[1].Ref != "docs" {
+		t.Fatalf("reviewer mcps = %#v", got)
 	}
-	if got := []string(spec.Agents["writer"].MCP); len(got) != 1 || got[0] != "filesystem" {
-		t.Fatalf("writer mcp = %#v", got)
+	if got := spec.Agents["writer"].MCPs; len(got) != 2 || got[0].Ref != "filesystem" || got[1].Name != "notes" || got[1].Command != "uvx" {
+		t.Fatalf("writer mcps = %#v", got)
 	}
 }
 
 func TestParseRejectsInvalidMCPRefType(t *testing.T) {
-	_, err := Parse([]byte(`
+	spec, err := Parse([]byte(`
 name: invalid-mcp-ref
 agents:
   reviewer:
     provider: codex
-    mcp:
+    mcps:
       name: docs
 `))
-	if err == nil {
-		t.Fatalf("expected Parse to fail")
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
 	}
-	if got := err.Error(); !strings.Contains(got, "agents.reviewer.mcp") {
+	_, err = Normalize(spec, NormalizeOptions{})
+	if err == nil {
+		t.Fatalf("expected Normalize to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "agents.reviewer.mcps[0].type") {
 		t.Fatalf("error = %q, want mcp path", got)
 	}
 }
@@ -90,7 +99,14 @@ mcps:
 agents:
   reviewer:
     provider: codex
-    mcp: [filesystem, docs, filesystem]
+    mcps:
+      - filesystem
+      - docs
+      - filesystem
+      - name: notes
+        type: local
+        command: uvx
+        args: [notes-server]
 `)
 
 	normalized, err := Normalize(spec, NormalizeOptions{Env: map[string]string{
@@ -107,8 +123,8 @@ agents:
 	if got := normalized.MCPs["docs"].URL; got != "https://docs.example.com/mcp" {
 		t.Fatalf("docs url = %q", got)
 	}
-	if got := normalized.Agents[0].MCP; len(got) != 2 || got[0] != "filesystem" || got[1] != "docs" {
-		t.Fatalf("agent mcp refs = %#v", got)
+	if got := normalized.Agents[0].MCPs; len(got) != 3 || got["filesystem"].Command != "npx" || got["notes"].Command != "uvx" {
+		t.Fatalf("agent mcps = %#v", got)
 	}
 }
 
@@ -122,7 +138,7 @@ mcps:
 agents:
   reviewer:
     provider: codex
-    mcp: [filesystem, missing]
+    mcps: [filesystem, missing]
 `)
 
 	_, err := Normalize(spec, NormalizeOptions{})
@@ -215,7 +231,7 @@ mcps:
 agents:
   reviewer:
     provider: codex
-    mcp: docs
+    mcps: docs
 `)
 	normalized, err := Normalize(spec, NormalizeOptions{Env: map[string]string{"DOCS_TOKEN": "super-secret"}})
 	if err != nil {
