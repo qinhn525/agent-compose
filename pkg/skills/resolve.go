@@ -853,7 +853,7 @@ func sanitizedZipFileMode(mode os.FileMode) os.FileMode {
 	if perm == 0 {
 		return 0o644
 	}
-	return perm
+	return perm &^ 0o022
 }
 
 func copyWithExpandedLimit(dst io.Writer, src io.Reader, expanded *uint64, limit uint64) error {

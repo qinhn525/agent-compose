@@ -341,6 +341,9 @@ func TestExtractZipSanitizesEntryModes(t *testing.T) {
 	if dirInfo.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
 		t.Fatalf("dir mode kept special bits: %v", dirInfo.Mode())
 	}
+	if dirInfo.Mode().Perm()&0o022 != 0 {
+		t.Fatalf("dir mode kept group/world writable bits: %v", dirInfo.Mode().Perm())
+	}
 	fileInfo, err := os.Stat(filepath.Join(out, "bin", "run.sh"))
 	if err != nil {
 		t.Fatalf("stat extracted file: %v", err)
@@ -348,8 +351,31 @@ func TestExtractZipSanitizesEntryModes(t *testing.T) {
 	if fileInfo.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
 		t.Fatalf("file mode kept special bits: %v", fileInfo.Mode())
 	}
+	if fileInfo.Mode().Perm()&0o022 != 0 {
+		t.Fatalf("file mode kept group/world writable bits: %v", fileInfo.Mode().Perm())
+	}
 	if fileInfo.Mode().Perm() != 0o755 {
 		t.Fatalf("file perm = %v, want 0755", fileInfo.Mode().Perm())
+	}
+}
+
+func TestSanitizedZipFileMode(t *testing.T) {
+	tests := []struct {
+		name string
+		mode os.FileMode
+		want os.FileMode
+	}{
+		{name: "default", mode: 0, want: 0o644},
+		{name: "world writable file", mode: 0o666, want: 0o644},
+		{name: "world writable executable", mode: 0o777, want: 0o755},
+		{name: "special bits", mode: os.ModeSetuid | os.ModeSetgid | os.ModeSticky | 0o777, want: 0o755},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sanitizedZipFileMode(tt.mode); got != tt.want {
+				t.Fatalf("sanitizedZipFileMode(%v) = %v, want %v", tt.mode, got, tt.want)
+			}
+		})
 	}
 }
 
