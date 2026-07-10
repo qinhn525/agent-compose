@@ -150,6 +150,9 @@ func (r Resolver) resolveGit(ctx context.Context, spec domain.AgentSkill) (Resol
 	if err := validateGitOperand("git url", urlValue); err != nil {
 		return ResolvedSkill{}, fmt.Errorf("validate git skill %s url: %w", spec.Name, err)
 	}
+	if err := validateGitURLScheme(urlValue); err != nil {
+		return ResolvedSkill{}, fmt.Errorf("validate git skill %s url: %w", spec.Name, err)
+	}
 	ref := strings.TrimSpace(spec.Ref)
 	if err := validateGitOperand("git ref", ref); err != nil {
 		return ResolvedSkill{}, fmt.Errorf("validate git skill %s ref: %w", spec.Name, err)
@@ -752,6 +755,26 @@ func validateGitOperand(label, value string) error {
 		return fmt.Errorf("%s must not start with '-'", label)
 	}
 	return nil
+}
+
+func validateGitURLScheme(value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	if strings.Contains(trimmed, "::") {
+		return fmt.Errorf("git remote helper URLs are not supported")
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" {
+		return nil
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https", "ssh", "git", "file":
+		return nil
+	default:
+		return fmt.Errorf("git url scheme %q is not supported", parsed.Scheme)
+	}
 }
 
 func gitCacheURL(raw string) string {

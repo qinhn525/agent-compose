@@ -175,6 +175,19 @@ func TestGitURLWithCredentials(t *testing.T) {
 	}
 }
 
+func TestResolveSecretRefsUsesScopedEnvWhenProvided(t *testing.T) {
+	t.Setenv("GIT_TOKEN", "daemon-token")
+	if got := resolveSecretRefs("${GIT_TOKEN}", map[string]string{}); got != "" {
+		t.Fatalf("resolveSecretRefs with scoped empty env = %q, want empty", got)
+	}
+	if got := resolveSecretRefs("${GIT_TOKEN}", map[string]string{"GIT_TOKEN": "agent-token"}); got != "agent-token" {
+		t.Fatalf("resolveSecretRefs with scoped env = %q, want agent-token", got)
+	}
+	if got := resolveSecretRefs("${GIT_TOKEN}", nil); got != "daemon-token" {
+		t.Fatalf("resolveSecretRefs with nil env = %q, want daemon-token", got)
+	}
+}
+
 func TestGitCacheURLStripsCredentials(t *testing.T) {
 	got := gitCacheURL("https://user:secret@git.example/repo.git")
 	if got != "https://git.example/repo.git" {
@@ -187,6 +200,34 @@ func TestValidateGitOperandRejectsOptionLikeValue(t *testing.T) {
 		t.Run(value, func(t *testing.T) {
 			if err := validateGitOperand("git url", value); err == nil {
 				t.Fatalf("expected option-like git operand to be rejected")
+			}
+		})
+	}
+}
+
+func TestValidateGitURLSchemeRejectsRemoteHelpers(t *testing.T) {
+	for _, value := range []string{"ext::sh -c id", "hg::https://example.invalid/repo"} {
+		t.Run(value, func(t *testing.T) {
+			if err := validateGitURLScheme(value); err == nil {
+				t.Fatalf("expected git remote helper URL to be rejected")
+			}
+		})
+	}
+}
+
+func TestValidateGitURLSchemeRejectsUnsupportedSchemes(t *testing.T) {
+	if err := validateGitURLScheme("ftp://example.invalid/repo.git"); err == nil {
+		t.Fatalf("expected unsupported git URL scheme to be rejected")
+	}
+	for _, value := range []string{
+		"https://example.invalid/repo.git",
+		"ssh://git@example.invalid/repo.git",
+		"git@example.invalid:org/repo.git",
+		"/tmp/repo.git",
+	} {
+		t.Run(value, func(t *testing.T) {
+			if err := validateGitURLScheme(value); err != nil {
+				t.Fatalf("validateGitURLScheme returned error: %v", err)
 			}
 		})
 	}

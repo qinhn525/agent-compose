@@ -459,6 +459,20 @@ describe("OpenCodeRunner", () => {
     });
   });
 
+  it("cleans temporary OpenCode skills config", async () => {
+    await withTempSession(async (root) => {
+      const runner = new OpenCodeRunner({ ...runnerOptions(root, "", "opencode"), skills: ["pdf"] });
+
+      const env = await runner.environment();
+      const configPath = String(env.OPENCODE_CONFIG);
+      await expect(fs.stat(configPath)).resolves.toBeTruthy();
+
+      await runner.cleanupSkillsConfig();
+
+      await expect(fs.stat(path.dirname(configPath))).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
   it("merges OpenCode skills config with an existing config file", async () => {
     await withTempSession(async (root) => {
       const fs = await import("node:fs/promises");

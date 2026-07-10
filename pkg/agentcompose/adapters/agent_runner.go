@@ -63,7 +63,8 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, session *domain.Sandb
 	}
 	agentDef, err := r.resolveAgentDefinition(ctx, session, agentDefinitionID)
 	if err != nil {
-		return domain.ExecResult{}, domain.AgentRunResult{}, err
+		slog.Warn("resolve agent definition failed", "agent_id", strings.TrimSpace(agentDefinitionID), "error", err)
+		agentDef = nil
 	}
 	systemPrompt := ""
 	effectiveModel := strings.TrimSpace(model)
@@ -79,6 +80,7 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, session *domain.Sandb
 	var skillNames []string
 	if agentDef != nil && len(agentDef.Skills) > 0 {
 		resolver := skills.NewResolver(r.config)
+		resolver.Env = agentSkillEnv(agentDef.EnvItems)
 		resolvedSkills, err := resolver.Resolve(ctx, agentDef.Skills)
 		if err != nil {
 			return domain.ExecResult{}, domain.AgentRunResult{}, err
@@ -121,6 +123,14 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, session *domain.Sandb
 		return execution.SanitizeAgentExecResult(result), domain.AgentRunResult{}, err
 	}
 	return execution.SanitizeAgentExecResult(result), parsed, nil
+}
+
+func agentSkillEnv(items []domain.SandboxEnvVar) map[string]string {
+	env := domain.SandboxEnvMap(items)
+	if env == nil {
+		return map[string]string{}
+	}
+	return env
 }
 
 func (r *AgentRunner) prepareAgentMCPConfig(ctx context.Context, session *domain.Sandbox, agentDefinitionID, agent string) error {
