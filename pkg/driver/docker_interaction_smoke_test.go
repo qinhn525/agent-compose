@@ -36,11 +36,7 @@ func TestDockerCommandInteractionSmokeCatStdinEOF(t *testing.T) {
 		t.Fatalf("EnsureSandbox() error = %v", err)
 	}
 	vmState.BoxID = info.BoxID
-	t.Cleanup(func() {
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), SandboxStopContextTimeout(RuntimeDriverDocker, config.SandboxStopTimeout))
-		defer stopCancel()
-		_, _ = runtime.StopSandbox(stopCtx, session, vmState)
-	})
+	cleanupRuntimeSmokeSandbox(t, config, runtime, session, vmState)
 
 	interaction, err := runtime.OpenInteraction(ctx, session, vmState, RuntimeStartSpec{
 		OperationID: "smoke-cat",

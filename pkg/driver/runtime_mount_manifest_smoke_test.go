@@ -31,6 +31,48 @@ func runtimeSmokeKeepTmp() bool {
 	return strings.TrimSpace(os.Getenv("SMOKE_KEEP_TMP")) != ""
 }
 
+func cleanupRuntimeSmokeSandbox(t *testing.T, config *appconfig.Config, runtime SandboxRuntime, session *Sandbox, vmState VMState) {
+	t.Helper()
+	t.Cleanup(func() {
+		if t.Failed() && runtimeSmokeKeepTmp() {
+			return
+		}
+		removeCtx, removeCancel := context.WithTimeout(context.Background(), SandboxStopContextTimeout(session.Summary.Driver, config.SandboxStopTimeout))
+		defer removeCancel()
+		if err := runtime.RemoveSandbox(removeCtx, session, vmState); err != nil {
+			t.Errorf("RemoveSandbox cleanup error = %v", err)
+		}
+	})
+}
+
+func TestCleanupRuntimeSmokeSandboxRemovesRuntime(t *testing.T) {
+	runtime := &cleanupRuntimeSmokeRuntime{}
+	config := &appconfig.Config{SandboxStopTimeout: time.Second}
+	session := &Sandbox{Summary: SandboxSummary{ID: "smoke-cleanup", Driver: RuntimeDriverDocker}}
+	t.Run("cleanup", func(t *testing.T) {
+		cleanupRuntimeSmokeSandbox(t, config, runtime, session, VMState{BoxID: "container-1"})
+	})
+	if runtime.removeCalls != 1 || runtime.stopCalls != 0 {
+		t.Fatalf("cleanup calls: remove=%d stop=%d, want remove=1 stop=0", runtime.removeCalls, runtime.stopCalls)
+	}
+}
+
+type cleanupRuntimeSmokeRuntime struct {
+	fakeInteractionRuntime
+	removeCalls int
+	stopCalls   int
+}
+
+func (r *cleanupRuntimeSmokeRuntime) StopSandbox(context.Context, *Sandbox, VMState) (bool, error) {
+	r.stopCalls++
+	return false, nil
+}
+
+func (r *cleanupRuntimeSmokeRuntime) RemoveSandbox(context.Context, *Sandbox, VMState) error {
+	r.removeCalls++
+	return nil
+}
+
 func newRuntimeSmokeConfig(t *testing.T, driver string) *appconfig.Config {
 	t.Helper()
 	root, err := os.MkdirTemp("/tmp", "agent-compose-smoke-")
@@ -218,11 +260,7 @@ func assertRuntimeStopResumePreservesWritableLayer(t *testing.T, ctx context.Con
 		// when checking writable-layer persistence across a VM power cycle.
 		statePath = "/var/tmp/regression-sandbox-state.txt"
 	}
-	t.Cleanup(func() {
-		removeCtx, removeCancel := context.WithTimeout(context.Background(), SandboxStopContextTimeout(session.Summary.Driver, config.SandboxStopTimeout))
-		defer removeCancel()
-		_ = runtime.RemoveSandbox(removeCtx, session, vmState)
-	})
+	cleanupRuntimeSmokeSandbox(t, config, runtime, session, vmState)
 
 	writeResult, err := runtime.Exec(ctx, session, vmState, ExecSpec{
 		Command: "sh",
