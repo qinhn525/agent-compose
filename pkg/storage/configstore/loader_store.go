@@ -101,11 +101,13 @@ func (s *loaderStore) ensureLoaderSchema(ctx context.Context) error {
             FOREIGN KEY(loader_id) REFERENCES loader(id) ON DELETE CASCADE
         );`,
 		`CREATE TABLE IF NOT EXISTS loader_binding (
-            loader_id TEXT PRIMARY KEY,
-            sandbox_id TEXT NOT NULL,
-            created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
-            updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
-        );`,
+			loader_id TEXT NOT NULL,
+			trigger_id TEXT NOT NULL DEFAULT '',
+			sandbox_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+			updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+			PRIMARY KEY(loader_id, trigger_id)
+		);`,
 	}
 	for _, stmt := range statements {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -126,6 +128,47 @@ func (s *loaderStore) ensureLoaderSchema(ctx context.Context) error {
 	}
 	if err := s.ensureLoaderManagedColumns(ctx); err != nil {
 		return err
+	}
+	if err := s.ensureLoaderBindingTriggerColumn(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *loaderStore) ensureLoaderBindingTriggerColumn(ctx context.Context) error {
+	columns, err := TableColumnTypes(ctx, s.db, "loader_binding")
+	if err != nil {
+		return err
+	}
+	if _, ok := columns["trigger_id"]; ok {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin loader binding trigger migration: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	statements := []string{
+		`ALTER TABLE loader_binding RENAME TO loader_binding_legacy`,
+		`CREATE TABLE loader_binding (
+			loader_id TEXT NOT NULL,
+			trigger_id TEXT NOT NULL DEFAULT '',
+			sandbox_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+			updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+			PRIMARY KEY(loader_id, trigger_id)
+		)`,
+		`INSERT INTO loader_binding(loader_id, trigger_id, sandbox_id, created_at, updated_at)
+			SELECT loader_id, '', sandbox_id, created_at, updated_at FROM loader_binding_legacy`,
+		`DROP TABLE loader_binding_legacy`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("migrate loader binding trigger scope: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit loader binding trigger migration: %w", err)
 	}
 	return nil
 }
@@ -926,8 +969,8 @@ func (s *loaderStore) DeleteLoaderState(ctx context.Context, loaderID, key strin
 	return nil
 }
 
-func (s *loaderStore) GetLoaderBinding(ctx context.Context, loaderID string) (domain.LoaderBinding, bool, error) {
-	row := s.db.QueryRowContext(ctx, loaders.SelectLoaderBindingSQL()+` WHERE loader_id = ?`, strings.TrimSpace(loaderID))
+func (s *loaderStore) GetLoaderBinding(ctx context.Context, loaderID, triggerID string) (domain.LoaderBinding, bool, error) {
+	row := s.db.QueryRowContext(ctx, loaders.SelectLoaderBindingSQL()+` WHERE loader_id = ? AND trigger_id = ?`, strings.TrimSpace(loaderID), strings.TrimSpace(triggerID))
 	item, err := loaders.ScanLoaderBinding(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -940,6 +983,7 @@ func (s *loaderStore) GetLoaderBinding(ctx context.Context, loaderID string) (do
 
 func (s *loaderStore) UpsertLoaderBinding(ctx context.Context, binding domain.LoaderBinding) error {
 	binding.LoaderID = strings.TrimSpace(binding.LoaderID)
+	binding.TriggerID = strings.TrimSpace(binding.TriggerID)
 	binding.SandboxID = strings.TrimSpace(binding.SandboxID)
 	if binding.LoaderID == "" || binding.SandboxID == "" {
 		return fmt.Errorf("loader binding requires loader id and sandbox id")
@@ -949,8 +993,8 @@ func (s *loaderStore) UpsertLoaderBinding(ctx context.Context, binding domain.Lo
 		binding.CreatedAt = now
 	}
 	binding.UpdatedAt = now
-	_, err := s.db.ExecContext(ctx, `INSERT INTO loader_binding(loader_id, sandbox_id, created_at, updated_at) VALUES(?, ?, ?, ?)
-        ON CONFLICT(loader_id) DO UPDATE SET sandbox_id = excluded.sandbox_id, updated_at = excluded.updated_at`, binding.LoaderID, binding.SandboxID, binding.CreatedAt.Unix(), binding.UpdatedAt.Unix())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO loader_binding(loader_id, trigger_id, sandbox_id, created_at, updated_at) VALUES(?, ?, ?, ?, ?)
+		ON CONFLICT(loader_id, trigger_id) DO UPDATE SET sandbox_id = excluded.sandbox_id, updated_at = excluded.updated_at`, binding.LoaderID, binding.TriggerID, binding.SandboxID, binding.CreatedAt.Unix(), binding.UpdatedAt.Unix())
 	if err != nil {
 		return fmt.Errorf("upsert loader binding: %w", err)
 	}

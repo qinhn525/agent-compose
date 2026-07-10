@@ -174,6 +174,7 @@ func (h *RuntimeHost) CallSessionRPC(ctx context.Context, method, requestJSON st
 }
 
 func (h *RuntimeHost) Agent(ctx context.Context, prompt string, request domain.LoaderAgentRequest) (domain.LoaderAgentResult, error) {
+	request.BindingTriggerID = h.run.TriggerID
 	if h.useProjectManagedAgentRun(request) {
 		return h.ProjectAgent(ctx, prompt, request)
 	}
@@ -291,15 +292,16 @@ func (h *RuntimeHost) ProjectAgent(ctx context.Context, prompt string, request d
 func (h *RuntimeHost) Command(ctx context.Context, request domain.LoaderCommandRequest) (domain.LoaderCommandResult, error) {
 	cleanupSession := h.commandRequiresCleanup(request)
 	agentRequest := domain.LoaderAgentRequest{
-		SandboxPolicy:  domain.LoaderCommandSandboxPolicy(request),
-		Title:          request.Title,
-		Driver:         request.Driver,
-		GuestImage:     request.GuestImage,
-		PullPolicy:     request.PullPolicy,
-		WorkspaceID:    request.WorkspaceID,
-		JupyterEnabled: request.JupyterEnabled,
-		SandboxEnv:     domain.LoaderCommandSandboxEnv(request),
-		Volumes:        request.Volumes,
+		SandboxPolicy:    domain.LoaderCommandSandboxPolicy(request),
+		Title:            request.Title,
+		Driver:           request.Driver,
+		GuestImage:       request.GuestImage,
+		PullPolicy:       request.PullPolicy,
+		WorkspaceID:      request.WorkspaceID,
+		JupyterEnabled:   request.JupyterEnabled,
+		SandboxEnv:       domain.LoaderCommandSandboxEnv(request),
+		Volumes:          request.Volumes,
+		BindingTriggerID: h.run.TriggerID,
 	}
 	session, eventType, err := h.ensureCommandSession(ctx, agentRequest, cleanupSession)
 	if err != nil {
