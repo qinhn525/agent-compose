@@ -2592,7 +2592,7 @@ agents:
           cron: "0 2 * * *"
           prompt: review nightly
 `)
-	var sawRequest bool
+	var requestedSandboxIDs []string
 	server := newComposeServiceStubServer(t, composeServiceStubs{
 		project: projectServiceStub{
 			getProject: func(ctx context.Context, req *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
@@ -2601,8 +2601,8 @@ agents:
 		},
 		run: runServiceStub{
 			runAgentStream: func(ctx context.Context, req *connect.Request[agentcomposev2.RunAgentRequest], stream *connect.ServerStream[agentcomposev2.RunAgentStreamResponse]) error {
-				sawRequest = true
-				if req.Msg.GetAgentName() != "reviewer" || !identity.IsID(req.Msg.GetTriggerId()) || req.Msg.GetSandboxId() != "sandbox-existing" || req.Msg.GetPrompt() != "" || req.Msg.GetCommand() != "" {
+				requestedSandboxIDs = append(requestedSandboxIDs, req.Msg.GetSandboxId())
+				if req.Msg.GetAgentName() != "reviewer" || !identity.IsID(req.Msg.GetTriggerId()) || req.Msg.GetPrompt() != "" || req.Msg.GetCommand() != "" {
 					t.Fatalf("RunAgentStream scheduler trigger request = %#v", req.Msg)
 				}
 				return stream.Send(&agentcomposev2.RunAgentStreamResponse{
@@ -2624,12 +2624,25 @@ agents:
 	})
 	defer server.Close()
 
-	stdout, stderr, _, exitCode := executeCLICommand("scheduler", "trigger", "--host", server.URL, "--file", composePath, "--sandbox", "sandbox-existing", "reviewer", "nightly")
-	if exitCode != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("scheduler trigger code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
+	for _, tc := range []struct {
+		name      string
+		extraArgs []string
+	}{
+		{name: "creates sandbox"},
+		{name: "reuses sandbox", extraArgs: []string{"--sandbox", "sandbox-existing"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"scheduler", "trigger", "--host", server.URL, "--file", composePath}
+			args = append(args, tc.extraArgs...)
+			args = append(args, "reviewer", "nightly")
+			stdout, stderr, _, exitCode := executeCLICommand(args...)
+			if exitCode != 0 || stdout != "" || stderr != "" {
+				t.Fatalf("scheduler trigger code/stdout/stderr = %d / %q / %q", exitCode, stdout, stderr)
+			}
+		})
 	}
-	if !sawRequest {
-		t.Fatal("RunAgentStream was not called")
+	if !reflect.DeepEqual(requestedSandboxIDs, []string{"", "sandbox-existing"}) {
+		t.Fatalf("scheduler trigger sandbox IDs = %#v", requestedSandboxIDs)
 	}
 }
 
