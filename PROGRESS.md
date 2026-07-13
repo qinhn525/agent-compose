@@ -20,8 +20,8 @@
 
 - 已确认：resume 严格保持 sandbox workspace；旧 sandbox 原样迁移；首版无 reset API；真实 runtime 使用 Docker E2E。
 - 已完成文档：技术规格、实施计划。
-- 代码任务：9/20 完成。
-- 当前下一目标：4.1 建立 workspace manifest helper 和 Session/Jupyter integration。
+- 代码任务：10/20 完成。
+- 当前下一目标：4.2 与 4.3 可并行。
 
 ## 执行规则
 
@@ -369,23 +369,39 @@
 
 参考：[实施计划阶段 4](docs/plan/workspace-resume-preservation-implementation-plan.md#阶段-4补齐跨组件-integration-回归)
 
-- [ ] 4.1 建立 workspace manifest helper 和 Session/Jupyter integration
+- [x] 4.1 建立 workspace manifest helper 和 Session/Jupyter integration
   - 依赖：3.4。
   - 工作内容：
     - 实现不跟随 symlink 的 manifest helper，记录 path、type、mode、content hash 和 symlink target。
     - 增加 v1 file workspace create→修改/删除/新增→stop→模板变化→resume 测试。
     - 增加 `EnsureProxyReady` 自动恢复测试，并在 driver start 前断言 manifest 未变。
   - 可并行子任务：
-    - [ ] 可并行：manifest helper 和 focused unit tests。
-    - [ ] 可并行：Session integration。
-    - [ ] 可并行：Jupyter lifecycle integration。
+    - [x] 可并行：manifest helper 和 focused unit tests。
+    - [x] 可并行：Session integration。
+    - [x] 可并行：Jupyter lifecycle integration。
   - 测试方案：`./scripts/with-go-toolchain.sh go test ./pkg/sessions ./pkg/agentcompose/adapters -run 'TestIntegration.*(Workspace|Session|Proxy)' -count=1`。
   - 验收标准：manifest 能发现当前 bug 的覆盖/复活行为；修复后普通 resume 和自动恢复均完全保持。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - 新增 `pkg/internal/testutil.WorkspaceManifest`，递归记录 slash-normalized relative path、entry type、完整 mode、regular-file SHA-256 和 symlink target；根目录记为 `.`，结果稳定排序且遍历不跟随 symlink。
+      - 新增 v1 Session file workspace integration：真实 configstore/sessionstore/Provisioner 完成 create，随后修改同名文件及 mode、删除模板文件、新增文件和 symlink，stop 后改变 source，再 resume 并比较 manifest。
+      - 新增 Jupyter `EnsureProxyReady` integration：stopped ready sandbox 在自动恢复 driver start 前和返回后保持完整 manifest，并保持 ready timestamp 与 proxy state。
+    - 验证：
+      - `./scripts/with-go-toolchain.sh go test ./pkg/internal/testutil -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh go test ./pkg/sessions ./pkg/agentcompose/adapters -run 'TestIntegration.*(Workspace|Session|Proxy)' -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh go test ./pkg/internal/testutil ./pkg/storage/configstore ./pkg/storage/sessionstore ./pkg/workspaces ./pkg/sessions ./pkg/agentcompose/adapters -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh go test -race ./pkg/internal/testutil ./pkg/sessions ./pkg/agentcompose/adapters -run 'TestWorkspaceManifest|TestIntegration.*(Workspace|Session|Proxy)' -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh go test ./pkg/... -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh golangci-lint fmt --no-config --diff ./pkg/internal/testutil ./pkg/sessions ./pkg/agentcompose/adapters`：通过，无格式 diff。
+      - `./scripts/with-go-toolchain.sh golangci-lint run --no-config --allow-parallel-runners ./pkg/internal/testutil ./pkg/sessions ./pkg/agentcompose/adapters`：通过，`0 issues`。
+      - `git diff --check`：通过。
+    - 审计与例外：
+      - Manifest unit tests 覆盖 regular file hash/mode、directory、in-tree/broken/outside symlink、确定性排序、missing/non-directory/symlink root；symlink 只记录 `Readlink` target，不读取或遍历 target 内容。
+      - 两条 integration 都在 resume 前写入冲突 source 内容、保留被用户删除的 source 文件并新增 source-only 文件；旧的重复 materialization 会在 driver start 前改变 manifest，因此测试能直接发现覆盖、复活和新增污染。
+      - Session integration 断言 create/resume 恰好两次 driver start、stop 一次和全程 provisioning ready；Jupyter integration 断言自动恢复恰好启动一次、ready `UpdatedAt` 不变、返回及持久化 proxy state 不变。
+      - 测试仅通过真实 Store/Provisioner 和正式 lifecycle/bridge 方法构造正常状态；fake driver 只隔离 runtime，不使用 Docker、外部网络、测试后门或 SQLite 直接改写。
+      - 变更范围仅为共享 test helper、Session/Jupyter integration tests 和本账本；未修改 production code、cmd、proto/generated client、SQLite schema、公开 CLI/API shape、环境变量、compose、runtime mount、Task/TESTING 或 CI。无未运行的任务内门禁或其他例外。
     - 下一目标：4.2 与 4.3 可并行。
 
 - [ ] 4.2 增加 Loader sticky 和 Project local integration
