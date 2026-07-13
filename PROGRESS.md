@@ -20,8 +20,8 @@
 
 - 已确认：resume 严格保持 sandbox workspace；旧 sandbox 原样迁移；首版无 reset API；真实 runtime 使用 Docker E2E。
 - 已完成文档：技术规格、实施计划。
-- 代码任务：6/20 完成。
-- 当前下一目标：3.2 与 3.3 可并行接入各生命周期入口。
+- 代码任务：7/20 完成。
+- 当前下一目标：3.3 接入 Loader 和 Project Run 复用路径。
 
 ## 执行规则
 
@@ -263,7 +263,7 @@
       - 无未运行的任务内门禁或其他例外。
     - 下一目标：3.2 与 3.3 可并行；两个父任务避免并发修改公共 constructor/DI 文件。
 
-- [ ] 3.2 接入 v1 Session 和 Jupyter 自动恢复
+- [x] 3.2 接入 v1 Session 和 Jupyter 自动恢复
   - 依赖：3.1。
   - 可并行关系：可与 3.3 并行，避免同时修改公共 constructor/DI 文件。
   - 工作内容：
@@ -272,16 +272,29 @@
     - 保持 capability/runtime/home 准备、event、token、dashboard 和错误映射顺序。
     - Ensurer 失败时标记现有 failed 状态且 driver start 为零；runtime start 失败不回退 workspace ready。
   - 可并行子任务：
-    - [ ] 可并行：`pkg/sessions` lifecycle 接入和 focused tests。
-    - [ ] 可并行：v1 bridge create/stop/resume fixture 更新。
+    - [x] 可并行：`pkg/sessions` lifecycle 接入和 focused tests。
+    - [x] 可并行：v1 bridge create/stop/resume fixture 更新。
   - 测试方案：`./scripts/with-go-toolchain.sh go test ./pkg/sessions ./pkg/agentcompose/adapters -run 'Test.*(Lifecycle|Session|Proxy).*' -count=1`。
   - 验收标准：Session create/resume 和 Jupyter 自动恢复只有 Ensurer 入口；ready resume 对 workspace 无文件副作用。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
-    - 下一目标：3.4（等待 3.3）。
+    - 状态：已完成。
+    - 变更：
+      - v1 `createSession` 以注入的 `WorkspaceEnsurer.Ensure` 替换直接 workspace preparation，并保持 workspace ready → capability guide → driver start → running 持久化 → stream/dashboard/event → reload/token/topic 的既有顺序。
+      - `sessions.Lifecycle.ResumeLoaded` 和 `EnsureProxyReady` 均改为在 guide/driver 之前调用同一 Ensurer；running 且 Jupyter target reachable 的快速返回继续跳过 Ensurer 和 driver。
+      - 三条路径的 Ensurer 错误均在 driver start 前短路，并保留 create 的 Connect internal + persisted VM failed、Jupyter 的 VM failed 持久化和普通 resume 的原始错误/状态语义。
+      - 增加 fake Ensurer/driver 顺序与身份测试，覆盖 v1 create 单次调用、pending 输入、`Ensure -> guide -> driver`、错误短路，以及 create、普通 resume、Jupyter runtime start 失败后 provisioning 保持 `ready`。
+    - 验证：
+      - `./scripts/with-go-toolchain.sh go test ./pkg/sessions ./pkg/agentcompose/adapters -run 'Test.*(Lifecycle|Session|Proxy).*' -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh go test ./pkg/sessions ./pkg/agentcompose/adapters ./pkg/workspaces ./pkg/agentcompose/app -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh golangci-lint fmt --no-config --diff ./pkg/sessions ./pkg/agentcompose/adapters ./pkg/workspaces ./pkg/agentcompose/app`：通过，无格式 diff。
+      - `./scripts/with-go-toolchain.sh golangci-lint run --no-config --allow-parallel-runners ./pkg/sessions ./pkg/agentcompose/adapters ./pkg/workspaces ./pkg/agentcompose/app`：通过，`0 issues`。
+      - `git diff --check`：通过。
+    - 审计与例外：
+      - `rg -n 'PrepareSessionWorkspace\(' pkg` 只剩 compatibility wrapper 定义，以及明确归属 3.3 的 Loader 两处和 Run 一处 production 调用；3.2 三处 direct preparation 已全部删除。
+      - `rg -n 'HostWorkspaceInitialized\(' pkg` 为零命中；3.2 production 范围恰有 v1 create、`ResumeLoaded`、`EnsureProxyReady` 三处 Ensurer 调用，Loader/Run 路径未修改。
+      - 变更范围仅为 `pkg/sessions`、v1 bridge 生产代码与 focused tests；未修改 cmd、proto/generated client、SQLite schema、公开 CLI/API shape、环境变量、compose、runtime mount、Task/TESTING 或 CI。
+      - 无未运行的任务内门禁或其他例外。
+    - 下一目标：3.3 接入 Loader 和 Project Run 复用路径。
 
 - [ ] 3.3 接入 Loader 和 Project Run 复用路径
   - 依赖：3.1。

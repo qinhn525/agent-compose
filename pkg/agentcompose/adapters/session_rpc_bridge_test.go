@@ -25,13 +25,20 @@ import (
 )
 
 type fakeRPCSandboxDriver struct {
-	startCalls []string
-	stopCalls  []string
+	startCalls    []string
+	startSessions []*domain.Sandbox
+	onStart       func(*domain.Sandbox)
+	startErr      error
+	stopCalls     []string
 }
 
 func (d *fakeRPCSandboxDriver) StartSandboxVM(_ context.Context, session *domain.Sandbox) error {
 	d.startCalls = append(d.startCalls, session.Summary.ID)
-	return nil
+	d.startSessions = append(d.startSessions, session)
+	if d.onStart != nil {
+		d.onStart(session)
+	}
+	return d.startErr
 }
 
 func (d *fakeRPCSandboxDriver) StopSandboxVM(_ context.Context, session *domain.Sandbox) error {

@@ -134,7 +134,7 @@ func (l Lifecycle) EnsureProxyReady(ctx context.Context, sessionID string) (*dom
 	}
 	startCtx, cancel := context.WithTimeout(ctx, l.Config.SandboxStartTimeout)
 	defer cancel()
-	if err := workspaces.PrepareSessionWorkspace(startCtx, l.Config, l.Workspace, session); err != nil {
+	if err := l.WorkspaceEnsurer.Ensure(startCtx, session); err != nil {
 		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = l.Store.UpdateSandbox(ctx, session)
 		return nil, domain.ProxyState{}, err
@@ -160,7 +160,7 @@ func (l Lifecycle) EnsureProxyReady(ctx context.Context, sessionID string) (*dom
 }
 
 func (l Lifecycle) ResumeLoaded(ctx context.Context, session *domain.Sandbox, capsetIDs []string) (*domain.Sandbox, error) {
-	if err := workspaces.PrepareSessionWorkspace(ctx, l.Config, l.Workspace, session); err != nil {
+	if err := l.WorkspaceEnsurer.Ensure(ctx, session); err != nil {
 		return nil, err
 	}
 	if l.GuideWriter != nil {

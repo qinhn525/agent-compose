@@ -186,7 +186,7 @@ func (b *SandboxRPCBridge) createSandbox(ctx context.Context, req sandboxRPCCrea
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	session.ProviderEnvItems = providerEnvItems
-	if err := workspaces.PrepareSessionWorkspace(ctx, b.config, b.configDB, session); err != nil {
+	if err := b.workspaceEnsurer.Ensure(ctx, session); err != nil {
 		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = b.store.UpdateSandbox(ctx, session)
 		return nil, connect.NewError(connect.CodeInternal, err)
