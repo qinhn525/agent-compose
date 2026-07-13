@@ -571,18 +571,30 @@ func TestBoxliteDirectoryOnlyGuestSandboxBootstrapIncludesVolumeSymlinks(t *test
 	}
 }
 
-func TestDirectoryOnlyGuestSandboxBootstrapReplacesImageHomeTargets(t *testing.T) {
+func TestDirectoryOnlyGuestSandboxBootstrapConvergesImageHomeTargets(t *testing.T) {
 	command := directoryOnlyGuestSandboxBootstrapCommand(testRuntimeMountConfig())
-	for _, required := range []string{
-		"rm -rf '/root/.codex'; ln -s '/data/home/.codex' '/root/.codex'",
-		"rm -rf '/root/.agents'; ln -s '/data/home/.agents' '/root/.agents'",
-		"rm -rf '/root/.claude'; ln -s '/data/home/.claude' '/root/.claude'",
-		"rm -rf '/root/.opencode'; ln -s '/data/home/.opencode' '/root/.opencode'",
-		"rm -rf '/root/.claude.json'; ln -s '/data/home/.claude.json' '/root/.claude.json'",
-		"rm -rf '/root/.gitconfig'; ln -s '/data/home/.gitconfig' '/root/.gitconfig'",
+	for _, target := range []struct {
+		source string
+		target string
+	}{
+		{source: "/data/home/.codex", target: "/root/.codex"},
+		{source: "/data/home/.agents", target: "/root/.agents"},
+		{source: "/data/home/.claude", target: "/root/.claude"},
+		{source: "/data/home/.opencode", target: "/root/.opencode"},
+		{source: "/data/home/.claude.json", target: "/root/.claude.json"},
+		{source: "/data/home/.gitconfig", target: "/root/.gitconfig"},
 	} {
-		if !strings.Contains(command, required) {
-			t.Fatalf("bootstrap command should replace image target with sandbox symlink %q: %s", required, command)
+		guard := "while [ \"$(readlink '" + target.target + "' 2>/dev/null)\" != '" + target.source + "' ]; do"
+		if !strings.Contains(command, guard) {
+			t.Fatalf("bootstrap command should preserve an already-correct symlink with guard %q: %s", guard, command)
+		}
+		replace := "ln -sfn '" + target.source + "' '" + target.target + "'"
+		if !strings.Contains(command, replace) {
+			t.Fatalf("bootstrap command should converge image target with no-dereference replacement %q: %s", replace, command)
+		}
+		unsafeReplace := "rm -rf '" + target.target + "'; ln -s '" + target.source + "' '" + target.target + "'"
+		if strings.Contains(command, unsafeReplace) {
+			t.Fatalf("bootstrap command still has race-prone unconditional replacement %q: %s", unsafeReplace, command)
 		}
 	}
 	if strings.Contains(command, "refusing to replace existing directory-only symlink target /root/.codex") {

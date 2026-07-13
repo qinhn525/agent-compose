@@ -67,7 +67,16 @@ func directoryOnlySymlinkCommand(source, target string, isFile bool, replaceExis
 	}
 	prepareTarget := "mkdir -p " + targetParentQuote + "; "
 	if replaceExisting {
-		prepareTarget += "rm -rf " + targetQuote + "; ln -s " + sourceQuote + " " + targetQuote + "; "
+		// Multiple Exec calls can bootstrap the same guest concurrently. Keep an
+		// already-correct link stable and make competing replacements converge;
+		// unconditional rm+ln lets one bootstrap delete another's fresh link.
+		prepareTarget += "directory_only_symlink_attempt=0; " +
+			"while [ \"$(readlink " + targetQuote + " 2>/dev/null)\" != " + sourceQuote + " ]; do " +
+			"directory_only_symlink_attempt=$((directory_only_symlink_attempt + 1)); " +
+			"if [ \"$directory_only_symlink_attempt\" -gt 10 ]; then echo \"directory-only symlink target does not converge to " + source + "\" >&2; exit 1; fi; " +
+			"if [ -d " + targetQuote + " ] && [ ! -L " + targetQuote + " ]; then rm -rf " + targetQuote + "; fi; " +
+			"ln -sfn " + sourceQuote + " " + targetQuote + " || { echo \"failed to replace directory-only symlink target " + target + "\" >&2; exit 1; }; " +
+			"done; "
 		return prepareSource + "; " + prepareTarget +
 			"test \"$(readlink " + targetQuote + ")\" = " + sourceQuote + " || { echo \"directory-only symlink target does not match " + source + "\" >&2; exit 1; }"
 	}
