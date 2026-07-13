@@ -45,14 +45,15 @@ type LifecycleNotifier interface {
 type CapabilityGuideWriter func(context.Context, *domain.Sandbox, []string)
 
 type Lifecycle struct {
-	Config       *appconfig.Config
-	Store        LifecycleStore
-	Workspace    workspaces.Store
-	Driver       SandboxDriver
-	Liveness     RuntimeLivenessProvider
-	TokenRevoker FacadeTokenRevoker
-	Notifier     LifecycleNotifier
-	GuideWriter  CapabilityGuideWriter
+	Config           *appconfig.Config
+	Store            LifecycleStore
+	Workspace        workspaces.Store
+	WorkspaceEnsurer workspaces.WorkspaceEnsurer
+	Driver           SandboxDriver
+	Liveness         RuntimeLivenessProvider
+	TokenRevoker     FacadeTokenRevoker
+	Notifier         LifecycleNotifier
+	GuideWriter      CapabilityGuideWriter
 }
 
 func (l Lifecycle) ReconcileRuntimeState(ctx context.Context, session *domain.Sandbox) (*domain.Sandbox, error) {

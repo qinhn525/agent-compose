@@ -20,8 +20,8 @@
 
 - 已确认：resume 严格保持 sandbox workspace；旧 sandbox 原样迁移；首版无 reset API；真实 runtime 使用 Docker E2E。
 - 已完成文档：技术规格、实施计划。
-- 代码任务：5/20 完成。
-- 当前下一目标：3.1 注册 Provisioner 单例并建立调用层接口。
+- 代码任务：6/20 完成。
+- 当前下一目标：3.2 与 3.3 可并行接入各生命周期入口。
 
 ## 执行规则
 
@@ -229,23 +229,39 @@
 
 参考：[实施计划阶段 3](docs/plan/workspace-resume-preservation-implementation-plan.md#阶段-3接入所有-sandbox-生命周期入口)
 
-- [ ] 3.1 注册 Provisioner 单例并建立调用层接口
+- [x] 3.1 注册 Provisioner 单例并建立调用层接口
   - 依赖：2.3。
   - 工作内容：
     - 在 `pkg/agentcompose/app` 注册单例 Provisioner，顺序早于 session bridge、loader runner 和 run controller。
     - 定义仅暴露 Ensure 的 `WorkspaceEnsurer` 调用层接口，并加入相关 constructor/dependencies。
     - 更新 DI 和构造器测试；生产 graph 不允许缺失 Provisioner。
   - 可并行子任务：
-    - [ ] 可并行：app DI provider/registration。
-    - [ ] 可并行：fake Ensurer 和 constructor fixture 更新。
+    - [x] 可并行：app DI provider/registration。
+    - [x] 可并行：fake Ensurer 和 constructor fixture 更新。
   - 测试方案：`./scripts/with-go-toolchain.sh go test ./pkg/agentcompose/app ./pkg/agentcompose/adapters ./pkg/runs -run 'Test.*(App|Constructor|Dependencies|Provisioner)' -count=1`。
   - 验收标准：生产 service graph 解析成功且所有 owner 获得同一 Provisioner；无公开 API 变化。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
-    - 下一目标：3.2 与 3.3 可并行。
+    - 状态：已完成。
+    - 变更：
+      - 在 `pkg/workspaces` 定义仅含 `Ensure(context.Context, *Sandbox) error` 的 `WorkspaceEnsurer` 调用层接口，并以编译期断言固定 `*Provisioner` 实现关系。
+      - 在 app service graph 中以 `NewWorkspaceProvisioner` 注册唯一 lazy singleton，并使用 `do.MustAs` 把同一 concrete service 精确 alias 为 `WorkspaceEnsurer`；注册顺序位于 session store/config store 之后、所有 lifecycle owner 之前。
+      - `SandboxRPCBridge`、`LoaderSandboxRunner` 和 `runs.ControllerDependencies`/`Controller` 显式接收并保存 Ensurer；bridge 构建 `sessions.Lifecycle` 时继续透传同一实例。
+      - production constructors 均从 DI 解析同一 `WorkspaceEnsurer`；本任务只建立依赖边界，尚未把 create/resume 路径改为调用 `Ensure`。
+      - 更新 bridge/loader 的真实 fixture，并为六个 run workflow fixtures 注入 no-op fake Ensurer；新增 app singleton/required dependency、adapter constructor identity 和 run dependency identity tests。
+    - 验证：
+      - `./scripts/with-go-toolchain.sh go test ./pkg/agentcompose/app ./pkg/agentcompose/adapters ./pkg/runs -run 'Test.*(App|Constructor|Dependencies|Provisioner)' -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh go test ./pkg/agentcompose/app ./pkg/agentcompose/adapters ./pkg/runs ./pkg/sessions ./pkg/workspaces -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh go test ./pkg/... -run '^$' -count=1`：全部 package 编译通过，无 constructor/call-site shape 遗漏。
+      - `./scripts/with-go-toolchain.sh golangci-lint fmt --no-config --diff ./pkg/agentcompose/app ./pkg/agentcompose/adapters ./pkg/runs ./pkg/sessions ./pkg/workspaces`：通过。
+      - `./scripts/with-go-toolchain.sh golangci-lint run --no-config --allow-parallel-runners ./pkg/agentcompose/app ./pkg/agentcompose/adapters ./pkg/runs ./pkg/sessions ./pkg/workspaces`：通过，`0 issues`。
+      - `git diff --check`：通过。
+    - 审计与例外：
+      - app test 证明 concrete Provisioner 与 interface alias 多次解析均为同一 pointer，缺失 concrete service 时 alias 注册失败；reflection 证明接口只有 `Ensure` 一个方法。
+      - adapter/run tests 证明 session bridge、派生 Lifecycle、loader runner 和 run controller 保留调用方传入的同一 fake identity；production graph 可同时解析三个 owner。
+      - `rg` 确认 `workspaceEnsurer.Ensure` 当前零调用，未提前进入 3.2/3.3；六个 `PrepareSessionWorkspace` production 调用仍按账本分别归属 3.2 和 3.3，compatibility wrapper 继续保留到 3.4。
+      - `HostWorkspaceInitialized` 仍为零命中；未修改 cmd、proto/generated client、SQLite schema、公开 Connect/HTTP/CLI shape、环境变量、compose、runtime mount 或 CI。
+      - 无未运行的任务内门禁或其他例外。
+    - 下一目标：3.2 与 3.3 可并行；两个父任务避免并发修改公共 constructor/DI 文件。
 
 - [ ] 3.2 接入 v1 Session 和 Jupyter 自动恢复
   - 依赖：3.1。

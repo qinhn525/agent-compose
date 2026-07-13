@@ -28,30 +28,32 @@ import (
 )
 
 type SandboxRPCBridge struct {
-	config    *appconfig.Config
-	store     *sessionstore.Store
-	configDB  *configstore.ConfigStore
-	driver    sessions.SandboxDriver
-	runtimes  RuntimeProvider
-	bus       *loaders.Bus
-	streams   *sessions.StreamBroker
-	cap       capabilities.Provider
-	capTokens *CapabilitySandboxResolver
-	dashboard *dashboard.Hub
+	config           *appconfig.Config
+	store            *sessionstore.Store
+	configDB         *configstore.ConfigStore
+	workspaceEnsurer workspaces.WorkspaceEnsurer
+	driver           sessions.SandboxDriver
+	runtimes         RuntimeProvider
+	bus              *loaders.Bus
+	streams          *sessions.StreamBroker
+	cap              capabilities.Provider
+	capTokens        *CapabilitySandboxResolver
+	dashboard        *dashboard.Hub
 }
 
-func NewSandboxRPCBridge(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, driver sessions.SandboxDriver, runtimes RuntimeProvider, bus *loaders.Bus, streams *sessions.StreamBroker, cap capabilities.Provider, capTokens *CapabilitySandboxResolver, dashboard *dashboard.Hub) *SandboxRPCBridge {
+func NewSandboxRPCBridge(config *appconfig.Config, store *sessionstore.Store, configDB *configstore.ConfigStore, workspaceEnsurer workspaces.WorkspaceEnsurer, driver sessions.SandboxDriver, runtimes RuntimeProvider, bus *loaders.Bus, streams *sessions.StreamBroker, cap capabilities.Provider, capTokens *CapabilitySandboxResolver, dashboard *dashboard.Hub) *SandboxRPCBridge {
 	return &SandboxRPCBridge{
-		config:    config,
-		store:     store,
-		configDB:  configDB,
-		driver:    driver,
-		runtimes:  runtimes,
-		bus:       bus,
-		streams:   streams,
-		cap:       cap,
-		capTokens: capTokens,
-		dashboard: dashboard,
+		config:           config,
+		store:            store,
+		configDB:         configDB,
+		workspaceEnsurer: workspaceEnsurer,
+		driver:           driver,
+		runtimes:         runtimes,
+		bus:              bus,
+		streams:          streams,
+		cap:              cap,
+		capTokens:        capTokens,
+		dashboard:        dashboard,
 	}
 }
 
@@ -347,12 +349,13 @@ func (b *SandboxRPCBridge) GetSandboxProxy(ctx context.Context, sandboxID string
 
 func (b *SandboxRPCBridge) sessionLifecycle() sessions.Lifecycle {
 	return sessions.Lifecycle{
-		Config:       b.config,
-		Store:        b.store,
-		Workspace:    b.configDB,
-		Driver:       b.driver,
-		Liveness:     sandboxRuntimeLiveness{runtimes: b.runtimes},
-		TokenRevoker: b.configDB,
+		Config:           b.config,
+		Store:            b.store,
+		Workspace:        b.configDB,
+		WorkspaceEnsurer: b.workspaceEnsurer,
+		Driver:           b.driver,
+		Liveness:         sandboxRuntimeLiveness{runtimes: b.runtimes},
+		TokenRevoker:     b.configDB,
 		Notifier: sandboxLifecycleNotifier{
 			streams:   b.streams,
 			dashboard: b.dashboard,

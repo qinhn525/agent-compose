@@ -21,6 +21,7 @@ import (
 	"agent-compose/pkg/sessions"
 	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
+	"agent-compose/pkg/workspaces"
 )
 
 type fakeRPCSandboxDriver struct {
@@ -336,6 +337,7 @@ func newTestSandboxRPCBridge(t *testing.T) (*SandboxRPCBridge, *fakeRPCSandboxDr
 		config,
 		store,
 		configDB,
+		workspaces.NewProvisioner(config, configDB, store),
 		driver,
 		nil,
 		nil,

@@ -26,6 +26,12 @@ type WorkspaceMaterializer interface {
 	Materialize(context.Context, *domain.Sandbox) error
 }
 
+// WorkspaceEnsurer is the lifecycle-facing workspace dependency. Callers use
+// this narrow interface instead of reaching provider materializers directly.
+type WorkspaceEnsurer interface {
+	Ensure(context.Context, *domain.Sandbox) error
+}
+
 type Provisioner struct {
 	sandboxes    SandboxStore
 	paths        SandboxPathResolver
@@ -33,6 +39,8 @@ type Provisioner struct {
 	filesystem   provisioningFileSystem
 	group        singleflight.Group
 }
+
+var _ WorkspaceEnsurer = (*Provisioner)(nil)
 
 func NewProvisioner(config *appconfig.Config, workspaces WorkspaceConfigStore, sandboxes SandboxStore) *Provisioner {
 	return NewProvisionerWithMaterializer(sandboxes, sessionWorkspaceMaterializer{
