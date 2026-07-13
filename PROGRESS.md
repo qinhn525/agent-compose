@@ -9,8 +9,8 @@
 - 当前变更：platform-runtime-build。
 - 已确认产物：macOS Docker-only binary、Linux 三 Driver binary、Linux 三 Driver multi-arch Docker image。
 - 发布边界：binary 只用于本地和 CI 验证，不进入 GitHub Release。
-- 当前进度：12/18 个父任务完成。
-- 当前下一目标：5.2 实现Installer的KVM检测与Compose选择持久化。
+- 当前进度：13/18 个父任务完成。
+- 当前下一目标：5.3 接入部署测试、Release Payload与阶段门禁。
 
 ## 文档索引
 
@@ -520,7 +520,7 @@
       - 未修改proto、SQLite schema、guest protocol、coverage baseline/exclusion、默认Docker driver、installer、CI或暂停的Workspace Resume账本；按计划未检查远端CI。
     - 下一目标：5.2 实现Installer的KVM检测与Compose选择持久化。
 
-- [ ] 5.2 实现 Installer 的 KVM 检测与 Compose 选择持久化
+- [x] 5.2 实现 Installer 的 KVM 检测与 Compose 选择持久化
   - 依赖：5.1。
   - 工作内容：
     - installer复制KVM overlay到安装目录。
@@ -529,20 +529,33 @@
     - --no-start、pull/up和最终提示都使用持久化文件集合。
     - 抽取或注入KVM检测点，允许测试模拟而不修改真实/dev/kvm。
   - 可并行子任务：
-    - [ ] 可并行：install/upgrade选择逻辑。
-    - [ ] 可并行：KVM检测注入和fake Docker fixture。
-    - [ ] 可并行：--no-start与用户.env保留测试。
+    - [x] 可并行：install/upgrade选择逻辑。
+    - [x] 可并行：KVM检测注入和fake Docker fixture。
+    - [x] 可并行：--no-start与用户.env保留测试。
   - 测试方案：
     - bash -n deploy/install.sh
     - 临时bundle覆盖有/无KVM、新装/upgrade/显式COMPOSE_FILE。
     - 断言真实用户env中secret和image override不被覆盖。
   - 验收标准：后续普通docker compose命令使用同一文件集合；KVM选择可重复；用户显式配置优先；失败不破坏既有安装。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
-    - 下一目标：5.3。
+    - 状态：已完成。
+    - 变更：
+      - `deploy/install.sh`增加默认指向`/dev/kvm`的可注入检测点；新安装按KVM状态一次性持久化基础或基础+KVM `COMPOSE_FILE`，已有active、`export`或显式空选择保持用户所有权，commented-only配置按未设置处理，upgrade不随KVM状态切换。
+      - bundle复制KVM overlay，旧bundle保留已安装overlay；`config --quiet`、pull、up、失败恢复和shell-quoted管理命令统一从安装目录`.env`读取选择，并隔离宿主`COMPOSE_FILE`、separator、profile、project和env-file变量；`--no-start`只报告prepared状态。
+      - 引入`.installer-state.env`记录installer拥有的image refs：仅owner匹配时允许`--upgrade`推进，legacy/custom/exported/重复追加覆盖保持不变；dotenv读写使用最后一个active assignment语义，secret和用户image override不被重分类或覆盖。
+      - managed files先构造candidate再以同目录临时文件原子提升，失败恢复原文件、mode和metadata；已有stack仅在完整恢复后reconcile，新安装失败清理partial runtime，清理失败时保留可用candidate及out-of-tree recovery snapshot并报告路径。
+      - install root、managed files和data子路径拒绝symlink/非目录目标，并在外部命令后、promotion和data创建前复验；Compose、env、state和installer mode固定为`0644`、`0600`、`0600`和`0755`。新增`deploy/install_test.sh`覆盖选择、升级、环境隔离、权限、ownership、路径竞态和config/pull/up/restore/down组合失败。
+    - 验证：
+      - `bash -n deploy/install.sh deploy/install_test.sh`：通过。
+      - `deploy/install_test.sh`：通过；临时bundle/fake Docker矩阵覆盖有无KVM、新装/升级/显式选择、last-assignment dotenv、image ownership、真实Compose `.env`发现、失败回滚和不完整恢复；使用隔离`TMPDIR`复跑后无临时或backup目录残留。
+      - `./scripts/test-compose-kvm-config.sh`：通过，基础、KVM overlay和本地build override合同均通过真实Compose渲染。
+      - `task lint`：通过，`0 issues`；`task build`：通过；`task test`：通过，coverage为unit `77.25%`、integration `65.96%`、E2E `61.84%`、combined `79.54%`。
+      - `git diff --check`：通过。
+    - 审计与例外：
+      - 三个read-only subagent分别复核selection/image ownership、runtime ordering/recovery和symlink/data/rollback/secret安全，最终均PASS；审计发现的重复assignment、late root/data symlink、fresh down失败恢复材料及restore失败后错误reconcile均已增加回归并修复。
+      - 显式空`COMPOSE_FILE=`按用户配置原样保留，但当前真实Compose拒绝该选择；mandatory `config --quiet`会失败并完整回滚，不会静默改写用户值。KVM存在但bundle和旧安装都无overlay时在mutation前失败。
+      - 本任务未修改Taskfile、CI、release payload、`.env.example`、部署文档、proto、SQLite schema、guest protocol、coverage baseline/exclusion、默认Docker driver或暂停的Workspace Resume账本；按用户要求未检查远端CI。focused验证未创建Docker runtime资源，最终label审计无container、network或volume残留。
+    - 下一目标：5.3 接入部署测试、Release Payload与阶段门禁。
 
 - [ ] 5.3 接入部署测试、Release Payload 与阶段门禁
   - 依赖：5.2。
