@@ -9,8 +9,8 @@
 - 当前变更：platform-runtime-build。
 - 已确认产物：macOS Docker-only binary、Linux 三 Driver binary、Linux 三 Driver multi-arch Docker image。
 - 发布边界：binary 只用于本地和 CI 验证，不进入 GitHub Release。
-- 当前进度：11/18 个父任务完成。
-- 当前下一目标：5.1 拆分基础Compose与KVM overlay。
+- 当前进度：12/18 个父任务完成。
+- 当前下一目标：5.2 实现Installer的KVM检测与Compose选择持久化。
 
 ## 文档索引
 
@@ -482,7 +482,7 @@
 
 参考：[实施计划阶段 5](docs/plan/platform-runtime-build-implementation-plan.md#阶段-5拆分基础-compose-与-kvm-部署能力)
 
-- [ ] 5.1 拆分基础 Compose 与 KVM Overlay
+- [x] 5.1 拆分基础 Compose 与 KVM Overlay
   - 依赖：4.2。
   - 工作内容：
     - 从docker-compose.yml删除privileged和/dev/kvm，保留Docker socket/data/env/port。
@@ -490,9 +490,9 @@
     - 保持docker-compose.override.yml只承载本地build行为。
     - 保持playground/docker-compose.yml现有链接/来源，不创建漂移副本。
   - 可并行子任务：
-    - [ ] 可并行：基础Compose最小权限改造。
-    - [ ] 可并行：KVM overlay与合并配置断言。
-    - [ ] 可并行：playground链接和路径审计。
+    - [x] 可并行：基础Compose最小权限改造。
+    - [x] 可并行：KVM overlay与合并配置断言。
+    - [x] 可并行：playground链接和路径审计。
   - 测试方案：
     - docker compose -f docker-compose.yml config
     - docker compose -f docker-compose.yml -f docker-compose.kvm.yml config
@@ -500,11 +500,25 @@
     - 使用基础Compose运行task test:e2e:image-docker。
   - 验收标准：基础Compose跨macOS/Linux Docker-only独立部署；overlay只含增量KVM配置；默认driver仍docker。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
-    - 下一目标：5.2。
+    - 状态：已完成。
+    - 变更：
+      - 根`docker-compose.yml`只删除`privileged: true`和`/dev/kvm` device映射；发布镜像、Docker socket、data、只读`.env`、工作目录、loopback 7410端口、frontend profile及隐式network保持原样，未在Compose重复设置image owner已有的`RUNTIME_DRIVER=docker`默认值。
+      - 新增最小`docker-compose.kvm.yml`，顶层只含`services.agent-compose`，service只增加`privileged: true`和单一`/dev/kvm:/dev/kvm`；没有复制image、build、environment、volume、port、restart、frontend或network配置。
+      - 扩展确定性Compose source contract：基础文件必须省略build/privileged/devices/KVM并保留socket/data/env/port，overlay使用精确key白名单，本地`docker-compose.override.yml.example`保持build-only且无KVM/COMPOSE_FILE，`playground/docker-compose.yml`必须保持指向`../docker-compose.yml`的symlink。
+      - 新增可执行`scripts/test-compose-kvm-config.sh`，使用真实Docker Compose parser渲染基础、KVM与本地build组合；断言基础无KVM、合并后精确增加KVM能力，并在删除`privileged`/`devices`后要求完整normalized project完全相等。
+    - 验证：
+      - `docker compose -f docker-compose.yml config`与`docker compose -f docker-compose.yml -f docker-compose.kvm.yml config`：通过；JSON语义断言确认基础无privileged/device，合并后只有`privileged=true`和单一`/dev/kvm` rwm device，其余project字段完全相同。基础加本地override及playground symlink render也分别保持build-only和base-only。
+      - `bash -n scripts/test-compose-kvm-config.sh`及脚本正常/带污染性`COMPOSE_FILE`、profile、image/runtime URL环境执行：通过；脚本显式隔离这些环境输入。focused `TestDockerComposeKVMOverlayContract`与既有Compose env contract：通过。
+      - 使用基础Compose service执行隔离`docker compose run`：真实daemon/API启动成功，container非privileged、device为空、无`/dev/kvm`、临时data/env映射精确，HTTP version报告Linux及`docker,boxlite,microsandbox`；唯一project container/network与root-owned临时文件全部清理。
+      - `task test:e2e:image-docker`：通过；无KVM startup `1.17s`，公开API Docker lifecycle `2.10s`，task-run container/network/volume leak审计为空。
+      - `task lint`：通过，`0 issues`；`task build`：通过；`task test`：通过，Unit `77.25%`、Integration `65.96%`、E2E `61.84%`、Combined `79.54%`；`git diff --check`：通过。
+      - 三个独立subagent分别审计基础最小权限、overlay/normalized merge及playground/override边界；补入normalized自动化后最终三方复审均通过且无阻塞项。
+    - 审计与例外：
+      - 宿主已有用户运行三天的固定名`agent-compose` container占用名称和7410端口，未停止或替换；改用唯一project/name、无host port且临时data/env的`compose run`验证同一基础service。首次readiness探针错误假设镜像含`wget`而失败，trap已删除container/network；root-owned临时文件随后通过本地image精确清理。改用host直连隔离container IP后完整通过，所有尝试的project资源和临时目录最终均为空，原用户container ID保持不变。
+      - `docker-compose.kvm.yml`是增量overlay，单独解析因没有image/build而非有效部署；两文件合并是唯一验证合同。真实KVM runtime smoke不属于本父任务，基础full image的无KVM Docker路径由isolated Compose daemon与4.2 image lifecycle双重证明。
+      - 真实`docker-compose.override.yml`继续被ignore且未创建；tracked example只承载本地build。playground保持mode `120000`链接且未新增KVM/override副本。Installer复制/选择留给5.2，deploy task与release payload/CI path filter留给5.3，AGENTS/README/design现态同步按账本留给7.1。
+      - 未修改proto、SQLite schema、guest protocol、coverage baseline/exclusion、默认Docker driver、installer、CI或暂停的Workspace Resume账本；按计划未检查远端CI。
+    - 下一目标：5.2 实现Installer的KVM检测与Compose选择持久化。
 
 - [ ] 5.2 实现 Installer 的 KVM 检测与 Compose 选择持久化
   - 依赖：5.1。
