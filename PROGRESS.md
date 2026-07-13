@@ -9,8 +9,8 @@
 - 当前变更：platform-runtime-build。
 - 已确认产物：macOS Docker-only binary、Linux 三 Driver binary、Linux 三 Driver multi-arch Docker image。
 - 发布边界：binary 只用于本地和 CI 验证，不进入 GitHub Release。
-- 当前进度：5/18 个父任务完成。
-- 当前下一目标：2.3 暴露兼容的 CLI 与 HTTP Build 信息。
+- 当前进度：6/18 个父任务完成。
+- 当前下一目标：3.1 实现唯一 Binary Build Helper 与确定性脚本测试。
 
 ## 文档索引
 
@@ -241,7 +241,7 @@
       - 未修改 `cmd/agent-compose/main.go`、默认 Docker Driver、compose normalize、proto、SQLite schema、guest protocol、coverage配置或暂停的Workspace Resume账本；按计划未检查远端CI。
     - 下一目标：2.3 暴露兼容的 CLI 与 HTTP Build 信息。
 
-- [ ] 2.3 暴露兼容的 CLI 与 HTTP Build 信息
+- [x] 2.3 暴露兼容的 CLI 与 HTTP Build 信息
   - 依赖：2.1。
   - 可并行关系：可与2.2并行。
   - 工作内容：
@@ -251,19 +251,34 @@
     - status文本列保持不变；--json status继续透传新增字段。
     - 不修改任何proto。
   - 可并行子任务：
-    - [ ] 可并行：本地version JSON实现和测试。
-    - [ ] 可并行：HTTP version/status解析和兼容测试。
-    - [ ] 可并行：文本输出快照和proto零差异审计。
+    - [x] 可并行：本地version JSON实现和测试。
+    - [x] 可并行：HTTP version/status解析和兼容测试。
+    - [x] 可并行：文本输出快照和proto零差异审计。
   - 测试方案：
     - CGO_ENABLED=0 ./scripts/with-go-toolchain.sh go test ./cmd/agent-compose -run 'Test.*(Version|Status)' -count=1
     - ./scripts/with-go-toolchain.sh go test ./pkg/agentcompose/app ./pkg/health -run 'Test.*(Version|Health)' -count=1
   - 验收标准：文本兼容；JSON/HTTP字段稳定且drivers排序正确；旧客户端可忽略新增字段；proto目录无生成差异。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
-    - 下一目标：3.1（等待2.2）。
+    - 状态：已完成。
+    - 变更：
+      - 在 `cmd/agent-compose/main.go` 定义唯一 `buildInfo` JSON shape，固定为 `version`、`os`、`arch`、`compiled_drivers`；OS/architecture取Go target `runtime.GOOS`/`runtime.GOARCH`，Driver列表复用阶段1 owner并返回独立副本。
+      - `agent-compose version` 文本继续精确输出版本加换行且不启动daemon；全局 `agent-compose --json version` 输出严格四字段JSON，字段顺序稳定。
+      - `GET /api/version` 的既有 `err`/`msg`/`data` envelope及`version`、`timestamp`、`timezone`、`timezone_offset`保持不变，在`data`中additive增加`os`、`arch`、`compiled_drivers`；HTTP version继续取daemon config。
+      - `daemonStatusResponse`解析新增三字段；`agent-compose status`文本仍精确只有`STATUS`、`UPTIME`、`VERSION`三列，`agent-compose --json status`继续逐字节透传完整HTTP body。
+      - 新增unit/integration/E2E合同测试，覆盖CLI严格字段、slice隔离、HTTP legacy兼容、status parser、新字段raw passthrough与文本快照。
+    - 验证：
+      - `CGO_ENABLED=0 ./scripts/with-go-toolchain.sh go test ./cmd/agent-compose -run 'Test.*(Version|Status|BuildInfo|CurrentBuildInfo)' -count=1`、完整`./cmd/agent-compose` package及`./pkg/agentcompose/app ./pkg/health -run 'Test.*(Version|Health)'`：通过。
+      - CGO-off加双native tag、CGO-on无tag、`boxlitecgo`单tag、`microsandboxcgo`单tag、双tag五组focused tests：全部通过；双tag完整`cmd/agent-compose` package通过且未访问KVM。
+      - 构建五个临时Linux binary并直接执行`version`/`--json version`：文本均为`matrix`，Driver数组依次为`[docker]`、`[docker]`、`[docker,boxlite]`、`[docker,microsandbox]`、`[docker,boxlite,microsandbox]`，四字段精确匹配；`task build`产物也直接验证为Linux/amd64 Docker-only。
+      - `CGO_ENABLED=0`分别交叉构建Darwin amd64、arm64：通过，`file`确认为Mach-O x86_64与arm64产物。
+      - `task lint`：通过，`0 issues`；`task build`：通过；`task test`：通过，Unit `77.25%`、Integration `65.96%`、E2E `61.84%`、Combined `79.54%`。
+      - proto/generated/connect组合hash前后均为`fea8044033779a7033fe9a4ff434efa2468ebb7e424ea9d4ac1bf73ad5016573`；`git diff --exit-code`确认v1/v2/health proto零差异，`git diff --check`通过。
+    - 审计与例外：
+      - `pkg/health`是独立protobuf合同，`pkg/agentcompose/app`不拥有`/api/version` route，二者无需生产修改且diff为零；旧HTTP客户端可忽略additive JSON字段。
+      - build info仅声明compiled capability，不读取环境变量、不探测Docker daemon、artifact或KVM；默认Driver仍为Docker，Driver排序继续由`pkg/driver`唯一owner控制。
+      - 当前Linux宿主不能原生执行Darwin Mach-O；本任务已证明两架构可交叉编译，macOS runner原生version/daemon smoke仍按阶段6和最终验收执行，不以Linux证据替代。
+      - 未修改proto、SQLite schema、guest protocol、coverage threshold/exclusion、默认Driver或暂停的Workspace Resume账本；按计划未检查远端CI。
+    - 下一目标：3.1 实现唯一 Binary Build Helper 与确定性脚本测试。
 
 ## 3. 统一 Binary Build Helper 与 Task 合同
 
