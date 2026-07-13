@@ -20,8 +20,8 @@
 
 - 已确认：resume 严格保持 sandbox workspace；旧 sandbox 原样迁移；首版无 reset API；真实 runtime 使用 Docker E2E。
 - 已完成文档：技术规格、实施计划。
-- 代码任务：10/20 完成。
-- 当前下一目标：4.2 与 4.3 可并行。
+- 代码任务：11/20 完成。
+- 当前下一目标：4.3。
 
 ## 执行规则
 
@@ -404,7 +404,7 @@
       - 变更范围仅为共享 test helper、Session/Jupyter integration tests 和本账本；未修改 production code、cmd、proto/generated client、SQLite schema、公开 CLI/API shape、环境变量、compose、runtime mount、Task/TESTING 或 CI。无未运行的任务内门禁或其他例外。
     - 下一目标：4.2 与 4.3 可并行。
 
-- [ ] 4.2 增加 Loader sticky 和 Project local integration
+- [x] 4.2 增加 Loader sticky 和 Project local integration
   - 依赖：4.1。
   - 可并行关系：可与 4.3 并行。
   - 工作内容：
@@ -412,15 +412,32 @@
     - run A 使用 local source v1 并修改 workspace；source 更新 v2 后复用 A 保持；新建 run B 获取 v2 且无 A 的文件。
     - 同时断言 sandbox ID、workspace snapshot 和 cleanup policy 行为。
   - 可并行子任务：
-    - [ ] 可并行：Loader sticky integration。
-    - [ ] 可并行：Project local existing/new sandbox integration。
+    - [x] 可并行：Loader sticky integration。
+    - [x] 可并行：Project local existing/new sandbox integration。
   - 测试方案：`./scripts/with-go-toolchain.sh go test ./pkg/agentcompose/adapters ./pkg/runs -run 'TestIntegration.*(Loader|Project|Workspace)' -count=1`。
   - 验收标准：已有 sandbox 保持、新 sandbox 获取最新 source 在测试中同时成立；Loader/Run 不互相污染。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。
+    - 变更：
+      - 新增 Loader sticky integration：使用真实 configstore/sessionstore、production Provisioner 和 Loader runner 完成 create → shutdown → binding-driven resume，断言复用同一 sandbox ID、binding、workspace snapshot 和 ready timestamp。
+      - Loader 测试在首次启动后修改/删除/新增 workspace 内容和 symlink，再把 source/config 更新到 v2；shutdown 后及 resume driver start 前后 manifest 均保持，v2 source 不会覆盖、复活或污染已有 workspace。
+      - Loader 同时断言 created/stopped/resumed event、topic、两次 driver start 和一次 stop，覆盖 sticky 生命周期周边行为。
+      - 新增外部包 `runs_test` 的 Project local integration：通过 configstore 公共 API、真实 sessionstore 以及 production Controller/Provisioner 创建正常状态，避免 `configstore -> runs` import cycle 且不直接写 SQLite。
+      - Project run A 获取 source v1 后保留用户修改、删除、新增和 symlink；source/revision 更新到 v2 后显式复用 A 即使指定 `REMOVE_ON_COMPLETION` 也保持原 sandbox，run B 则获得隔离的 v2 snapshot、无 A 产物并按策略删除，最终重载再次证明 B 未污染 A。
+    - 验证：
+      - `./scripts/with-go-toolchain.sh go test ./pkg/agentcompose/adapters ./pkg/runs -run 'TestIntegration.*(Loader|Project|Workspace)' -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh go test -race ./pkg/agentcompose/adapters ./pkg/runs -run 'TestIntegration.*(Loader|Project|Workspace)' -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh go test ./pkg/agentcompose/adapters ./pkg/runs -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh go test ./pkg/... -count=1`：通过。
+      - `./scripts/with-go-toolchain.sh golangci-lint fmt --no-config --diff ./pkg/agentcompose/adapters ./pkg/runs`：通过，无格式 diff。
+      - `./scripts/with-go-toolchain.sh golangci-lint run --no-config --allow-parallel-runners ./pkg/agentcompose/adapters ./pkg/runs`：通过，`0 issues`。
+      - `git diff --check`：通过。
+    - 审计与例外：
+      - 两个 integration 的 driver 都在每次 start 前读取持久化 sandbox 并断言 provisioning 已是 ready；Loader resume 和 Project A reuse 还断言 ready `UpdatedAt` 不变。
+      - Project 测试直接比较 A/B workspace snapshot identity 与内容；复用 A 不删除 sandbox，新建 B 在 completion 后同时从 sessionstore 和 filesystem 删除。
+      - 测试命名均为 `TestIntegration*`，未新增复用 helper 的 `TestE2E` wrapper；测试使用真实 Store/Provisioner/Controller 或 Loader runner，fake driver 只隔离 runtime。
+      - 变更范围仅为两个 integration test 文件和本账本；未修改 production code、cmd、proto/generated client、SQLite schema、公开 CLI/API shape、环境变量、compose、runtime mount、Task/TESTING 或 CI。
+      - 独立只读审计未发现 blocker；无未运行的任务内门禁或其他例外。
     - 下一目标：4.4（等待 4.3）。
 
 - [ ] 4.3 增加 Store 重建、legacy 和首次失败重试 integration
