@@ -33,7 +33,7 @@ Concretely, agent-compose provides:
 - A **Runtime LLM Facade** that brokers LLM credentials so provider keys never enter guest containers.
 - **MCP servers, reusable skills, and named volumes** per agent.
 - A **Jupyter proxy** for notebook-style guest runtimes.
-- **v1/v2 Connect APIs** and a generated TypeScript client.
+- **v2 Connect APIs**; the separate web UI repository tracks generated TypeScript clients.
 
 ## How it works
 

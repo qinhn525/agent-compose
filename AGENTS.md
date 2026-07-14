@@ -9,8 +9,7 @@ This repo contains the agent-compose sandbox control plane. It creates, resumes,
 - `pkg/agentcompose/api`: Connect transport handlers and transport/domain mapping.
 - `pkg/agentcompose/adapters`, `pkg/agentcompose/proxy`, `pkg/storage`, and `pkg/driver`: external and infrastructure boundaries.
 - `pkg/loaders`, `pkg/projects`, `pkg/runs`, and `pkg/sessions`: domain owners. Other `pkg` packages provide focused capabilities; location under `pkg` alone does not make a package a domain owner.
-- `proto`: API sources and generated clients. Do not edit generated files manually.
-- `proto-client`: published TypeScript protocol client; the web UI is maintained in the separate `agent-compose-ui` repository.
+- `proto`: API sources and generated Go clients. Do not edit generated files manually.
 - `runtime`: JavaScript runtime and runtime SDK packages.
 
 ## Code Organization
