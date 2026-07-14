@@ -572,7 +572,7 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 
 	logsOptions := composeLogsOptions{}
 	logsCmd := &cobra.Command{
-		Use:   "logs [agent]",
+		Use:   "logs [agent-or-id]",
 		Short: "Print project run logs",
 		Args:  cobra.RangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -952,7 +952,7 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 	imageCmd.AddCommand(imageLSCmd, imagePullCmd, imageBuildCmd, imageRemoveCmd, imageInspectCmd)
 
 	inspectCmd := &cobra.Command{
-		Use:   "inspect <project|agent|run|sandbox|image|cache|volume> [name-or-id]",
+		Use:   "inspect <id>|<project|agent|run|sandbox|image|cache|volume> [name-or-id]",
 		Short: "Inspect project, agent, run, sandbox, image, cache, or volume details",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -1012,12 +1012,13 @@ type composeSchedulerListOptions struct {
 }
 
 type composeLogsOptions struct {
-	AgentName string
-	RunID     string
-	SandboxID string
-	TailLines int
-	Follow    bool
-	Timestamp bool
+	ResourceID string
+	AgentName  string
+	RunID      string
+	SandboxID  string
+	TailLines  int
+	Follow     bool
+	Timestamp  bool
 }
 
 type composePSOptions struct {
@@ -2702,6 +2703,9 @@ func runComposeLogsCommand(cmd *cobra.Command, cli cliOptions, options composeLo
 	if err != nil {
 		return err
 	}
+	if normalizedOptions.ResourceID != "" {
+		return runComposeLogsForResourceID(cmd, cli, normalizedOptions)
+	}
 	_, normalized, projectID, err := resolveComposeProject(cli)
 	if err != nil {
 		return err
@@ -2733,7 +2737,11 @@ func normalizeComposeLogsOptions(cmd *cobra.Command, options composeLogsOptions,
 		if cmd.Flags().Changed("agent") {
 			return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs agent can be specified either positionally or with --agent, not both")}
 		}
-		options.AgentName = args[0]
+		if identity.IsIDPrefix(args[0]) {
+			options.ResourceID = strings.TrimSpace(args[0])
+		} else {
+			options.AgentName = args[0]
+		}
 	}
 	if options.TailLines < -1 {
 		return options, commandExitError{Code: exitCodeUsage, Err: fmt.Errorf("logs --tail must be -1 or greater")}
@@ -4453,6 +4461,9 @@ func writeDeprecatedWarning(out io.Writer, oldUsage string, newUsage string) err
 
 func runComposeInspectCommand(cmd *cobra.Command, cli cliOptions, args []string) error {
 	kind := strings.ToLower(strings.TrimSpace(args[0]))
+	if len(args) == 1 && identity.IsIDPrefix(kind) {
+		return runComposeIDInspectCommand(cmd, cli, kind)
+	}
 	target := ""
 	if len(args) > 1 {
 		target = strings.TrimSpace(args[1])
@@ -4797,13 +4808,14 @@ type composeLogRunOutput struct {
 }
 
 type cliServiceClients struct {
-	project agentcomposev2connect.ProjectServiceClient
-	run     agentcomposev2connect.RunServiceClient
-	exec    agentcomposev2connect.ExecServiceClient
-	image   agentcomposev2connect.ImageServiceClient
-	cache   agentcomposev2connect.CacheServiceClient
-	volume  agentcomposev2connect.VolumeServiceClient
-	sandbox agentcomposev2connect.SandboxServiceClient
+	project  agentcomposev2connect.ProjectServiceClient
+	run      agentcomposev2connect.RunServiceClient
+	exec     agentcomposev2connect.ExecServiceClient
+	resource agentcomposev2connect.ResourceServiceClient
+	image    agentcomposev2connect.ImageServiceClient
+	cache    agentcomposev2connect.CacheServiceClient
+	volume   agentcomposev2connect.VolumeServiceClient
+	sandbox  agentcomposev2connect.SandboxServiceClient
 }
 
 type composePSOutput struct {
@@ -5578,13 +5590,14 @@ func newCLIServiceClients(cli cliOptions) (cliServiceClients, error) {
 	}
 	httpClient := newDaemonHTTPClient(clientConfig)
 	return cliServiceClients{
-		project: agentcomposev2connect.NewProjectServiceClient(httpClient, clientConfig.BaseURL),
-		run:     agentcomposev2connect.NewRunServiceClient(httpClient, clientConfig.BaseURL),
-		exec:    agentcomposev2connect.NewExecServiceClient(httpClient, clientConfig.BaseURL),
-		image:   agentcomposev2connect.NewImageServiceClient(httpClient, clientConfig.BaseURL),
-		cache:   agentcomposev2connect.NewCacheServiceClient(httpClient, clientConfig.BaseURL),
-		volume:  agentcomposev2connect.NewVolumeServiceClient(httpClient, clientConfig.BaseURL),
-		sandbox: agentcomposev2connect.NewSandboxServiceClient(httpClient, clientConfig.BaseURL),
+		project:  agentcomposev2connect.NewProjectServiceClient(httpClient, clientConfig.BaseURL),
+		run:      agentcomposev2connect.NewRunServiceClient(httpClient, clientConfig.BaseURL),
+		exec:     agentcomposev2connect.NewExecServiceClient(httpClient, clientConfig.BaseURL),
+		resource: agentcomposev2connect.NewResourceServiceClient(httpClient, clientConfig.BaseURL),
+		image:    agentcomposev2connect.NewImageServiceClient(httpClient, clientConfig.BaseURL),
+		cache:    agentcomposev2connect.NewCacheServiceClient(httpClient, clientConfig.BaseURL),
+		volume:   agentcomposev2connect.NewVolumeServiceClient(httpClient, clientConfig.BaseURL),
+		sandbox:  agentcomposev2connect.NewSandboxServiceClient(httpClient, clientConfig.BaseURL),
 	}, nil
 }
 
