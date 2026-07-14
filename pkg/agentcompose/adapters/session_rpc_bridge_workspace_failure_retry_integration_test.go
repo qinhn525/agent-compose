@@ -18,7 +18,6 @@ import (
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/storage/sessionstore"
 	"agent-compose/pkg/workspaces"
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
 func TestIntegrationSandboxRPCBridgeFileWorkspaceProvisioningFailureRetry(t *testing.T) {
@@ -48,10 +47,10 @@ func TestIntegrationSandboxRPCBridgeFileWorkspaceProvisioningFailureRetry(t *tes
 		t.Fatalf("CreateWorkspaceConfig returned error: %v", err)
 	}
 
-	_, err = bridge.CreateSession(ctx, connect.NewRequest(&agentcomposev1.CreateSessionRequest{
+	_, err = bridge.createSandbox(ctx, sandboxRPCCreateRequest{
 		Title:       "file provisioning failure retry",
-		WorkspaceId: workspace.ID,
-	}))
+		WorkspaceID: workspace.ID,
+	}, domain.SandboxTypeManual)
 	if err == nil || connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("CreateSession error = %v (code %v), want internal file materialization failure", err, connect.CodeOf(err))
 	}
@@ -70,7 +69,7 @@ func TestIntegrationSandboxRPCBridgeFileWorkspaceProvisioningFailureRetry(t *tes
 	writeIntegrationWorkspaceFile(t, filepath.Join(sourceRoot, "README.md"), "file retry succeeded\n", 0o640)
 	driver.onStart = integrationPersistedReadyStartCheck(t, ctx, bridge, failed.Summary.ID, nil)
 
-	if _, err := bridge.ResumeSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: failed.Summary.ID})); err != nil {
+	if _, err := bridge.ResumeSandbox(ctx, failed.Summary.ID); err != nil {
 		t.Fatalf("ResumeSession after repairing file source returned error: %v", err)
 	}
 	ready, err := bridge.store.GetSandbox(ctx, failed.Summary.ID)
@@ -121,10 +120,10 @@ func TestIntegrationSandboxRPCBridgeGitWorkspaceProvisioningFailureRetry(t *test
 		t.Fatalf("CreateWorkspaceConfig returned error: %v", err)
 	}
 
-	_, err = bridge.CreateSession(ctx, connect.NewRequest(&agentcomposev1.CreateSessionRequest{
+	_, err = bridge.createSandbox(ctx, sandboxRPCCreateRequest{
 		Title:       "git provisioning failure retry",
-		WorkspaceId: workspace.ID,
-	}))
+		WorkspaceID: workspace.ID,
+	}, domain.SandboxTypeManual)
 	if err == nil || connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("CreateSession error = %v (code %v), want internal Git clone failure", err, connect.CodeOf(err))
 	}
@@ -139,7 +138,7 @@ func TestIntegrationSandboxRPCBridgeGitWorkspaceProvisioningFailureRetry(t *test
 
 	integrationCreateLocalGitSource(t, sourceRepo)
 	driver.onStart = integrationPersistedReadyStartCheck(t, ctx, bridge, failed.Summary.ID, nil)
-	if _, err := bridge.ResumeSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: failed.Summary.ID})); err != nil {
+	if _, err := bridge.ResumeSandbox(ctx, failed.Summary.ID); err != nil {
 		t.Fatalf("ResumeSession after repairing Git source returned error: %v", err)
 	}
 	ready, err := bridge.store.GetSandbox(ctx, failed.Summary.ID)
@@ -197,10 +196,10 @@ func TestIntegrationSandboxRPCBridgeRuntimeStartFailureRetryPreservesReadyWorksp
 		firstStartSandboxID = sandbox.Summary.ID
 		integrationAssertPersistedReady(t, ctx, bridge, sandbox.Summary.ID, nil)
 	}
-	_, err = bridge.CreateSession(ctx, connect.NewRequest(&agentcomposev1.CreateSessionRequest{
+	_, err = bridge.createSandbox(ctx, sandboxRPCCreateRequest{
 		Title:       "runtime start failure retry",
-		WorkspaceId: workspace.ID,
-	}))
+		WorkspaceID: workspace.ID,
+	}, domain.SandboxTypeManual)
 	if err == nil || connect.CodeOf(err) != connect.CodeInternal || !errors.Is(err, runtimeErr) {
 		t.Fatalf("CreateSession error = %v (code %v), want injected internal runtime failure", err, connect.CodeOf(err))
 	}
@@ -252,7 +251,7 @@ func TestIntegrationSandboxRPCBridgeRuntimeStartFailureRetryPreservesReadyWorksp
 		}
 	})
 
-	if _, err := bridge.ResumeSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: failed.Summary.ID})); err != nil {
+	if _, err := bridge.ResumeSandbox(ctx, failed.Summary.ID); err != nil {
 		t.Fatalf("ResumeSession after runtime start failure returned error: %v", err)
 	}
 	resumed, err := bridge.store.GetSandbox(ctx, failed.Summary.ID)

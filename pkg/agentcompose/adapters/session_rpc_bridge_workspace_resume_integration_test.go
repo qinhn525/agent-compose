@@ -7,12 +7,9 @@ import (
 	"reflect"
 	"testing"
 
-	"connectrpc.com/connect"
-
 	testutil "agent-compose/pkg/internal/testutil"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/workspaces"
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
 func TestIntegrationSandboxRPCBridgeResumePreservesReadyFileWorkspace(t *testing.T) {
@@ -42,14 +39,14 @@ func TestIntegrationSandboxRPCBridgeResumePreservesReadyFileWorkspace(t *testing
 	if err != nil {
 		t.Fatalf("CreateWorkspaceConfig returned error: %v", err)
 	}
-	created, err := bridge.CreateSession(ctx, connect.NewRequest(&agentcomposev1.CreateSessionRequest{
+	created, err := bridge.createSandbox(ctx, sandboxRPCCreateRequest{
 		Title:       "resume preservation",
-		WorkspaceId: workspace.ID,
-	}))
+		WorkspaceID: workspace.ID,
+	}, domain.SandboxTypeManual)
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
-	sessionID := created.Msg.GetSession().GetSummary().GetSessionId()
+	sessionID := created.Summary.ID
 	persisted, err := bridge.store.GetSandbox(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("GetSandbox after create returned error: %v", err)
@@ -70,7 +67,7 @@ func TestIntegrationSandboxRPCBridgeResumePreservesReadyFileWorkspace(t *testing
 		t.Fatalf("manifest workspace before stop: %v", err)
 	}
 
-	if _, err := bridge.StopSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: sessionID})); err != nil {
+	if _, err := bridge.StopSandbox(ctx, sessionID); err != nil {
 		t.Fatalf("StopSession returned error: %v", err)
 	}
 	persisted, err = bridge.store.GetSandbox(ctx, sessionID)
@@ -99,7 +96,7 @@ func TestIntegrationSandboxRPCBridgeResumePreservesReadyFileWorkspace(t *testing
 			t.Errorf("workspace manifest changed before resume driver start:\n got: %#v\nwant: %#v", atStart, beforeStop)
 		}
 	}
-	if _, err := bridge.ResumeSession(ctx, connect.NewRequest(&agentcomposev1.SessionIDRequest{SessionId: sessionID})); err != nil {
+	if _, err := bridge.ResumeSandbox(ctx, sessionID); err != nil {
 		t.Fatalf("ResumeSession returned error: %v", err)
 	}
 

@@ -12,7 +12,6 @@ import (
 
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/workspaces"
-	agentcomposev1 "agent-compose/proto/agentcompose/v1"
 )
 
 type recordingBridgeWorkspaceEnsurer struct {
@@ -79,18 +78,18 @@ func TestSandboxRPCBridgeCreateSessionUsesWorkspaceEnsurer(t *testing.T) {
 		order = append(order, "driver.start")
 	}
 
-	resp, err := bridge.CreateSession(ctx, connect.NewRequest(&agentcomposev1.CreateSessionRequest{
+	created, err := bridge.createSandbox(ctx, sandboxRPCCreateRequest{
 		Title:       "workspace ensurer",
-		WorkspaceId: workspace.ID,
-		CapsetIds:   []string{"dev"},
-	}))
+		WorkspaceID: workspace.ID,
+		CapsetIDs:   []string{"dev"},
+	}, domain.SandboxTypeManual)
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 	if len(ensurer.calls) != 1 {
 		t.Fatalf("workspace Ensure call count = %d, want 1", len(ensurer.calls))
 	}
-	sessionID := resp.Msg.GetSession().GetSummary().GetSessionId()
+	sessionID := created.Summary.ID
 	if ensurer.initialIDs[0] != sessionID {
 		t.Fatalf("workspace Ensure sandbox id = %q, want %q", ensurer.initialIDs[0], sessionID)
 	}
@@ -129,9 +128,7 @@ func TestSandboxRPCBridgeCreateSessionWorkspaceEnsurerErrorShortCircuitsDriver(t
 	ensurer := &recordingBridgeWorkspaceEnsurer{err: ensureErr}
 	bridge.workspaceEnsurer = ensurer
 
-	_, err := bridge.CreateSession(ctx, connect.NewRequest(&agentcomposev1.CreateSessionRequest{
-		Title: "workspace failure",
-	}))
+	_, err := bridge.createSandbox(ctx, sandboxRPCCreateRequest{Title: "workspace failure"}, domain.SandboxTypeManual)
 	if err == nil {
 		t.Fatal("CreateSession error = nil, want workspace provisioning failure")
 	}
@@ -182,10 +179,10 @@ func TestSandboxRPCBridgeCreateSessionRuntimeFailurePreservesReadyProvisioning(t
 	startErr := errors.New("runtime start failed")
 	driver.startErr = startErr
 
-	_, err = bridge.CreateSession(ctx, connect.NewRequest(&agentcomposev1.CreateSessionRequest{
+	_, err = bridge.createSandbox(ctx, sandboxRPCCreateRequest{
 		Title:       "runtime failure",
-		WorkspaceId: workspace.ID,
-	}))
+		WorkspaceID: workspace.ID,
+	}, domain.SandboxTypeManual)
 	if err == nil || connect.CodeOf(err) != connect.CodeInternal || !errors.Is(err, startErr) {
 		t.Fatalf("CreateSession error = %v (code %v), want wrapped internal runtime error", err, connect.CodeOf(err))
 	}
