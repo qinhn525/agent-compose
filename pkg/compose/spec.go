@@ -10,12 +10,37 @@ import (
 
 type ProjectSpec struct {
 	Name       string                   `yaml:"name,omitempty" json:"name,omitempty"`
+	EnvFiles   EnvFileSpec              `yaml:"env_file,omitempty" json:"env_file,omitempty"`
 	Variables  map[string]EnvVarSpec    `yaml:"variables,omitempty" json:"variables,omitempty"`
 	Workspaces map[string]WorkspaceSpec `yaml:"workspaces,omitempty" json:"workspaces,omitempty"`
 	MCPs       map[string]MCPServerSpec `yaml:"mcps,omitempty" json:"mcps,omitempty"`
 	Volumes    map[string]VolumeSpec    `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	Agents     map[string]AgentSpec     `yaml:"agents,omitempty" json:"agents,omitempty"`
 	Network    *NetworkSpec             `yaml:"network,omitempty" json:"network,omitempty"`
+}
+
+// EnvFileSpec lists dotenv files used while loading a project configuration.
+// The scalar form is shorthand for a single-item list.
+type EnvFileSpec []string
+
+func (s *EnvFileSpec) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		var path string
+		if err := value.Decode(&path); err != nil {
+			return err
+		}
+		*s = EnvFileSpec{path}
+		return nil
+	}
+	if value.Kind != yaml.SequenceNode {
+		return fmt.Errorf("env_file must be a string or list of strings")
+	}
+	var paths []string
+	if err := value.Decode(&paths); err != nil {
+		return err
+	}
+	*s = paths
+	return nil
 }
 
 type AgentSpec struct {
@@ -441,6 +466,7 @@ type nodeValidator func(node *yaml.Node, path string) error
 func validateProjectNode(node *yaml.Node) error {
 	return validateMapping(node, "", map[string]nodeValidator{
 		"name":       validateScalar,
+		"env_file":   validateScalarOrStringList,
 		"variables":  validateEnvVarMap,
 		"workspaces": validateWorkspaceMap,
 		"mcps":       validateMCPMap,
@@ -448,6 +474,13 @@ func validateProjectNode(node *yaml.Node) error {
 		"agents":     validateAgentMap,
 		"network":    validateNetwork,
 	})
+}
+
+func validateScalarOrStringList(node *yaml.Node, path string) error {
+	if node.Kind == yaml.ScalarNode {
+		return validateScalar(node, path)
+	}
+	return validateStringList(node, path)
 }
 
 func validateWorkspaceMap(node *yaml.Node, path string) error {
