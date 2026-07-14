@@ -1,11 +1,17 @@
 <p align="center">
-  <img src="agent-composelogo.png" alt="OctoBus" width="240">
+  <img src="agent-composelogo.png" alt="Agent-compose" width="240">
+  <div align="center">
+  <a href="https://github.com/chaitin/agent-compose/actions/workflows/ci.yml">
+    <img src="https://github.com/chaitin/agent-compose/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI">
+  </a>
+  <a href="https://github.com/chaitin/agent-compose/actions/workflows/images.yml">
+    <img src="https://github.com/chaitin/agent-compose/actions/workflows/images.yml/badge.svg?branch=main" alt="Images & Release">
+  </a>
+  <a href="LICENSE.txt">
+    <img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" alt="License: AGPL v3">
+  </a>
+</div>
 </p>
-
-
-[![CI](https://github.com/chaitin/agent-compose/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/chaitin/agent-compose/actions/workflows/ci.yml)
-[![Images & Release](https://github.com/chaitin/agent-compose/actions/workflows/images.yml/badge.svg?branch=main)](https://github.com/chaitin/agent-compose/actions/workflows/images.yml)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE.txt)
 
 **agent-compose is a daemon + CLI control plane that runs AI coding agents in isolated sandboxes.** You describe your agents in an `agent-compose.yml` file, and a long-lived daemon builds, runs, schedules, and proxies an isolated runtime for each one.
 
