@@ -687,18 +687,29 @@ specific binary or image:
 | Linux daemon image (`linux-full`; `linux/amd64`, `linux/arm64`) | `docker`, `boxlite`, `microsandbox` |
 
 The platform Task entry dispatches to the macOS Docker-only build on Darwin and
-the Linux full build on Linux. Both native builds and the daemon image use the
-same binary build helper/profile contract. Native binaries are local and CI
-verification artifacts; GitHub Release does not publish standalone
-per-platform binaries and continues to publish the installer assets that refer
-to the multi-architecture images.
+the Linux full build on Linux. `scripts/build-agent-compose-binary.sh` is the
+single owner of profile CGO settings, build tags, target metadata, and
+`BuildVersion` linker flags; Task, both Dockerfiles, and CI select a profile
+instead of rebuilding those arguments. The Linux profile fails its artifact
+preflight unless the required BoxLite headers, libraries, and runtime
+executables and the Microsandbox executables and shared libraries are present;
+the Go build does not start after a preflight failure. The legacy
+`build:agent-compose:boxlite` task remains only as a deprecated alias of the
+Linux full build.
 
-`CompiledRuntimeDrivers` is exposed as `compiled_drivers` by JSON version output
-and `/api/version`. It reports build capability only. It does not probe Docker
-daemon reachability, `/dev/kvm`, runtime libraries or executables, image access,
-or driver health. The full image therefore reports all three drivers even when
-running on macOS Docker Desktop without KVM, while its default runtime remains
-Docker.
+Native binaries are local and CI verification artifacts; GitHub Release does
+not publish standalone per-platform binaries and continues to publish the
+installer assets that refer to the multi-architecture images.
+
+`agent-compose --json version` has the stable shape `version`, `os`, `arch`, and
+`compiled_drivers`; `/api/version` adds the same build fields to its legacy
+envelope, and `status --json` preserves the complete response. The text form of
+`agent-compose version` and the status table remain backward compatible.
+`CompiledRuntimeDrivers` owns the ordered driver list. It reports build
+capability only and does not probe Docker daemon reachability, `/dev/kvm`,
+runtime libraries or executables, image access, or driver health. The full
+image therefore reports all three drivers even when running on macOS Docker
+Desktop without KVM, while its default runtime remains Docker.
 
 Compiled capability is validated before persistence or runtime side effects.
 A daemon whose configured default driver is absent from its binary fails during
@@ -706,12 +717,14 @@ service graph construction. Create/apply/scheduler entry points reject an
 uncompiled selected driver as unsupported before writing project, agent, run,
 or sandbox state. Historical objects remain readable, but runtime operations on
 an unavailable compiled driver return the same unsupported classification
-without rewriting their stored driver or runtime state. Runtime wrappers remain
-lazy: constructing the provider does not initialize BoxLite or Microsandbox and
-does not touch KVM; actual runtime availability is established only when an
-operation starts the selected driver. Pure compose parsing and normalization
-remain platform-independent and continue to accept all product-supported driver
-names; compiled validation occurs at daemon-side apply/create/run boundaries.
+without rewriting their stored driver or runtime state. Connect surfaces map
+this condition to `CodeUnimplemented`, and the CLI preserves its unsupported
+exit-code classification. Runtime wrappers remain lazy: constructing the
+provider does not initialize BoxLite or Microsandbox and does not touch KVM;
+actual runtime availability is established only when an operation starts the
+selected driver. Pure compose parsing and normalization remain
+platform-independent and continue to accept all product-supported driver names;
+compiled validation occurs at daemon-side apply/create/run boundaries.
 
 ### Workspace Provisioning And Resume
 

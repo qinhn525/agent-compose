@@ -56,9 +56,11 @@ guest Jupyter + agent runtime
 | `darwin-docker` | macOS 原生 `darwin/amd64`、`darwin/arm64` 二进制 | `docker` |
 | `linux-full` | Linux 原生二进制和发布的 `linux/amd64`、`linux/arm64` daemon 镜像 | `docker,boxlite,microsandbox` |
 
-`task build:agent-compose` 按宿主选择原生 profile；`task build:agent-compose:darwin` 和 `task build:agent-compose:linux` 是显式入口。`build:agent-compose:boxlite` 已废弃，只保留为 `linux-full` 的兼容 alias。Linux full 构建从 Dockerfile owner 导出 BoxLite/Microsandbox native artifact，因此普通 Linux full 开发构建以 Docker 为标准前置依赖；具体 CGO 和 tags 只由 profile owner 维护。
+`task build:agent-compose` 按宿主选择原生 profile；`task build:agent-compose:darwin` 和 `task build:agent-compose:linux` 是显式入口。`scripts/build-agent-compose-binary.sh` 是 CGO、build tags、目标元数据和 `BuildVersion` linker flags 的唯一 owner，Task、两个 Dockerfile 和 CI 只选择 profile。`linux-full` 在执行 `go build` 前会校验 BoxLite 的 header、library、runtime executable，以及 Microsandbox 的 executable 和 shared library；缺少任一产物都会提前失败。`build:agent-compose:boxlite` 已废弃，只保留为 `linux-full` 的兼容 alias。Linux full 构建从 Dockerfile owner 导出 BoxLite/Microsandbox native artifact，因此普通 Linux full 开发构建以 Docker 为标准前置依赖。
 
-`agent-compose --json version`、daemon `/api/version` 和 `status --json` 暴露的 `compiled_drivers` 是编译能力：它只证明真实 driver 实现已编入当前 binary。它不是 runtime availability 或 health 探测，不证明 Docker daemon 可连接、宿主存在 KVM、runtime artifact 完整或 VM 能成功启动。产品识别某个 driver 名称也不等于当前产物编译了该 driver；持久化选择或启动未编译 driver 时会提前返回 unsupported。
+`agent-compose --json version` 的稳定字段是 `version`、`os`、`arch` 和 `compiled_drivers`；daemon `/api/version` 在兼容 envelope 中追加相同 build 信息，`status --json` 保留完整响应，`version` 文本和 status 表格保持兼容。`compiled_drivers` 是编译能力：它只证明真实 driver 实现已编入当前 binary，并保持 `docker`、`boxlite`、`microsandbox` 的稳定顺序。它不是 runtime availability 或 health 探测，不证明 Docker daemon 可连接、宿主存在 KVM、runtime artifact 完整或 VM 能成功启动。
+
+产品识别某个 driver 名称不等于当前产物编译了该 driver。默认 driver 缺失时 daemon 在 service graph 构造阶段失败；create、apply、scheduler 和 runtime 操作会在持久化或其他副作用前拒绝未编译 driver。历史对象仍可读取，失败不会改写已保存的 driver 或 runtime state。该错误在 Connect API 中映射为 `CodeUnimplemented`，CLI 保持 unsupported exit code。BoxLite 和 Microsandbox wrapper 保持 lazy，构造 provider 不初始化 native runtime 或访问 KVM；纯 compose 解析仍接受所有产品支持的 driver 名称。
 
 macOS/Linux 原生二进制只用于本地开发和 CI 验证，不进入 GitHub Release。发布边界保持为 GHCR 中的 multi-arch Linux daemon/guest 镜像；GitHub Release 只包含 `install.sh`、installer bundle 和校验和，没有 per-architecture binary 资产。完整 Linux daemon 镜像可以由 macOS Docker Desktop 运行 Docker driver，但镜像仍是 Linux 产物，也不承诺在 Docker Desktop 中提供 BoxLite/Microsandbox 所需的 KVM 能力。
 
