@@ -49,6 +49,20 @@ agent-compose --host http://10.0.0.12:7410 ls
 - daemon 不再消费浏览器登录用的 `AUTH_*` / `OAUTH_*` 配置；UI 浏览器认证由 agent-compose-ui server 处理。
 - 自动化场景应使用 `--json`，不要解析人类可读表格。
 
+### Project 环境文件
+
+配置可以显式指定一个或多个 dotenv 文件；相对路径以 project 配置文件所在目录为基准：
+
+```yaml
+env_file:
+  - .env
+  - .env.local
+```
+
+未声明 `env_file` 时，CLI 优先自动加载 project 目录下的 `.env`；该文件不存在时，再尝试当前工作目录的 `.env`。显式声明 `env_file` 后不再自动加载这两个文件。
+
+变量冲突时，后声明的 env 文件覆盖先声明的文件，启动 CLI 时已有的进程环境覆盖所有 env 文件。Project 环境文件只参与 `agent-compose.yml` 渲染，不会改变 `--host`、认证等 CLI 连接配置。
+
 ## 常见工作流
 
 本地开发：

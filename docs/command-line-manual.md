@@ -48,6 +48,20 @@ Rules:
 - When connecting to an HTTP(S) daemon through `--host` or `AGENT_COMPOSE_HOST`, the CLI reads Basic Auth credentials from local `AUTH_USERNAME` and `AUTH_PASSWORD`; local Unix socket connections do not use this authentication path.
 - Automation should use `--json` and avoid parsing human-readable tables.
 
+### Project environment files
+
+A project can explicitly load one or more dotenv files. Relative paths are resolved from the directory containing the project config file:
+
+```yaml
+env_file:
+  - .env
+  - .env.local
+```
+
+Without `env_file`, the CLI first looks for `.env` in the project directory, then falls back to `.env` in the current working directory. An explicit `env_file` disables both automatic locations.
+
+Later files override earlier files, and the environment inherited by the CLI overrides every env file. Project env files are only used to render `agent-compose.yml`; they do not change CLI connection settings such as `--host` or authentication.
+
 ## Common Workflows
 
 Local development:

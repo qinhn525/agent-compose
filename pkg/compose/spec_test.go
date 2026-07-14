@@ -29,6 +29,40 @@ agents:
 	}
 }
 
+func TestParseEnvFileScalarAndList(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want []string
+	}{
+		{name: "scalar", yaml: "env_file: .env.local\nagents: {}\n", want: []string{".env.local"}},
+		{name: "list", yaml: "env_file:\n  - .env\n  - .env.local\nagents: {}\n", want: []string{".env", ".env.local"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec, err := Parse([]byte(tt.yaml))
+			if err != nil {
+				t.Fatalf("Parse returned error: %v", err)
+			}
+			if len(spec.EnvFiles) != len(tt.want) {
+				t.Fatalf("EnvFiles = %#v, want %#v", spec.EnvFiles, tt.want)
+			}
+			for index := range tt.want {
+				if spec.EnvFiles[index] != tt.want[index] {
+					t.Fatalf("EnvFiles = %#v, want %#v", spec.EnvFiles, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestParseRejectsInvalidEnvFile(t *testing.T) {
+	_, err := Parse([]byte("env_file:\n  path: .env\nagents: {}\n"))
+	if err == nil || !strings.Contains(err.Error(), "env_file") {
+		t.Fatalf("Parse error = %v, want env_file validation error", err)
+	}
+}
+
 func TestParseAgentStatus(t *testing.T) {
 	spec, err := Parse([]byte("name: status\nagents:\n  worker:\n    status: disabled\n    provider: codex\n"))
 	if err != nil {
