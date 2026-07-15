@@ -235,8 +235,7 @@ func TestLoaderSandboxRunnerResolvesVolumeMounts(t *testing.T) {
 		}},
 	}
 	request := domain.LoaderAgentRequest{
-		SandboxPolicy:  domain.LoaderSandboxPolicyNew,
-		SchedulerRunID: "scheduler-run-1",
+		SandboxPolicy: domain.LoaderSandboxPolicyNew,
 		Volumes: []domain.VolumeMountSpec{{
 			Type:   domain.VolumeMountTypeVolume,
 			Source: "request-cache",
@@ -266,7 +265,7 @@ func TestLoaderSandboxRunnerResolvesVolumeMounts(t *testing.T) {
 	for _, tag := range session.Summary.Tags {
 		tags[tag.Name] = tag.Value
 	}
-	if tags["origin"] != "scheduler" || tags["project_id"] != "project-1" || tags["agent"] != "reviewer" || tags["scheduler_id"] != "scheduler-1" || tags["scheduler_run_id"] != "scheduler-run-1" {
+	if tags["origin"] != "scheduler" || tags["project_id"] != "project-1" || tags["agent"] != "reviewer" || tags["scheduler_id"] != "scheduler-1" {
 		t.Fatalf("managed scheduler sandbox tags = %#v", tags)
 	}
 	events, err := bridge.store.ListEvents(ctx, session.Summary.ID)

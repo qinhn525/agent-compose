@@ -6458,6 +6458,10 @@ func composePSOutputFromProject(ctx context.Context, clients cliServiceClients, 
 	if err != nil {
 		return composePSOutput{}, err
 	}
+	schedulerRunBySandbox, err := latestSchedulerRunsBySandbox(ctx, clients.project, project, sessions)
+	if err != nil {
+		return composePSOutput{}, err
+	}
 	for _, session := range sessions {
 		if !composePSSessionBelongsToProject(session, project, runBySandbox) {
 			continue
@@ -6470,9 +6474,14 @@ func composePSOutputFromProject(ctx context.Context, clients cliServiceClients, 
 			continue
 		}
 		run := runBySandbox[session.GetSandboxId()]
+		schedulerRun := schedulerRunBySandbox[session.GetSandboxId()]
 		tags := sessionTagsMap(session.GetTags())
 		agent := firstNonEmptyString(run.GetAgentName(), tags["agent"])
-		runID := firstNonEmptyString(run.GetRunId(), tags["run_id"], tags["scheduler_run_id"])
+		runID := firstNonEmptyString(run.GetRunId(), tags["run_id"])
+		if schedulerRunIsNewer(schedulerRun, run) {
+			agent = firstNonEmptyString(schedulerRun.AgentName, agent)
+			runID = schedulerRun.RunID
+		}
 		output.Sandboxes = append(output.Sandboxes, composePSSandboxOutput{
 			SandboxID:      displayOpaqueID(session.GetSandboxId()),
 			RawID:          session.GetSandboxId(),

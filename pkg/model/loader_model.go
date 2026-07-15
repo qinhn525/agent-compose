@@ -134,7 +134,6 @@ type LoaderAgentRequest struct {
 	Volumes          []VolumeMountSpec `json:"volumes,omitempty"`
 	OutputSchema     string            `json:"outputSchema,omitempty"`
 	BindingTriggerID string            `json:"-"`
-	SchedulerRunID   string            `json:"-"`
 }
 
 type LoaderAgentResult struct {

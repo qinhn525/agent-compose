@@ -136,7 +136,6 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 			domain.SandboxTag{Name: "project_id", Value: loader.Summary.ManagedProjectID},
 			domain.SandboxTag{Name: "agent", Value: loader.Summary.ManagedAgentName},
 			domain.SandboxTag{Name: "scheduler_id", Value: loader.Summary.ManagedSchedulerID},
-			domain.SandboxTag{Name: "scheduler_run_id", Value: request.SchedulerRunID},
 		)
 	}
 	tags = append(tags, capabilityTags...)
