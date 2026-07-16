@@ -3065,9 +3065,17 @@ agents:
 	if !strings.Contains(stdout, shortOpaqueID(schedulerID)) || strings.Contains(stdout, displayOpaqueID(schedulerID)) {
 		t.Fatalf("scheduler ls should show only short scheduler id %q, stdout = %q", shortOpaqueID(schedulerID), stdout)
 	}
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	if !strings.HasPrefix(lines[0], "SCHEDULER") || !strings.HasPrefix(strings.TrimSpace(lines[1]), shortOpaqueID(schedulerID)) {
+		t.Fatalf("scheduler ls should show scheduler as first column, stdout = %q", stdout)
+	}
 	verboseOut, verboseErr, _, verboseCode := executeCLICommand("scheduler", "ls", "--verbose", "--host", server.URL, "--file", composePath)
 	if verboseCode != 0 || verboseErr != "" || !strings.Contains(verboseOut, displayOpaqueID(schedulerID)) || !strings.Contains(verboseOut, "TRIGGER ID") {
 		t.Fatalf("scheduler ls --verbose code/stdout/stderr = %d / %q / %q", verboseCode, verboseOut, verboseErr)
+	}
+	verboseLines := strings.Split(strings.TrimSpace(verboseOut), "\n")
+	if !strings.HasPrefix(verboseLines[0], "SCHEDULER") || !strings.HasPrefix(strings.TrimSpace(verboseLines[1]), displayOpaqueID(schedulerID)) {
+		t.Fatalf("scheduler ls --verbose should show scheduler as first column, stdout = %q", verboseOut)
 	}
 	jsonOut, jsonErr, _, jsonCode := executeCLICommand("scheduler", "ls", identity.ShortID(agentID), "--json", "--host", server.URL, "--file", composePath)
 	if jsonCode != 0 || jsonErr != "" || !strings.Contains(jsonOut, `"agent_name": "reviewer"`) || !strings.Contains(jsonOut, `"source": "declarative"`) ||
