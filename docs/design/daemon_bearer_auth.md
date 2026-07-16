@@ -71,10 +71,13 @@ hosts:
     token: secret
 ```
 
-Writes use an atomic same-directory rename and mode `0600`. Tokens are keyed by
-the normalized daemon base URL. HTTP(S) client construction automatically loads
-the matching token and injects it into ordinary, streaming, and attach
-requests. Unix socket client construction does not read or send saved tokens.
+Writes use an atomic same-directory rename and mode `0600`. A same-directory
+advisory lock covers each complete read-modify-write transaction so concurrent
+CLI login and logout processes cannot overwrite one another's changes. Tokens
+are keyed by the normalized daemon base URL. HTTP(S) client construction
+automatically loads the matching token and injects it into ordinary, streaming,
+and attach requests. Unix socket client construction does not read or send saved
+tokens.
 
 ## Transport and proxy considerations
 

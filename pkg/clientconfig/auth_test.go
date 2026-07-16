@@ -1,9 +1,12 @@
 package clientconfig
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 )
 
@@ -61,5 +64,92 @@ func TestLoadRejectsUnsupportedVersion(t *testing.T) {
 	}
 	if _, err := Hosts(path); err == nil {
 		t.Fatal("Hosts returned nil error for unsupported version")
+	}
+}
+
+func TestConcurrentSaveTokenPreservesEveryHost(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yml")
+	const count = 64
+	start := make(chan struct{})
+	errors := make(chan error, count)
+	var workers sync.WaitGroup
+	for index := range count {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			host := fmt.Sprintf("https://host-%02d.example", index)
+			errors <- SaveToken(path, host, fmt.Sprintf("token-%02d", index))
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatalf("SaveToken returned error: %v", err)
+		}
+	}
+	hosts, err := Hosts(path)
+	if err != nil {
+		t.Fatalf("Hosts returned error: %v", err)
+	}
+	if len(hosts) != count {
+		t.Fatalf("Hosts count = %d, want %d", len(hosts), count)
+	}
+	for index := range count {
+		host := fmt.Sprintf("https://host-%02d.example", index)
+		token, err := Token(path, host)
+		if err != nil || token != fmt.Sprintf("token-%02d", index) {
+			t.Fatalf("Token(%q) = %q, %v", host, token, err)
+		}
+	}
+	lockInfo, err := os.Stat(path + ".lock")
+	if err != nil {
+		t.Fatalf("Stat lock returned error: %v", err)
+	}
+	if got := lockInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("lock mode = %o, want 600", got)
+	}
+}
+
+func TestConcurrentProcessesPreserveEveryHost(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yml")
+	const count = 16
+	commands := make([]*exec.Cmd, 0, count)
+	for index := range count {
+		host := fmt.Sprintf("https://process-%02d.example", index)
+		command := exec.Command(os.Args[0], "-test.run=^TestSaveTokenSubprocess$")
+		command.Env = append(os.Environ(),
+			"AGENT_COMPOSE_TEST_CONFIG_PATH="+path,
+			"AGENT_COMPOSE_TEST_CONFIG_HOST="+host,
+			"AGENT_COMPOSE_TEST_CONFIG_TOKEN="+fmt.Sprintf("token-%02d", index),
+		)
+		if err := command.Start(); err != nil {
+			t.Fatalf("start subprocess %d: %v", index, err)
+		}
+		commands = append(commands, command)
+	}
+	for index, command := range commands {
+		if err := command.Wait(); err != nil {
+			t.Fatalf("subprocess %d failed: %v", index, err)
+		}
+	}
+	hosts, err := Hosts(path)
+	if err != nil {
+		t.Fatalf("Hosts returned error: %v", err)
+	}
+	if len(hosts) != count {
+		t.Fatalf("Hosts count = %d, want %d", len(hosts), count)
+	}
+}
+
+func TestSaveTokenSubprocess(t *testing.T) {
+	path := os.Getenv("AGENT_COMPOSE_TEST_CONFIG_PATH")
+	if path == "" {
+		t.Skip("subprocess helper")
+	}
+	if err := SaveToken(path, os.Getenv("AGENT_COMPOSE_TEST_CONFIG_HOST"), os.Getenv("AGENT_COMPOSE_TEST_CONFIG_TOKEN")); err != nil {
+		t.Fatalf("SaveToken returned error: %v", err)
 	}
 }

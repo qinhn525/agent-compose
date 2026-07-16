@@ -49,27 +49,37 @@ func SaveToken(path, host, token string) error {
 	if token == "" {
 		return errors.New("token is required")
 	}
-	config, err := load(path)
-	if err != nil {
-		return err
-	}
-	if config.Hosts == nil {
-		config.Hosts = make(map[string]hostAuth)
-	}
-	config.Hosts[host] = hostAuth{Token: token}
-	return write(path, config)
+	return withConfigLock(path, func() error {
+		config, err := load(path)
+		if err != nil {
+			return err
+		}
+		if config.Hosts == nil {
+			config.Hosts = make(map[string]hostAuth)
+		}
+		config.Hosts[host] = hostAuth{Token: token}
+		return write(path, config)
+	})
 }
 
 func RemoveToken(path, host string) (bool, error) {
-	config, err := load(path)
-	if err != nil {
-		return false, err
-	}
-	if _, ok := config.Hosts[host]; !ok {
-		return false, nil
-	}
-	delete(config.Hosts, host)
-	return true, write(path, config)
+	removed := false
+	err := withConfigLock(path, func() error {
+		config, err := load(path)
+		if err != nil {
+			return err
+		}
+		if _, ok := config.Hosts[host]; !ok {
+			return nil
+		}
+		delete(config.Hosts, host)
+		if err := write(path, config); err != nil {
+			return err
+		}
+		removed = true
+		return nil
+	})
+	return removed, err
 }
 
 func Hosts(path string) ([]string, error) {
