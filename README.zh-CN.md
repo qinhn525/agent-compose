@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../../images/agent-compose-logo.png" alt="Agent-compose" width="384">
+  <img src="images/agent-compose-logo.png" alt="Agent-compose" width="384">
 </p>
 
 # agent-compose 中文文档
@@ -8,7 +8,7 @@
 
 > 公开预览阶段。API、运行时打包和部署默认值仍可能调整。适合实验、本地开发和预览部署，尚未达到稳定生产平台。
 
-英文首页见 [../../README.md](../../README.md)。
+英文首页见 [README.md](README.md)。
 
 ## agent-compose 是什么？
 
@@ -33,7 +33,7 @@
 
 **daemon** 是唯一的状态权威：负责持久化、scheduler 执行、runtime 生命周期、Connect/HTTP API 和 Jupyter 代理。**CLI** 是一个轻客户端 —— 读取本地 `agent-compose.yml`，做本地校验，再调用 daemon。compose 文件描述的是 *project 和 agent*，不是已经在跑的 sandbox。**Web UI** 是独立服务（[agent-compose-ui](https://github.com/chaitin/agent-compose-ui)），不由 daemon 托管。
 
-完整架构见 [../design/agent-compose_design.md](../design/agent-compose_design.md)。
+完整架构见 [docs/design/agent-compose_design.md](docs/design/agent-compose_design.md)。
 
 ## 快速开始
 
@@ -52,7 +52,7 @@ cd <安装脚本打印的目录>
 docker compose --profile with-ui up -d
 ```
 
-然后访问安装脚本打印的 URL。基础 `docker-compose.yml` 不启用 `privileged`，也不映射 `/dev/kvm`；installer 在新安装时检测 KVM，并在可用时把 `COMPOSE_FILE=docker-compose.yml:docker-compose.kvm.yml` 持久化到安装目录的 `.env`。没有 KVM 时仍可使用默认 Docker driver。安装选项（`--dir`、`--port`、`--upgrade`、使用镜像/私有 registry 等）见 [../../deploy/README.md](../../deploy/README.md)。
+然后访问安装脚本打印的 URL。基础 `docker-compose.yml` 不启用 `privileged`，也不映射 `/dev/kvm`；installer 在新安装时检测 KVM，并在可用时把 `COMPOSE_FILE=docker-compose.yml:docker-compose.kvm.yml` 持久化到安装目录的 `.env`。没有 KVM 时仍可使用默认 Docker driver。安装选项（`--dir`、`--port`、`--upgrade`、使用镜像/私有 registry 等）见 [deploy/README.md](deploy/README.md)。
 
 ### 方式 B —— 从源码构建（用于 CLI 工作流）
 
@@ -94,7 +94,7 @@ agent-compose logs --agent reviewer
 agent-compose down                                # 停止 sandbox、禁用 scheduler
 ```
 
-更多可运行示例（cron、timeout、scheduler 脚本）见 [../../examples/agent-compose/](../../examples/agent-compose/)。
+更多可运行示例（cron、timeout、scheduler 脚本）见 [examples/agent-compose/](examples/agent-compose/)。
 
 ## Compose 配置
 
@@ -127,7 +127,7 @@ agents:
           prompt: "Review the current project state and summarize changes."
 ```
 
-完整字段说明见[命令行使用手册](../pages/zh-CN/command-line-manual.md)。
+完整字段说明见[命令行使用手册](docs/pages/zh-CN/command-line-manual.md)。
 
 ## CLI 概览
 
@@ -139,22 +139,44 @@ agents:
 | `agent-compose exec <sandbox>` | 在运行中的 sandbox 内执行命令或 prompt。 |
 | `agent-compose ps` / `stats` | 列出 project sandbox / 查看 sandbox 资源统计。 |
 | `agent-compose logs` | 查看 project run 日志；可直接传入 project、agent、run 或 sandbox ID，无需指定资源类型。 |
-| `agent-compose scheduler ls\|trigger\|inspect` | 查看、执行或检查 scheduler trigger。 |
+| `agent-compose scheduler ls\|runs\|logs\|trigger\|inspect` | 查看 trigger 和 run、读取 scheduler 日志、手动执行 trigger 或检查 scheduler 资源。 |
 | `agent-compose sandbox ls\|stop\|resume\|rm\|prune` | 管理 project sandbox。 |
 | `agent-compose images\|pull\|build\|rmi\|inspect` | 管理 daemon 镜像并构建 agent 镜像。 |
 | `agent-compose volume ls\|create\|inspect\|rm\|prune` | 管理 daemon volume。 |
 | `agent-compose cache ls\|inspect\|prune\|rm` | 查看并清理 daemon runtime cache。 |
+| `agent-compose auth login\|logout\|ls` | 验证、删除或列出已保存的 daemon Bearer Token。 |
 | `agent-compose down` | 禁用受管 scheduler 并停止 sandbox。 |
 | `agent-compose status` | 查看 daemon 状态。 |
 
 常用全局参数：`--file, -f`（指定 compose 文件）、`--project-name`、`--json`
 （脚本用的稳定 JSON 输出）、`--host` / `AGENT_COMPOSE_HOST`（连接 TCP daemon）、
-`AGENT_COMPOSE_SOCKET`（Unix socket 路径）。完整参考见[命令行使用手册](../pages/zh-CN/command-line-manual.md)。
+`AGENT_COMPOSE_SOCKET`（Unix socket 路径）。完整参考见[命令行使用手册](docs/pages/zh-CN/command-line-manual.md)。
 
 `scheduler.script` 支持内联 JavaScript，或使用显式的 `{ url: ... }` 来源
 （本地路径、`file://`、`http://`、`https://`）。`config` 和 `up` 在 CLI 本机
 获取来源并向 daemon 发送内联快照；同一 scheduler 中 `scheduler.script` 和
 `scheduler.triggers` 二选一。
+
+## Daemon 认证
+
+在 daemon 环境中设置 `AGENT_COMPOSE_AUTH_TOKEN` 后，HTTP(S) 控制面请求必须携带共享 Bearer Token；配置为空或未配置时，认证保持关闭。受信任的本地 Unix socket 连接不需要此 Token。
+
+Health RPC、Runtime LLM Facade、Jupyter proxy 和 webhook ingestion 继续使用各自已有的认证或信任边界，不使用 daemon Token。
+
+为一个 daemon 站点验证并保存 Token：
+
+```bash
+export AGENT_COMPOSE_AUTH_TOKEN='your-token'
+export HTTP_LISTEN='127.0.0.1:7410'
+agent-compose daemon
+
+agent-compose --host http://127.0.0.1:7410 auth login --token 'your-token'
+agent-compose --host http://127.0.0.1:7410 status
+```
+
+登录命令会先向 daemon 验证 Token，成功后将凭据保存到当前平台的用户配置目录；标准 Linux 路径为 `~/.config/agent-compose/config.yml`，且仅当前用户可读写。后续通过相同的 `--host` 或 `AGENT_COMPOSE_HOST` 连接时，CLI 会自动携带对应 Token。使用 `agent-compose auth ls` 查看已保存站点，使用 `agent-compose --host <site> auth logout` 删除站点凭据。
+
+Bearer Token 不会加密网络流量。跨机器连接时，请使用 HTTPS、SSH 隧道、VPN 或其他受保护网络；明文 HTTP 中的 Token 可能被监听并重放。UI server 或反向代理若调用受保护的 daemon 控制面 API，也必须注入相同的 `Authorization: Bearer <token>` 请求头。
 
 ## Runtime Driver
 
@@ -200,7 +222,7 @@ ANTHROPIC_MODEL=claude-...
 
 **各 provider 说明。** OpenCode 从 agent 的 `model`（`provider/model`，如 `anthropic/…` 或 `openai/…`）选择上游家族并获得对应的 facade token；只有 OpenCode 自带的原生 provider 才走 OpenCode 自身登录。**Gemini 是例外** —— 它不会拿到任何 LLM key（`GEMINI_API_KEY` / `GOOGLE_API_KEY` 会从 guest 中过滤），而是通过 Gemini CLI 自身登录，凭据持久化在 sandbox home（`~/.gemini`）。
 
-完整变量（超时、endpoint 别名、`OPENAI_API_KEY` / `ANTHROPIC_AUTH_TOKEN` 等）见 [../../.env.example](../../.env.example)；facade 的托管机制见 [../design/agent-compose_design.md#daemon-llm-client](../design/agent-compose_design.md#daemon-llm-client)。
+完整变量（超时、endpoint 别名、`OPENAI_API_KEY` / `ANTHROPIC_AUTH_TOKEN` 等）见 [`.env.example`](.env.example)；facade 的托管机制见 [docs/design/agent-compose_design.md#daemon-llm-client](docs/design/agent-compose_design.md#daemon-llm-client)。
 
 ## 部署与配置
 
@@ -216,9 +238,10 @@ docker compose --profile with-ui up -d   # 同时启动 Web UI
 
 以上命令默认使用不含 KVM 权限的基础 Compose。需要在 Linux KVM 主机显式启用 BoxLite/Microsandbox 时，把 `COMPOSE_FILE=docker-compose.yml:docker-compose.kvm.yml` 写入部署目录的 `.env`；`docker-compose.kvm.yml` 只增加 `privileged` 和 `/dev/kvm` 能力，不是本地 build override。
 
-**[../../.env.example](../../.env.example) 是权威的、带完整注释的配置参考。** 对外部署前至少检查这些：
+**[`.env.example`](.env.example) 是权威的、带完整注释的配置参考。** 对外部署前至少检查这些：
 
 - `AUTH_PASSWORD`、`AUTH_SECRET` —— UI server 登录 secret（务必替换示例值）。
+- `AGENT_COMPOSE_AUTH_TOKEN` —— daemon HTTP(S) 控制面可选的共享 Bearer Token。
 - `AGENT_COMPOSE_HTTP_PORT` —— 启用 `with-ui` 时 Web UI / 反向代理的宿主机端口。
 - `AGENT_COMPOSE_RUNTIME_BASE_URL` —— guest 可达的 daemon URL，用于 LLM facade。
 - `RUNTIME_DRIVER` —— 默认 runtime driver。
@@ -234,10 +257,11 @@ Web UI 在独立仓库 [agent-compose-ui](https://github.com/chaitin/agent-compo
 - 浏览器入口通过 agent-compose-ui server 暴露，不要直连 daemon。
 - 设置稳定、高熵的 `AUTH_SECRET`；生产环境使用 HTTPS 终止。
 - daemon TCP API（`HTTP_LISTEN`）应置于容器网络、反向代理或 VPN 之后。
+- 启用 daemon Token 认证时，跨机器连接使用 HTTPS 或其他受保护隧道；明文 HTTP 无法防止 Token 被截获和重放。
 - 不要直接暴露 guest Jupyter 端口 —— 通过 agent-compose proxy 访问。
 - 把 Git 凭据、上传的 workspace、环境变量和 LLM API key 都当作 secret。
 
-更多说明见 [../../SECURITY.md](../../SECURITY.md)。
+更多说明见 [SECURITY.md](SECURITY.md)。
 
 ## 构建与测试
 
@@ -253,17 +277,17 @@ macOS/Linux 原生二进制只用于本地开发和 CI 验证，不作为 GitHub
 
 ## 文档
 
-- [英文文档索引](../../README.md)
-- [命令行使用手册](../pages/zh-CN/command-line-manual.md)
-- [架构说明](../design/agent-compose_design.md)
+- [英文文档索引](README.md)
+- [命令行使用手册](docs/pages/zh-CN/command-line-manual.md)
+- [架构说明](docs/design/agent-compose_design.md)
 
 ## 贡献
 
-欢迎贡献 —— 见 [../../CONTRIBUTING.md](../../CONTRIBUTING.md)。
+欢迎贡献 —— 见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 许可
 
-agent-compose 使用 [GNU Affero General Public License v3.0](../../LICENSE.txt) 授权。
+agent-compose 使用 [GNU Affero General Public License v3.0](LICENSE.txt) 授权。
 
 ## 社区与支持
 
