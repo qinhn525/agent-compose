@@ -2846,9 +2846,9 @@ func schedulerTriggerItemFromResolved(agentName, schedulerID string, schedulerEn
 
 func writeSchedulerListText(out io.Writer, output composeSchedulerListOutput, verbose bool) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	header := "AGENT\tTRIGGER\tKIND\tSOURCE\tSCHEDULER\tENABLED"
+	header := "SCHEDULER\tAGENT\tTRIGGER\tKIND\tSOURCE\tENABLED"
 	if verbose {
-		header = "AGENT\tTRIGGER\tTRIGGER ID\tKIND\tSOURCE\tSCHEDULER\tENABLED"
+		header = "SCHEDULER\tAGENT\tTRIGGER\tTRIGGER ID\tKIND\tSOURCE\tENABLED"
 	}
 	if _, err := fmt.Fprintln(tw, header); err != nil {
 		return err
@@ -2859,19 +2859,19 @@ func writeSchedulerListText(out io.Writer, output composeSchedulerListOutput, ve
 		if verbose {
 			schedulerID = firstNonEmptyString(trigger.SchedulerID, "-")
 			if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%t\n",
-				trigger.AgentName, name, firstNonEmptyString(trigger.TriggerID, "-"), trigger.Kind,
-				trigger.Source, schedulerID, trigger.TriggerEnabled,
+				schedulerID, trigger.AgentName, name, firstNonEmptyString(trigger.TriggerID, "-"),
+				trigger.Kind, trigger.Source, trigger.TriggerEnabled,
 			); err != nil {
 				return err
 			}
 			continue
 		}
 		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%t\n",
+			schedulerID,
 			trigger.AgentName,
 			name,
 			trigger.Kind,
 			trigger.Source,
-			schedulerID,
 			trigger.TriggerEnabled,
 		); err != nil {
 			return err
