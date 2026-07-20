@@ -20,10 +20,11 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: cmd/installer/go.mod
           cache: true
+          cache-dependency-path: cmd/installer/go.sum
       - name: Test installer
-        run: go test ./cmd/installer/...
+        run: go -C cmd/installer test ./...
       - name: Build linux/amd64 and linux/arm64 assets
         env:
           VERSION: installer-${{ github.sha }}

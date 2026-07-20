@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"agent-compose/cmd/installer/internal/core"
-	installertui "agent-compose/cmd/installer/internal/tui"
+	"github.com/chaitin/agent-compose/cmd/installer/internal/core"
+	installertui "github.com/chaitin/agent-compose/cmd/installer/internal/tui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )

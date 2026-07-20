@@ -56,6 +56,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            cmd/installer/go.sum
+      - name: Test installer module
+        run: go -C cmd/installer test ./...
       - name: Build and verify linux installer assets
         env:
           VERSION: ci-${{ github.sha }}

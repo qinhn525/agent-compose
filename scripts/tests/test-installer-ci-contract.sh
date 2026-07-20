@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 WORKFLOW="$ROOT_DIR/.github/workflows/installer.yml"
+INSTALLER_MODULE="$ROOT_DIR/cmd/installer/go.mod"
 
 fail() {
   printf 'test-installer-ci-contract: %s\n' "$*" >&2
@@ -20,5 +21,12 @@ grep -Fq -- '--prerelease' <<<"$source_text" || fail 'installer release must rem
 grep -Fq -- '--clobber' <<<"$source_text" || fail 'existing fixed release assets are not replaceable'
 grep -Fq 'agent-compose-installer-linux-amd64' "$ROOT_DIR/scripts/build-installer-binaries.sh" || fail 'amd64 asset is missing'
 grep -Fq 'agent-compose-installer-linux-arm64' "$ROOT_DIR/scripts/build-installer-binaries.sh" || fail 'arm64 asset is missing'
+[[ -f "$INSTALLER_MODULE" ]] || fail 'standalone installer module is missing'
+grep -Fq 'module github.com/chaitin/agent-compose/cmd/installer' "$INSTALLER_MODULE" || fail 'installer module path is incorrect'
+grep -Fq 'go -C "$ROOT_DIR/cmd/installer" build' "$ROOT_DIR/scripts/build-installer-binaries.sh" || fail 'binary builder does not use the installer module'
+grep -Fq 'go -C cmd/installer test ./...' "$WORKFLOW" || fail 'publishing workflow does not test the installer module'
+if grep -Fq 'github.com/charmbracelet/' "$ROOT_DIR/go.mod"; then
+  fail 'installer TUI dependencies leaked into the root module'
+fi
 
 printf 'test-installer-ci-contract: all checks passed\n'

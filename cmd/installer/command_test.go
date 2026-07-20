@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"agent-compose/cmd/installer/internal/core"
+	"github.com/chaitin/agent-compose/cmd/installer/internal/core"
 )
 
 type testTTY struct {

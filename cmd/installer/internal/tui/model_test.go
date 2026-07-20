@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"agent-compose/cmd/installer/internal/core"
+	"github.com/chaitin/agent-compose/cmd/installer/internal/core"
 	tea "github.com/charmbracelet/bubbletea"
 )
 

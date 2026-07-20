@@ -41,7 +41,7 @@ cleanup_failure() {
 trap cleanup_failure EXIT
 
 printf '==> Building local release/registry server\n'
-go build -trimpath -o "$SERVER_BIN" "$FIXTURE_DIR/server"
+go -C "$ROOT_DIR/cmd/installer" build -trimpath -o "$SERVER_BIN" ./testdata/docker-demo/server
 nohup setsid "$SERVER_BIN" \
   --root "$RELEASE_ROOT" \
   --address-file "$SERVER_ADDRESS_FILE" \
@@ -68,8 +68,9 @@ build_image() {
   local version=$1 context_dir="$BUILD_DIR/image-$1" image="$REGISTRY/demo/agent-compose:$1"
   mkdir -p "$context_dir"
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags "-s -w -X main.version=$version" \
-    -o "$context_dir/demo-app" "$FIXTURE_DIR/app"
+    go -C "$ROOT_DIR/cmd/installer" build -trimpath \
+    -ldflags "-s -w -X main.version=$version" \
+    -o "$context_dir/demo-app" ./testdata/docker-demo/app
   docker build --pull=false -q -t "$image" -f "$FIXTURE_DIR/Dockerfile" "$context_dir" >/dev/null
   docker push "$image" >"$DEMO_ROOT/push-$version.log"
 }

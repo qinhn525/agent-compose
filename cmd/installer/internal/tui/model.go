@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"agent-compose/cmd/installer/internal/core"
+	"github.com/chaitin/agent-compose/cmd/installer/internal/core"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"

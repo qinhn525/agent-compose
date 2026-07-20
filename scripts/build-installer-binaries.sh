@@ -20,8 +20,8 @@ trap cleanup EXIT
 for arch in amd64 arm64; do
   asset="agent-compose-installer-linux-$arch"
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
-    go build -trimpath -ldflags "-s -w -X main.version=$VERSION" \
-    -o "$WORK_DIR/$asset" "$ROOT_DIR/cmd/installer"
+    go -C "$ROOT_DIR/cmd/installer" build -trimpath \
+    -ldflags "-s -w -X main.version=$VERSION" -o "$WORK_DIR/$asset" .
   chmod 0755 "$WORK_DIR/$asset"
 done
 install -m 0755 "$ROOT_DIR/deploy/install.sh" "$WORK_DIR/install.sh"
