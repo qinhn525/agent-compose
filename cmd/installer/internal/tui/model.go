@@ -262,6 +262,7 @@ func (m *model) readInputs() error {
 			return err
 		}
 		m.options.Port = port
+		m.options.PortSet = true
 		m.options.ImagePrefix = strings.TrimSpace(m.inputs[3].Value())
 		m.options.InstallerPath = m.installerPath
 	}

@@ -35,6 +35,7 @@ func newRootCommand(out, errOut io.Writer) *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			options.PortSet = cmd.Flags().Changed("port")
 			if options.legacyUpgrade || options.yes || hasInstallerFlags(cmd) {
 				operation := core.OperationInstall
 				if options.legacyUpgrade {
@@ -88,6 +89,7 @@ func newOperationCommand(operation core.Operation, options *commandOptions, out,
 		Short: strings.ToUpper(string(operation[:1])) + string(operation[1:]) + " agent-compose",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			options.PortSet = cmd.Flags().Changed("port")
 			return executeOperation(cmd.Context(), operation, options, out, errOut)
 		},
 	}

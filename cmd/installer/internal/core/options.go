@@ -30,6 +30,7 @@ type Options struct {
 	ImagePrefix     string
 	FrontendVersion string
 	Port            int
+	PortSet         bool
 	NoStart         bool
 	Purge           bool
 	KVMPath         string

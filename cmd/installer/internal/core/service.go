@@ -124,7 +124,14 @@ func (s Service) installOrUpgrade(ctx context.Context, operation Operation, opti
 			return
 		}
 		if tx.upAttempted && !tx.previousInstall {
-			_ = s.compose(context.Background(), options.InstallDir, "down", "--remove-orphans")
+			if cleanupErr := s.compose(context.Background(), options.InstallDir, "down", "--remove-orphans"); cleanupErr != nil {
+				// Keep the candidate project metadata so the operator can retry cleanup.
+				tx.Commit()
+				message := fmt.Sprintf("cleanup incomplete; deployment files retained in %s", options.InstallDir)
+				s.report(EventWarning, message)
+				resultErr = errors.Join(resultErr, fmt.Errorf("%s: %w", message, cleanupErr))
+				return
+			}
 		}
 		if rollbackErr := tx.Rollback(); rollbackErr != nil {
 			resultErr = errors.Join(resultErr, fmt.Errorf("rollback installation: %w", rollbackErr))
@@ -257,7 +264,8 @@ func prepareInstallPlan(operation Operation, options Options, source *bundle) (*
 	if err := applyImageReferences(env, state, source.Manifest, options, mode); err != nil {
 		return fail(err)
 	}
-	if err := env.Set("AGENT_COMPOSE_HTTP_PORT", strconv.Itoa(options.Port)); err != nil {
+	effectivePort, err := applyHTTPPort(env, envExists, options)
+	if err != nil {
 		return fail(err)
 	}
 	dataRelative, dataDir, err := selectDataDir(options.InstallDir, env, envExists)
@@ -291,10 +299,25 @@ func prepareInstallPlan(operation Operation, options Options, source *bundle) (*
 		username = "admin"
 	}
 	plan.result = Result{
-		InstallDir: options.InstallDir, URL: fmt.Sprintf("http://localhost:%d", options.Port),
+		InstallDir: options.InstallDir, URL: fmt.Sprintf("http://localhost:%d", effectivePort),
 		Username: username, GeneratedPassword: password, DataDir: dataDir, ComposeFiles: composeFiles,
 	}
 	return plan, nil
+}
+
+func applyHTTPPort(env *envFile, envExists bool, options Options) (int, error) {
+	configured, _ := env.Get("AGENT_COMPOSE_HTTP_PORT")
+	if envExists && !options.PortSet && strings.TrimSpace(configured) != "" {
+		port, err := ParsePort(configured)
+		if err != nil {
+			return 0, fmt.Errorf("existing AGENT_COMPOSE_HTTP_PORT is invalid: %w", err)
+		}
+		return port, nil
+	}
+	if err := env.Set("AGENT_COMPOSE_HTTP_PORT", strconv.Itoa(options.Port)); err != nil {
+		return 0, err
+	}
+	return options.Port, nil
 }
 
 func ensureSecrets(env *envFile) (string, error) {

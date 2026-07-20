@@ -12,8 +12,9 @@ import (
 )
 
 type fakeRunner struct {
-	calls  []string
-	failOn string
+	calls    []string
+	failOn   string
+	failures []string
 }
 
 func (r *fakeRunner) Run(_ context.Context, dir, name string, args ...string) error {
@@ -21,6 +22,11 @@ func (r *fakeRunner) Run(_ context.Context, dir, name string, args ...string) er
 	r.calls = append(r.calls, call)
 	if r.failOn != "" && strings.Contains(call, r.failOn) {
 		return errors.New("injected command failure")
+	}
+	for _, failure := range r.failures {
+		if strings.Contains(call, failure) {
+			return errors.New("injected command failure")
+		}
 	}
 	return nil
 }
@@ -52,6 +58,7 @@ func TestIntegrationInstallUpgradePreservesUserConfiguration(t *testing.T) {
 	env := readTestEnv(t, envPath)
 	assertTestEnv(t, env, "AGENT_COMPOSE_IMAGE", "registry.example/agent-compose:v1")
 	assertTestEnv(t, env, "AGENT_COMPOSE_DATA_DIR", "./data")
+	assertTestEnv(t, env, "AGENT_COMPOSE_HTTP_PORT", "80")
 	if err := env.Set("AGENT_COMPOSE_IMAGE", "custom.example/daemon:keep"); err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +78,50 @@ func TestIntegrationInstallUpgradePreservesUserConfiguration(t *testing.T) {
 	assertTestEnv(t, state, "DEFAULT_IMAGE", "registry.example/agent-compose-guest:v2")
 	if !slices.Contains(runner.calls, installDir+"|docker compose config --quiet") {
 		t.Fatalf("compose config call missing: %#v", runner.calls)
+	}
+}
+
+func TestIntegrationUpgradePreservesPortUnlessExplicitlySet(t *testing.T) {
+	root := t.TempDir()
+	installDir := filepath.Join(root, "install")
+	options := DefaultOptions()
+	options.InstallDir = installDir
+	options.BundleDir = makeTestBundle(t, "v1")
+	options.KVMPath = filepath.Join(root, "missing-kvm")
+	options.NoStart = true
+	service := Service{Runner: &fakeRunner{}}
+
+	if _, err := service.Apply(context.Background(), OperationInstall, options); err != nil {
+		t.Fatal(err)
+	}
+	envPath := filepath.Join(installDir, ".env")
+	env := readTestEnv(t, envPath)
+	if err := env.Set("AGENT_COMPOSE_HTTP_PORT", "8080"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(envPath, env.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	options.BundleDir = makeTestBundle(t, "v2")
+	preserved, err := service.Apply(context.Background(), OperationUpgrade, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTestEnv(t, readTestEnv(t, envPath), "AGENT_COMPOSE_HTTP_PORT", "8080")
+	if preserved.URL != "http://localhost:8080" {
+		t.Fatalf("preserved URL = %q", preserved.URL)
+	}
+
+	options.Port = 9090
+	options.PortSet = true
+	overridden, err := service.Apply(context.Background(), OperationUpgrade, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTestEnv(t, readTestEnv(t, envPath), "AGENT_COMPOSE_HTTP_PORT", "9090")
+	if overridden.URL != "http://localhost:9090" {
+		t.Fatalf("overridden URL = %q", overridden.URL)
 	}
 }
 
@@ -105,6 +156,53 @@ func TestIntegrationInstallRollbackRestoresManagedFiles(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o640 {
 		t.Fatalf("restored mode = %o", info.Mode().Perm())
+	}
+}
+
+func TestIntegrationFailedInitialStartRetainsFilesWhenCleanupFails(t *testing.T) {
+	root := t.TempDir()
+	installDir := filepath.Join(root, "install")
+	runner := &fakeRunner{failures: []string{
+		"docker compose --progress plain up -d",
+		"docker compose down --remove-orphans",
+	}}
+	options := DefaultOptions()
+	options.InstallDir = installDir
+	options.BundleDir = makeTestBundle(t, "v1")
+	options.KVMPath = filepath.Join(root, "missing-kvm")
+
+	_, err := (Service{Runner: runner}).Apply(context.Background(), OperationInstall, options)
+	if err == nil || !strings.Contains(err.Error(), "cleanup incomplete") || !strings.Contains(err.Error(), installDir) {
+		t.Fatalf("install error = %v", err)
+	}
+	for _, name := range []string{"docker-compose.yml", ".env", ".installer-state.env"} {
+		if !regularFile(filepath.Join(installDir, name)) {
+			t.Fatalf("recovery file %s was removed", name)
+		}
+	}
+	if info, statErr := os.Stat(filepath.Join(installDir, "data")); statErr != nil || !info.IsDir() {
+		t.Fatalf("candidate data directory was removed: %v", statErr)
+	}
+}
+
+func TestIntegrationFailedInitialStartRollsBackAfterCleanup(t *testing.T) {
+	root := t.TempDir()
+	installDir := filepath.Join(root, "install")
+	runner := &fakeRunner{failOn: "docker compose --progress plain up -d"}
+	options := DefaultOptions()
+	options.InstallDir = installDir
+	options.BundleDir = makeTestBundle(t, "v1")
+	options.KVMPath = filepath.Join(root, "missing-kvm")
+
+	if _, err := (Service{Runner: runner}).Apply(context.Background(), OperationInstall, options); err == nil {
+		t.Fatal("expected start failure")
+	}
+	if _, err := os.Stat(installDir); !os.IsNotExist(err) {
+		t.Fatalf("failed installation was not rolled back: %v", err)
+	}
+	wantDown := installDir + "|docker compose down --remove-orphans"
+	if !slices.Contains(runner.calls, wantDown) {
+		t.Fatalf("cleanup command missing: %#v", runner.calls)
 	}
 }
 
