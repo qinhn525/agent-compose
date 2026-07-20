@@ -5,7 +5,10 @@ ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf -- "$TEST_ROOT"' EXIT
 
-VERSION=installer-test "$ROOT_DIR/scripts/build-installer-binaries.sh" "$TEST_ROOT/assets" >/dev/null
+(
+  cd "$TEST_ROOT"
+  VERSION=installer-test "$ROOT_DIR/scripts/build-installer-binaries.sh" ./assets >/dev/null
+)
 
 expected=$'SHASUMS256.txt\nagent-compose-installer-linux-amd64\nagent-compose-installer-linux-arm64\ninstall.sh'
 actual=$(find "$TEST_ROOT/assets" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)

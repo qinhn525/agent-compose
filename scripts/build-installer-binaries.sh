@@ -11,6 +11,7 @@ command -v go >/dev/null 2>&1 || { printf 'build-installer-binaries: go is requi
 command -v sha256sum >/dev/null 2>&1 || { printf 'build-installer-binaries: sha256sum is required\n' >&2; exit 1; }
 
 mkdir -p -- "$(dirname -- "$OUTPUT_DIR")"
+OUTPUT_DIR=$(cd -- "$(dirname -- "$OUTPUT_DIR")" && pwd -P)/$(basename -- "$OUTPUT_DIR")
 WORK_DIR=$(mktemp -d "$(dirname -- "$OUTPUT_DIR")/.installer-binaries.XXXXXX")
 cleanup() {
   rm -rf -- "$WORK_DIR"
