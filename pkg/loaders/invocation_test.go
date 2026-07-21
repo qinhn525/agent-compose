@@ -78,10 +78,37 @@ func TestInvocationExecutorFallsBackWhenIDGeneratorReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestInvocationExecutorPreservesSuccessfulResultWhenContextIsCanceledAfterExecution(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	stopCause := errors.New("late stop request")
+	engine := &invocationEngineFake{
+		result: LoaderExecutionResult{ResultJSON: `{"ok":true}`, Warnings: []string{"preserved"}},
+		afterExecute: func() {
+			cancel(stopCause)
+		},
+	}
+	executor := NewInvocationExecutor(InvocationExecutorDependencies{
+		Engine: engine,
+		HostFactory: func(domain.Loader, RuntimeExecutionContext, TriggerEventMetadata) RunHost {
+			return &invocationHostFake{}
+		},
+	})
+	loader := domain.Loader{Summary: domain.LoaderSummary{ID: "loader-1", Runtime: domain.LoaderRuntimeScheduler}, Script: "function main() {}"}
+
+	result, err := executor.Invoke(ctx, loader, `{}`)
+	if err != nil {
+		t.Fatalf("Invoke returned error: %v", err)
+	}
+	if result.ResultJSON != `{"ok":true}` || len(result.Warnings) != 1 || result.Warnings[0] != "preserved" {
+		t.Fatalf("Invoke result = %#v", result)
+	}
+}
+
 type invocationEngineFake struct {
-	request LoaderExecutionRequest
-	result  LoaderExecutionResult
-	err     error
+	request      LoaderExecutionRequest
+	result       LoaderExecutionResult
+	err          error
+	afterExecute func()
 }
 
 func (e *invocationEngineFake) Validate(context.Context, string, string) (LoaderValidationResult, error) {
@@ -90,6 +117,9 @@ func (e *invocationEngineFake) Validate(context.Context, string, string) (Loader
 
 func (e *invocationEngineFake) Execute(_ context.Context, request LoaderExecutionRequest, _ LoaderHost) (LoaderExecutionResult, error) {
 	e.request = request
+	if e.afterExecute != nil {
+		e.afterExecute()
+	}
 	return e.result, e.err
 }
 

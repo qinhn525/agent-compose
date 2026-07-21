@@ -114,6 +114,23 @@ scheduler.interval("pending", async function pending() {
 	}
 }
 
+func TestQJSLoaderEnginePreservesSuccessfulResultWhenContextIsCanceledAfterExecution(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	stopCause := errors.New("late stop request")
+	want := LoaderExecutionResult{ResultJSON: `{"ok":true}`, Warnings: []string{"preserved"}}
+
+	result, err := executeWithQJSPanicRecovery(ctx, func() (LoaderExecutionResult, error) {
+		cancel(stopCause)
+		return want, nil
+	})
+	if err != nil {
+		t.Fatalf("executeWithQJSPanicRecovery returned error: %v", err)
+	}
+	if result.ResultJSON != want.ResultJSON || len(result.Warnings) != 1 || result.Warnings[0] != "preserved" {
+		t.Fatalf("result = %#v, want %#v", result, want)
+	}
+}
+
 type engineCancellationHost struct {
 	coverageEngineHost
 	started chan struct{}

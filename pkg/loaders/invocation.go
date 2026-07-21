@@ -67,9 +67,6 @@ func (e *InvocationExecutor) Invoke(ctx context.Context, loader domain.Loader, p
 	if execErr != nil {
 		return InvocationResult{}, execErr
 	}
-	if err := context.Cause(ctx); err != nil {
-		return InvocationResult{}, err
-	}
 	return InvocationResult{
 		ResultJSON: execution.ResultJSON,
 		DurationMs: time.Since(startedAt).Milliseconds(),
