@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -32,12 +31,11 @@ func (r ExecRunner) Run(ctx context.Context, dir, name string, args ...string) e
 	// `docker` runs `compose` as a plugin in a separate process that inherits
 	// this output pipe. CommandContext only signals the direct child, so the
 	// plugin would keep running and holding the pipe open, and Wait would block
-	// on it forever. Giving the child its own process group lets cancellation
-	// reach the whole tree.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
-	// Backstop for anything that ignores the signal: abandon its output rather
-	// than hang the installer. Go escalates to SIGKILL once this elapses.
+	// on it forever.
+	cancelProcessTree(cmd)
+	// Backstop for anything the cancellation does not reach: abandon its output
+	// rather than hang the installer. Go escalates to SIGKILL once this elapses
+	// and closes the pipes, so Wait always returns.
 	cmd.WaitDelay = commandCancelGrace
 	runErr := cmd.Run()
 	if flusher, ok := r.Output.(interface{ Flush() }); ok {
