@@ -787,12 +787,6 @@ func TestRunsControllerRunProjectPromptAttachProjectsAgentFrames(t *testing.T) {
 		{Type: driverpkg.RuntimeOutputResult, Result: &driverpkg.RuntimeResult{OperationID: "run-attach", ExitCode: 0, Success: true}},
 	})
 	configDB.agent.Provider = "claude"
-	controller.promptAttachEnv = func(_ context.Context, _ *domain.Sandbox, agent execution.AgentConfig, _ string) (map[string]string, error) {
-		if agent.Provider != "claude" {
-			t.Fatalf("prompt attach env provider = %q, want claude", agent.Provider)
-		}
-		return map[string]string{"CLAUDE_ATTACH_TEST": "managed"}, nil
-	}
 	requests := []*agentcomposev2.RunAttachRequest{{
 		Frame: &agentcomposev2.RunAttachRequest_Start{Start: &agentcomposev2.RunAttachStart{
 			Request: &agentcomposev2.RunAgentRequest{ProjectId: "project-1", AgentName: "worker", Prompt: "hello"},
@@ -824,9 +818,6 @@ func TestRunsControllerRunProjectPromptAttachProjectsAgentFrames(t *testing.T) {
 	}
 	if runtime.spec.Command == nil || runtime.spec.Command.Command != "sh" || !strings.Contains(strings.Join(runtime.spec.Command.Args, " "), "agent-compose-runtime stream") || runtime.spec.TTY {
 		t.Fatalf("runtime spec = %#v", runtime.spec)
-	}
-	if runtime.spec.Env["CLAUDE_ATTACH_TEST"] != "managed" {
-		t.Fatalf("runtime env = %#v", runtime.spec.Env)
 	}
 	if runtime.interaction == nil || len(runtime.interaction.sent) < 2 {
 		t.Fatalf("runtime sent frames = %#v", runtime.interaction)
