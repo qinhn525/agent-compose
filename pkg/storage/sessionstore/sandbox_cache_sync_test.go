@@ -96,6 +96,49 @@ func TestNewWithDatabaseDoesNotCloseSharedDatabase(t *testing.T) {
 	}
 }
 
+type staticSandboxProjectResolver map[string]string
+
+func (r staticSandboxProjectResolver) ResolveSandboxProjectIDs(_ context.Context, sandboxes []*domain.Sandbox) (map[string]string, error) {
+	resolved := make(map[string]string, len(sandboxes))
+	for _, sandbox := range sandboxes {
+		resolved[sandbox.Summary.ID] = r[sandbox.Summary.ID]
+	}
+	return resolved, nil
+}
+
+func TestNewWithDatabaseRebuildsProjectProjectionFromResolver(t *testing.T) {
+	root := t.TempDir()
+	sandboxRoot := filepath.Join(root, "sandboxes")
+	first := writePersistedSandboxForIndexRecovery(t, sandboxRoot, "legacy-project-a")
+	writePersistedSandboxForIndexRecovery(t, sandboxRoot, "project-b")
+	db, err := sql.Open("sqlite", filepath.Join(root, "data.db"))
+	if err != nil {
+		t.Fatalf("open shared database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	store, err := NewWithDatabase(&appconfig.Config{SandboxRoot: sandboxRoot}, db, staticSandboxProjectResolver{
+		"legacy-project-a": "project-a",
+		"project-b":        "project-b",
+	})
+	if err != nil {
+		t.Fatalf("NewWithDatabase: %v", err)
+	}
+	cleanupSandboxStore(t, store)
+
+	result, err := store.ListSandboxes(context.Background(), domain.SandboxListOptions{ProjectID: "PROJECT-A"})
+	if err != nil {
+		t.Fatalf("list project sandboxes: %v", err)
+	}
+	if got := ids(result.Sandboxes); len(got) != 1 || got[0] != first.Summary.ID {
+		t.Fatalf("project sandboxes = %v, want [%s]", got, first.Summary.ID)
+	}
+	var projected string
+	if err := db.QueryRow(`SELECT project_id FROM sandboxes WHERE id = ?`, first.Summary.ID).Scan(&projected); err != nil || projected != "project-a" {
+		t.Fatalf("project projection = %q, err=%v", projected, err)
+	}
+}
+
 func TestNewWithConfigRecoversFromCurrentVersionIndexWithMissingColumns(t *testing.T) {
 	root := t.TempDir()
 	persisted := writePersistedSandboxForIndexRecovery(t, root, "missing-columns")
@@ -207,7 +250,7 @@ func TestNewWithConfigReconcilesCurrentIndexWithFilesystem(t *testing.T) {
 	}
 	persisted := seedSandboxDir(t, store, "persisted", time.Unix(100, 0).UTC())
 	missing := seedSandboxDir(t, store, "missing", time.Unix(99, 0).UTC())
-	if err := store.index.Upsert(context.Background(), persisted); err != nil {
+	if err := store.index.Upsert(context.Background(), persisted, ""); err != nil {
 		t.Fatalf("seed index: %v", err)
 	}
 	if err := store.index.Delete(context.Background(), persisted.Summary.ID); err != nil {
@@ -217,7 +260,7 @@ func TestNewWithConfigReconcilesCurrentIndexWithFilesystem(t *testing.T) {
 	stale.Summary = persisted.Summary
 	stale.Summary.Driver = "stale-index-driver"
 	stale.Summary.UpdatedAt = persisted.Summary.UpdatedAt.Add(time.Hour)
-	if err := store.index.Upsert(context.Background(), &stale); err != nil {
+	if err := store.index.Upsert(context.Background(), &stale, ""); err != nil {
 		t.Fatalf("seed inconsistent index row: %v", err)
 	}
 	if err := store.Close(); err != nil {
@@ -470,7 +513,7 @@ func TestListSandboxesRefillsPageAfterPruningGhosts(t *testing.T) {
 
 	valid := seedSandboxDir(t, store, "valid", time.Unix(100, 0).UTC())
 	store.recordIndex(valid)
-	if err := store.index.Upsert(ctx, sb("ghost", time.Unix(101, 0).UTC())); err != nil {
+	if err := store.index.Upsert(ctx, sb("ghost", time.Unix(101, 0).UTC()), ""); err != nil {
 		t.Fatalf("seed ghost: %v", err)
 	}
 
@@ -493,7 +536,7 @@ func TestListSandboxesIgnoresGhostsBeforeOffset(t *testing.T) {
 	older := seedSandboxDir(t, store, "older", time.Unix(100, 0).UTC())
 	store.recordIndex(newer)
 	store.recordIndex(older)
-	if err := store.index.Upsert(ctx, sb("ghost", time.Unix(102, 0).UTC())); err != nil {
+	if err := store.index.Upsert(ctx, sb("ghost", time.Unix(102, 0).UTC()), ""); err != nil {
 		t.Fatalf("seed ghost: %v", err)
 	}
 
@@ -758,7 +801,7 @@ func TestRebuildIndexBackfillsAndPrunesOrphans(t *testing.T) {
 	ctx := context.Background()
 
 	// Seed an orphan index row whose directory does not exist.
-	if err := store.index.Upsert(ctx, sb("ghost", time.Unix(1, 0).UTC())); err != nil {
+	if err := store.index.Upsert(ctx, sb("ghost", time.Unix(1, 0).UTC()), ""); err != nil {
 		t.Fatalf("seed ghost: %v", err)
 	}
 	// Create two real sandbox dirs with metadata.json.

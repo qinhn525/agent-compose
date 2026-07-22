@@ -1106,6 +1106,8 @@ message SandboxTag {
 message ListSandboxesRequest {
   uint32 limit = 1;
   string cursor = 2;
+  string project_id = 3;
+  repeated string status = 4;
 }
 
 message ListSandboxesResponse {

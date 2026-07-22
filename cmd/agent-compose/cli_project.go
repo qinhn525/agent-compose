@@ -469,7 +469,7 @@ func composePSOutputFromProject(ctx context.Context, clients cliServiceClients, 
 		return composePSOutput{}, err
 	}
 	runBySandbox := latestRunsBySandbox(runs)
-	sessions, err := listAllSandboxes(ctx, clients.sandbox)
+	sessions, err := listFilteredSandboxes(ctx, clients.sandbox, projectID, composePSStatusValues(statusFilter))
 	if err != nil {
 		return composePSOutput{}, err
 	}

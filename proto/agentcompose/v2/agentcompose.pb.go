@@ -8961,6 +8961,8 @@ type ListSandboxesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Limit         uint32                 `protobuf:"varint,1,opt,name=limit,proto3" json:"limit,omitempty"`
 	Cursor        string                 `protobuf:"bytes,2,opt,name=cursor,proto3" json:"cursor,omitempty"`
+	ProjectId     string                 `protobuf:"bytes,3,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	Status        []string               `protobuf:"bytes,4,rep,name=status,proto3" json:"status,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -9007,6 +9009,20 @@ func (x *ListSandboxesRequest) GetCursor() string {
 		return x.Cursor
 	}
 	return ""
+}
+
+func (x *ListSandboxesRequest) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *ListSandboxesRequest) GetStatus() []string {
+	if x != nil {
+		return x.Status
+	}
+	return nil
 }
 
 type ListSandboxesResponse struct {
@@ -17781,10 +17797,13 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\n" +
 	"SandboxTag\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value\"D\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"{\n" +
 	"\x14ListSandboxesRequest\x12\x14\n" +
 	"\x05limit\x18\x01 \x01(\rR\x05limit\x12\x16\n" +
-	"\x06cursor\x18\x02 \x01(\tR\x06cursor\"p\n" +
+	"\x06cursor\x18\x02 \x01(\tR\x06cursor\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x03 \x01(\tR\tprojectId\x12\x16\n" +
+	"\x06status\x18\x04 \x03(\tR\x06status\"p\n" +
 	"\x15ListSandboxesResponse\x126\n" +
 	"\tsandboxes\x18\x01 \x03(\v2\x18.agentcompose.v2.SandboxR\tsandboxes\x12\x1f\n" +
 	"\vnext_cursor\x18\x02 \x01(\tR\n" +

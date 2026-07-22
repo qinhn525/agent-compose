@@ -200,7 +200,7 @@ func TestSandboxCacheListFiltersOrderKeysetOffset(t *testing.T) {
 	c := sb("c", base.Add(3*time.Second))
 	b.Summary.Driver = "boxlite"
 	for _, s := range []*domain.Sandbox{a, b, c} {
-		if err := idx.Upsert(ctx, s); err != nil {
+		if err := idx.Upsert(ctx, s, ""); err != nil {
 			t.Fatalf("upsert: %v", err)
 		}
 	}
@@ -254,19 +254,51 @@ func TestSandboxCacheListFiltersOrderKeysetOffset(t *testing.T) {
 	}
 }
 
+func TestSandboxCacheListFiltersProjectAndStatuses(t *testing.T) {
+	idx := newTestIndex(t)
+	ctx := context.Background()
+	dir := func(id string) string { return "/root/" + id }
+	base := time.Unix(10_000, 0).UTC()
+
+	running := sb("project-running", base.Add(2*time.Second))
+	stopped := sb("project-stopped", base.Add(time.Second))
+	stopped.Summary.VMStatus = "STOPPED"
+	other := sb("other-running", base)
+	if err := idx.Upsert(ctx, running, "project-a"); err != nil {
+		t.Fatalf("upsert running: %v", err)
+	}
+	if err := idx.Upsert(ctx, stopped, "project-a"); err != nil {
+		t.Fatalf("upsert stopped: %v", err)
+	}
+	if err := idx.Upsert(ctx, other, "project-b"); err != nil {
+		t.Fatalf("upsert other: %v", err)
+	}
+
+	page, total, err := idx.list(ctx, domain.SandboxListOptions{
+		ProjectID: "PROJECT-A", VMStatuses: []string{"running", "stopped"}, Limit: 10,
+	}, dir)
+	if err != nil {
+		t.Fatalf("list by project and statuses: %v", err)
+	}
+	got := ids(page)
+	if total != 2 || len(got) != 2 || got[0] != "project-running" || got[1] != "project-stopped" {
+		t.Fatalf("project/status result total=%d ids=%v", total, got)
+	}
+}
+
 func TestSandboxCacheUpsertAcceptsAuthoritativeOlderTimestamp(t *testing.T) {
 	idx := newTestIndex(t)
 	ctx := context.Background()
 	t0 := time.Unix(1000, 0).UTC()
 	t1 := time.Unix(2000, 0).UTC()
 
-	if err := idx.Upsert(ctx, sb("x", t1)); err != nil {
+	if err := idx.Upsert(ctx, sb("x", t1), ""); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	// A successfully committed older timestamp remains authoritative.
 	stale := sb("x", t0)
 	stale.Summary.Driver = "STALE"
-	if err := idx.Upsert(ctx, stale); err != nil {
+	if err := idx.Upsert(ctx, stale, ""); err != nil {
 		t.Fatalf("stale upsert: %v", err)
 	}
 	var driver string
@@ -313,7 +345,7 @@ func TestSandboxCacheSharesDataDatabaseForJoinsAndIsolatedRebuilds(t *testing.T)
 	if err != nil {
 		t.Fatalf("open sandbox listing cache on shared database: %v", err)
 	}
-	if err := idx.Upsert(ctx, sb("sandbox-1", time.Unix(100, 0).UTC())); err != nil {
+	if err := idx.Upsert(ctx, sb("sandbox-1", time.Unix(100, 0).UTC()), ""); err != nil {
 		t.Fatalf("upsert sandbox listing cache: %v", err)
 	}
 	if err := idx.markComplete(ctx); err != nil {

@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestConfigCommandUsesGlobalFileProjectNameAndJSON(t *testing.T) {
@@ -637,11 +639,13 @@ func (s projectServiceStub) RemoveProject(ctx context.Context, req *connect.Requ
 
 func TestComposePSAllIncludesEveryStatusOnlyForCurrentProject(t *testing.T) {
 	project := testCLIProject("project-1", "project-one", "/work/agent-compose.yml")
+	var sandboxRequests []*agentcomposev2.ListSandboxesRequest
 	stubs := composeServiceStubs{
 		run: runServiceStub{listRuns: func(context.Context, *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error) {
 			return connect.NewResponse(&agentcomposev2.ListRunsResponse{}), nil
 		}},
-		sandbox: sandboxServiceStub{listSandboxes: func(context.Context, *connect.Request[agentcomposev2.ListSandboxesRequest]) (*connect.Response[agentcomposev2.ListSandboxesResponse], error) {
+		sandbox: sandboxServiceStub{listSandboxes: func(_ context.Context, req *connect.Request[agentcomposev2.ListSandboxesRequest]) (*connect.Response[agentcomposev2.ListSandboxesResponse], error) {
+			sandboxRequests = append(sandboxRequests, proto.Clone(req.Msg).(*agentcomposev2.ListSandboxesRequest))
 			return connect.NewResponse(&agentcomposev2.ListSandboxesResponse{Sandboxes: []*agentcomposev2.Sandbox{
 				{SandboxId: "sandbox-project-running", Status: "running", Tags: []*agentcomposev2.SandboxTag{{Name: "project_id", Value: "project-1"}}},
 				{SandboxId: "sandbox-project-stopped", Status: "stopped", Tags: []*agentcomposev2.SandboxTag{{Name: "project_id", Value: "project-1"}}},
@@ -670,6 +674,23 @@ func TestComposePSAllIncludesEveryStatusOnlyForCurrentProject(t *testing.T) {
 	}
 	if len(allOutput.Sandboxes) != 2 || allOutput.Sandboxes[0].RawID != "sandbox-project-running" || allOutput.Sandboxes[1].RawID != "sandbox-project-stopped" {
 		t.Fatalf("ps --all sandboxes = %#v, want all statuses from current project only", allOutput.Sandboxes)
+	}
+
+	filteredOutput, err := composePSOutputFromProject(t.Context(), clients, project, composePSOptions{Status: "stopped,running"})
+	if err != nil || len(filteredOutput.Sandboxes) != 2 {
+		t.Fatalf("build multi-status ps output = %#v, err=%v", filteredOutput, err)
+	}
+	if len(sandboxRequests) != 3 {
+		t.Fatalf("sandbox requests = %d, want 3", len(sandboxRequests))
+	}
+	if sandboxRequests[0].GetProjectId() != "project-1" || !slices.Equal(sandboxRequests[0].GetStatus(), []string{"running"}) {
+		t.Fatalf("default sandbox request = %#v", sandboxRequests[0])
+	}
+	if sandboxRequests[1].GetProjectId() != "project-1" || len(sandboxRequests[1].GetStatus()) != 0 {
+		t.Fatalf("all sandbox request = %#v", sandboxRequests[1])
+	}
+	if !slices.Equal(sandboxRequests[2].GetStatus(), []string{"running", "stopped"}) {
+		t.Fatalf("multi-status sandbox request = %#v", sandboxRequests[2])
 	}
 }
 
