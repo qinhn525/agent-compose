@@ -590,6 +590,9 @@ agent-compose **不向 rootfs 注入任何自有二进制**，因此根盘形态
 
 - 母盘缓存的清理（prune / GC）**必须**先确认没有任何子盘的 sidecar 记录指向它。
 - 引用关系从 sidecar 的 `backing file path` 与 `base cache identity` 判定，**不需要**逐个解析 qcow2 文件。
+- sidecar 位于 driver 自有目录，其中的 backing 路径对缓存层而言是**外部输入**。缓存层只在该路径落在 image cache materialization root 之下、且形如 `<root>/<image id>/microsandbox/<base cache identity>.qcow2` 时才承认这条引用。校验必须是**纯词法**的：inventory 用 ReadDir 拼出的路径作为引用键，在此处解析符号链接会让 `DATA_ROOT` 自身含符号链接时引用悄悄对不上。
+- 无法读取或无法通过上述校验的 sidecar **不得**让整个 cache inventory 失败——一个损坏文件不该拖垮其他 domain 的 `cache ls`。这类 sidecar 记录为 warning，并被视为**归属未知**：它保护的是哪块母盘已不可知，因此在它被修复或删除前，所有母盘一律呈现为 `unknown` 且删除请求必须失败。
+- 上一条的取舍是刻意的：删除仍被子盘依赖的母盘不可恢复，而拒绝删除一块暂时无法核算归属的母盘只是延迟回收。
 - 存在引用时删除请求**必须失败并说明原因**，不得以"稍后重试"或 warning 略过。
 - 反向也要成立：子盘被删除后，其对母盘的引用随之消失；母盘只有在引用计数归零后才可回收。
 
@@ -691,6 +694,8 @@ agent-compose **不向 rootfs 注入任何自有二进制**，因此根盘形态
 - 存在引用时删除母盘的请求被拒绝，并给出可定位的原因。
 - 引用计数归零后母盘可回收。
 - 引用判定只依赖 sidecar，不解析 qcow2 文件。
+- backing 路径指向 materialization root 之外、路径形状不符、或与 `base cache identity` 不一致的 sidecar，不产生引用，也不能借此把无关缓存项钉成 referenced。
+- 无法读取或无法通过校验的 sidecar 只产生 warning，不使 inventory 失败；同时该状态下母盘为 `unknown` 且删除被拒绝。
 
 **接口契约**
 - pull policy 仍在 Docker daemon 层执行。

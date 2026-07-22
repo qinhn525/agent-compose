@@ -44,6 +44,13 @@ func (r MaterializedRemover) Remove(ctx context.Context, item Item) error {
 		}
 		var references int
 		for _, dependency := range dependencies {
+			// Unresolved ownership metadata cannot name the disk it protects,
+			// so it cannot be proven not to be this one. Deleting a base disk
+			// still backing a live overlay is unrecoverable; refusing to delete
+			// one that is merely hard to account for is not.
+			if dependency.Unresolved {
+				return fmt.Errorf("microsandbox base disk %s cannot be removed: %s", item.Path, dependency.Reason)
+			}
 			if filepath.Clean(strings.TrimSpace(dependency.Path)) == filepath.Clean(item.Path) {
 				references++
 			}

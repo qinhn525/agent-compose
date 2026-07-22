@@ -45,7 +45,7 @@ func TestMicrosandboxBaseDiskInventoryAndReferenceProtection(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sidecarDir, "sandbox-a.qcow2.owner.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	dependencies := MicrosandboxRootfsDependencies{Home: home}
+	dependencies := MicrosandboxRootfsDependencies{Home: home, BaseRoot: imageCache.MaterializationRoot()}
 	result, err := (MaterializedScanner{Cache: imageCache, Dependencies: dependencies}).List(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -103,10 +103,23 @@ func TestMicrosandboxCorruptRootfsOwnershipBlocksBaseRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dependencies := MicrosandboxRootfsDependencies{Home: home}
-	_, err = (MaterializedScanner{Cache: imageCache, Dependencies: dependencies}).List(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "cannot safely identify its base disk") {
-		t.Fatalf("scan error = %v, want conservative corrupt-sidecar failure", err)
+	dependencies := MicrosandboxRootfsDependencies{Home: home, BaseRoot: imageCache.MaterializationRoot()}
+	listed, err := (MaterializedScanner{Cache: imageCache, Dependencies: dependencies}).List(context.Background())
+	if err != nil {
+		t.Fatalf("scan with corrupt sidecar failed instead of warning: %v", err)
+	}
+	if !warningsContain(listed.Warnings, "cannot safely identify its base disk") {
+		t.Fatalf("scan warnings = %#v, want corrupt-sidecar warning", listed.Warnings)
+	}
+	var listedBase Item
+	for _, item := range listed.Items {
+		if item.Path == basePath {
+			listedBase = item
+			break
+		}
+	}
+	if listedBase.Status != StatusUnknown {
+		t.Fatalf("base status with corrupt sidecar = %q, want %q", listedBase.Status, StatusUnknown)
 	}
 	base := Item{
 		Domain: DomainMaterializedImageCache, Driver: DriverAll, Kind: KindMicrosandboxBaseDisk,
@@ -124,6 +137,69 @@ func TestMicrosandboxCorruptRootfsOwnershipBlocksBaseRemoval(t *testing.T) {
 			t.Fatalf("protected base path %s was removed: %v", path, err)
 		}
 	}
+}
+
+func TestMicrosandboxRootfsDependenciesRejectBackingPathOutsideCache(t *testing.T) {
+	dataRoot := t.TempDir()
+	imageCache, err := imagecache.New(imagecache.Config{Root: filepath.Join(dataRoot, "images")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseRoot := imageCache.MaterializationRoot()
+	home := filepath.Join(dataRoot, "microsandbox")
+	sidecarDir := filepath.Join(home, "rootfs-disks")
+	if err := os.MkdirAll(sidecarDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, backing := range map[string]string{
+		// Outside the materialization root entirely.
+		"sandbox-outside": filepath.Join(dataRoot, "elsewhere", "base-v1-amd64-6.qcow2"),
+		// Escapes the root by traversal.
+		"sandbox-traversal": filepath.Join(baseRoot, "image-id", "microsandbox", "..", "..", "..", "base-v1-amd64-6.qcow2"),
+		// Inside the root but not a base disk path.
+		"sandbox-shape": filepath.Join(baseRoot, "image-id", "rootfs"),
+		// Base disk path that contradicts the declared cache identity.
+		"sandbox-identity": filepath.Join(baseRoot, "image-id", "microsandbox", "base-v1-other-6.qcow2"),
+		// Relative paths are never usable as reference keys.
+		"sandbox-relative": "image-id/microsandbox/base-v1-amd64-6.qcow2",
+	} {
+		sidecar := map[string]any{
+			"version": 2, "resource_kind": "microsandbox-rootfs", "sandbox_id": name,
+			"base_cache_identity": "base-v1-amd64-6", "backing_file_path": backing,
+		}
+		data, err := json.Marshal(sidecar)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sidecarDir, name+".qcow2.owner.json"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dependencies, warnings, err := (MicrosandboxRootfsDependencies{Home: home, BaseRoot: baseRoot}).MaterializedDependencies(context.Background())
+	if err != nil {
+		t.Fatalf("untrusted sidecars failed the scan instead of warning: %v", err)
+	}
+	if len(warnings) != 5 {
+		t.Fatalf("warnings = %#v, want one per untrusted sidecar", warnings)
+	}
+	for _, dependency := range dependencies {
+		if !dependency.Unresolved {
+			t.Fatalf("untrusted sidecar produced a usable dependency: %#v", dependency)
+		}
+		if dependency.Path != "" {
+			t.Fatalf("untrusted sidecar pinned path %q", dependency.Path)
+		}
+	}
+}
+
+func warningsContain(warnings []string, substring string) bool {
+	for _, warning := range warnings {
+		if strings.Contains(warning, substring) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMicrosandboxRootfsDependenciesIgnoreEmptyHome(t *testing.T) {
@@ -167,7 +243,7 @@ func TestMaterializedRemoverRechecksMicrosandboxReferencesAfterLock(t *testing.T
 	if err := os.MkdirAll(sidecarDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	dependencies := MicrosandboxRootfsDependencies{Home: home}
+	dependencies := MicrosandboxRootfsDependencies{Home: home, BaseRoot: imageCache.MaterializationRoot()}
 	listed, err := (MaterializedScanner{Cache: imageCache, Dependencies: dependencies}).List(context.Background())
 	if err != nil {
 		t.Fatal(err)

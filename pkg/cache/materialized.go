@@ -24,6 +24,9 @@ const (
 	materializedRootFSReadyName = ".rootfs.ready"
 	materializedOCITempName     = "oci.tmp"
 	materializedRootFSTempName  = "rootfs.tmp"
+	microsandboxBaseDiskDirName = "microsandbox"
+	microsandboxBaseDiskPrefix  = "base-v"
+	microsandboxBaseDiskSuffix  = ".qcow2"
 )
 
 type MaterializedScanner struct {
@@ -36,6 +39,12 @@ type MaterializedDependency struct {
 	Identity  string
 	Path      string
 	Status    string
+	// Unresolved marks ownership metadata that exists but cannot be trusted to
+	// name what it depends on. Such a record protects nothing by path, so
+	// consumers must treat the affected cache kind as unsafe to remove rather
+	// than as unreferenced. Reason carries the operator-facing detail.
+	Unresolved bool
+	Reason     string
 }
 
 type MaterializedDependencyProvider interface {
@@ -53,13 +62,14 @@ func (s MaterializedScanner) List(ctx context.Context) (ListResult, error) {
 	metadata, warnings := s.loadMetadata()
 	refs, metadataWarnings := materializedMetadataRefs(s.Cache, metadata.Images)
 	result := ListResult{Warnings: AppendWarnings(warnings, metadataWarnings...)}
+	var unresolvedOwnership bool
 	if s.Dependencies != nil {
 		dependencies, dependencyWarnings, err := s.Dependencies.MaterializedDependencies(ctx)
 		result.Warnings = AppendWarnings(result.Warnings, dependencyWarnings...)
 		if err != nil {
 			return ListResult{}, err
 		}
-		applyMaterializedDependencies(s.Cache, metadata.Images, refs, dependencies)
+		unresolvedOwnership = applyMaterializedDependencies(s.Cache, metadata.Images, refs, dependencies)
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -77,13 +87,22 @@ func (s MaterializedScanner) List(ctx context.Context) (ListResult, error) {
 			continue
 		}
 		dir := filepath.Join(root, entry.Name())
-		result.Items = append(result.Items, s.scanMaterializedDir(dir, refs)...)
+		result.Items = append(result.Items, s.scanMaterializedDir(dir, refs, unresolvedOwnership)...)
 	}
 	return result, nil
 }
 
-func applyMaterializedDependencies(imageCache *imagecache.Cache, images []imagecache.ImageMetadata, refs map[string][]Reference, dependencies []MaterializedDependency) {
+// applyMaterializedDependencies records the references declared by runtime
+// ownership metadata and reports whether any record was unresolved, so callers
+// can degrade the affected items to "unknown" instead of reading a missing
+// reference as "unreferenced, safe to delete".
+func applyMaterializedDependencies(imageCache *imagecache.Cache, images []imagecache.ImageMetadata, refs map[string][]Reference, dependencies []MaterializedDependency) bool {
+	var unresolved bool
 	for _, dependency := range dependencies {
+		if dependency.Unresolved {
+			unresolved = true
+			continue
+		}
 		ref := Reference{Policy: ReferencePolicyRequired, Type: "sandbox", ID: dependency.SandboxID, Name: dependency.SandboxID, Status: dependency.Status, Description: "sandbox runtime materialization dependency"}
 		if path := strings.TrimSpace(dependency.Path); path != "" {
 			addMaterializedRef(refs, ref, filepath.Clean(path))
@@ -105,6 +124,7 @@ func applyMaterializedDependencies(imageCache *imagecache.Cache, images []imagec
 			}
 		}
 	}
+	return unresolved
 }
 
 func materializedImageMatchesIdentity(image imagecache.ImageMetadata, identity string) bool {
@@ -124,7 +144,7 @@ func (s MaterializedScanner) loadMetadata() (imagecache.MetadataFile, []string) 
 	return metadata, nil
 }
 
-func (s MaterializedScanner) scanMaterializedDir(dir string, refs map[string][]Reference) []Item {
+func (s MaterializedScanner) scanMaterializedDir(dir string, refs map[string][]Reference, unresolvedOwnership bool) []Item {
 	var items []Item
 	for _, child := range []struct {
 		name string
@@ -146,7 +166,7 @@ func (s MaterializedScanner) scanMaterializedDir(dir string, refs map[string][]R
 		item := s.materializedItem(path, child.kind, info, refs[path])
 		items = append(items, item)
 	}
-	items = append(items, s.scanMicrosandboxBaseDisks(filepath.Join(dir, "microsandbox"), refs)...)
+	items = append(items, s.scanMicrosandboxBaseDisks(filepath.Join(dir, microsandboxBaseDiskDirName), refs, unresolvedOwnership)...)
 	if len(items) == 0 {
 		info, err := os.Lstat(dir)
 		if err != nil {
@@ -158,7 +178,7 @@ func (s MaterializedScanner) scanMaterializedDir(dir string, refs map[string][]R
 	return items
 }
 
-func (s MaterializedScanner) scanMicrosandboxBaseDisks(root string, refs map[string][]Reference) []Item {
+func (s MaterializedScanner) scanMicrosandboxBaseDisks(root string, refs map[string][]Reference, unresolvedOwnership bool) []Item {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -168,7 +188,7 @@ func (s MaterializedScanner) scanMicrosandboxBaseDisks(root string, refs map[str
 	}
 	var items []Item
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "base-v") || !strings.HasSuffix(entry.Name(), ".qcow2") {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), microsandboxBaseDiskPrefix) || !strings.HasSuffix(entry.Name(), microsandboxBaseDiskSuffix) {
 			continue
 		}
 		path := filepath.Join(root, entry.Name())
@@ -178,7 +198,14 @@ func (s MaterializedScanner) scanMicrosandboxBaseDisks(root string, refs map[str
 			continue
 		}
 		item := s.materializedItem(path, KindMicrosandboxBaseDisk, info, refs[path])
-		manifestPath := strings.TrimSuffix(path, ".qcow2") + ".json"
+		if unresolvedOwnership {
+			// Some sandbox claims a base disk this scan could not read. Which
+			// one is unknowable, so every base disk stays unremovable until the
+			// ownership metadata is repaired.
+			item.Status = StatusUnknown
+			item.Warnings = AppendWarnings(item.Warnings, "microsandbox rootfs ownership metadata cannot safely identify its base disk")
+		}
+		manifestPath := strings.TrimSuffix(path, microsandboxBaseDiskSuffix) + ".json"
 		manifestInfo, err := os.Lstat(manifestPath)
 		if err != nil {
 			item.Status = StatusUnknown

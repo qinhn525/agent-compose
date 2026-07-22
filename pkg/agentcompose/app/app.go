@@ -286,7 +286,7 @@ func NewCacheController(di do.Injector) (*cache.Controller, error) {
 
 	materializedDependencies := cache.CombinedMaterializedDependencies{
 		ownershipMaterializedDependencies{sandboxRoot: config.SandboxRoot},
-		cache.MicrosandboxRootfsDependencies{Home: config.MicrosandboxHome},
+		cache.MicrosandboxRootfsDependencies{Home: config.MicrosandboxHome, BaseRoot: ociCache.MaterializationRoot()},
 	}
 	sources := []cache.Source{
 		cache.OCISource{Cache: ociCache},
