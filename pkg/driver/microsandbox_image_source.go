@@ -34,14 +34,17 @@ type microsandboxImageSource struct {
 	Env         []string
 
 	// materialize lays the image filesystem out under workDir and returns the
-	// directory to build from plus a release func.
+	// directory to build from plus a release func. It is called only when the
+	// base disk has to be built; a cache hit discards the source without
+	// calling it, so a source must never hold a resource that only materialize
+	// would release.
 	//
-	// Ownership differs per source and callers must not assume either shape:
-	// the Docker source extracts into a private directory it created and the
-	// release func removes it, while the OCI source returns the *shared* image
-	// cache rootfs that BoxLite also reads, whose release func must do nothing.
-	// Removing that directory would strand its ready flag and break unrelated
-	// drivers.
+	// Directory ownership differs per source and callers must not assume either
+	// shape: the Docker source extracts into a private directory it created and
+	// the release func removes it, while the OCI source returns the *shared*
+	// image cache rootfs that BoxLite also reads, whose release func must do
+	// nothing. Removing that directory would strand its ready flag and break
+	// unrelated drivers.
 	materialize func(ctx context.Context, workDir string) (string, func(), error)
 }
 
@@ -107,17 +110,17 @@ func resolveMicrosandboxImageSource(ctx context.Context, imageRef string, ops mi
 	return ops.ociSource(ctx, imageRef)
 }
 
+// dockerMicrosandboxImageSource closes its Docker client before returning, and
+// materialize opens its own. A resolved source must stay a plain value that
+// costs nothing to discard: most calls hit the base disk cache and never
+// materialize anything, so a client parked in the returned struct would leak on
+// every sandbox creation.
 func dockerMicrosandboxImageSource(ctx context.Context, imageRef string) (microsandboxImageSource, bool, error) {
-	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	dockerClient, err := newMicrosandboxDockerClient(imageRef)
 	if err != nil {
-		return microsandboxImageSource{}, false, fmt.Errorf("microsandbox create Docker client for image %s: %w", imageRef, err)
+		return microsandboxImageSource{}, false, err
 	}
-	closeClient := true
-	defer func() {
-		if closeClient {
-			_ = dockerClient.Close()
-		}
-	}()
+	defer func() { _ = dockerClient.Close() }()
 	resolvedRef, ok, err := resolveLocalDockerImageRef(ctx, dockerClient, imageRef)
 	if err != nil {
 		return microsandboxImageSource{}, false, fmt.Errorf("microsandbox inspect Docker image %s: %w", imageRef, err)
@@ -133,23 +136,34 @@ func dockerMicrosandboxImageSource(ctx context.Context, imageRef string) (micros
 	if imageID == "" {
 		return microsandboxImageSource{}, false, fmt.Errorf("microsandbox resolved Docker image %s has no image id", resolvedRef)
 	}
-	closeClient = false
 	return microsandboxImageSource{
 		Kind: microsandboxImageSourceDocker, ImageID: imageID, ResolvedRef: resolvedRef, Env: inspectEnv(inspect),
 		materialize: func(ctx context.Context, workDir string) (string, func(), error) {
-			defer func() { _ = dockerClient.Close() }()
+			exportClient, err := newMicrosandboxDockerClient(resolvedRef)
+			if err != nil {
+				return "", nil, err
+			}
+			defer func() { _ = exportClient.Close() }()
 			exportDir, err := os.MkdirTemp(workDir, ".base-export-*")
 			if err != nil {
 				return "", nil, fmt.Errorf("create microsandbox image export directory: %w", err)
 			}
 			release := func() { _ = os.RemoveAll(exportDir) }
-			if err := exportDockerImageFilesystem(ctx, dockerClient, resolvedRef, exportDir); err != nil {
+			if err := exportDockerImageFilesystem(ctx, exportClient, resolvedRef, exportDir); err != nil {
 				release()
 				return "", nil, err
 			}
 			return exportDir, release, nil
 		},
 	}, true, nil
+}
+
+func newMicrosandboxDockerClient(imageRef string) (*client.Client, error) {
+	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, fmt.Errorf("microsandbox create Docker client for image %s: %w", imageRef, err)
+	}
+	return dockerClient, nil
 }
 
 func ociMicrosandboxImageSource(ctx context.Context, config *appconfig.Config, imageRef, pullPolicy string) (microsandboxImageSource, error) {
