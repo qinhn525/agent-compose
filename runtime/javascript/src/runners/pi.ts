@@ -5,17 +5,19 @@ import path from "node:path";
 import readline from "node:readline";
 import { extractText, jsonString } from "../text.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
-import { TranscriptWriter } from "../transcript.js";
+import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
 import type { AgentResult, RunnerOptions } from "../types.js";
 
 const maxDiagnosticBytes = 64 * 1024;
 const maxToolResultBytes = 16 * 1024;
 
 export class PiRunner {
-  private readonly writer = new TranscriptWriter();
   private reportedError: Error | null = null;
 
-  constructor(private readonly options: RunnerOptions) {}
+  constructor(
+    private readonly options: RunnerOptions,
+    private readonly writer: TranscriptTextWriter = new TranscriptWriter(),
+  ) {}
 
   async runPrompt(promptText: string): Promise<AgentResult> {
     this.reportedError = null;
@@ -84,13 +86,14 @@ export class PiRunner {
         this.handleEvent(event, result);
       }
 
-      const exitCode = await exit;
+      const processResult = await exit;
       const stderr = stderrBytes.toString("utf8");
       result.stderr = stderr;
+      if (processResult.spawnError) throw processResult.spawnError;
       if (protocolError) throw protocolError;
       if (this.reportedError) throw this.reportedError;
-      if (exitCode !== 0) {
-        throw new Error(`pi exited with code ${exitCode}${stderr ? `: ${stderr}` : ""}`);
+      if (processResult.exitCode !== 0) {
+        throw new Error(`pi exited with code ${processResult.exitCode}${stderr ? `: ${stderr}` : ""}`);
       }
       if (!result.threadId) {
         throw new Error("pi completed without emitting a session id");
@@ -198,10 +201,10 @@ function piFacadeModel(model: string): string {
   return `agent-compose/${separator >= 0 ? normalized.slice(separator + 1) : normalized}`;
 }
 
-function waitForExit(child: ReturnType<typeof spawn>): Promise<number> {
-  return new Promise((resolve, reject) => {
-    child.once("error", (error) => reject(new Error("failed to start pi", { cause: error })));
-    child.once("exit", (code) => resolve(code ?? 1));
+function waitForExit(child: ReturnType<typeof spawn>): Promise<{ exitCode: number; spawnError?: Error }> {
+  return new Promise((resolve) => {
+    child.once("error", (error) => resolve({ exitCode: 1, spawnError: new Error("failed to start pi", { cause: error }) }));
+    child.once("exit", (code) => resolve({ exitCode: code ?? 1 }));
   });
 }
 

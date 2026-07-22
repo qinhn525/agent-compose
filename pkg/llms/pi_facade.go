@@ -51,10 +51,10 @@ func EnsurePiFacadeConfig(ctx context.Context, config *appconfig.Config, store P
 	if err != nil {
 		return nil, err
 	}
-	if err := store.SaveLLMFacadeToken(ctx, token); err != nil {
+	if err := WritePiRuntimeConfig(sandbox, target.Model.Name, facadeBaseURL, piAPI); err != nil {
 		return nil, err
 	}
-	if err := WritePiRuntimeConfig(sandbox, target.Model.Name, facadeBaseURL, piAPI); err != nil {
+	if err := store.SaveLLMFacadeToken(ctx, token); err != nil {
 		return nil, err
 	}
 

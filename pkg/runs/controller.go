@@ -1058,6 +1058,9 @@ func (c *Controller) ensurePromptAttachLLMFacadeEnv(ctx context.Context, sandbox
 	if domain.NormalizeAgentKind(agent.Provider) == "opencode" {
 		return llms.EnsureOpenCodeFacadeConfig(ctx, c.config, store, sandbox, agent.Model, "agent", runID)
 	}
+	if domain.NormalizeAgentKind(agent.Provider) == "pi" {
+		return llms.EnsurePiFacadeConfig(ctx, c.config, store, sandbox, agent.Model, "agent", runID)
+	}
 	if domain.NormalizeAgentKind(agent.Provider) != "codex" {
 		return nil, nil
 	}
