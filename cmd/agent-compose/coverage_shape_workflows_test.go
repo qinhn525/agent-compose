@@ -33,6 +33,8 @@ func TestE2ECLISchedulerPublicContractWorkflow(t *testing.T) {
 	TestIntegrationCLISchedulerTriggerUsesSchedulerRunAPI(t)
 	TestIntegrationCLISchedulerInspectDeclarativeTriggerYAML(t)
 	TestIntegrationCLISchedulerInspectLoaderRegisteredTrigger(t)
+	TestSchedulerPruneCommandFlags(t)
+	TestSchedulerPruneRejectsArgumentsAndInvalidFilters(t)
 	TestIntegrationCLISchedulerPruneMapsFiltersAndJSONStats(t)
 	TestIntegrationCLISchedulerPruneSupportsHistoricalTriggerID(t)
 	TestIntegrationCLISchedulerPruneForcePartialResultIsNonZero(t)
