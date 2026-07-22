@@ -304,9 +304,9 @@ func (s *loaderStore) hydrateLoaderSummaryCounts(ctx context.Context, summary *d
 	}
 	row := s.db.QueryRowContext(ctx, `SELECT
         (SELECT COUNT(*) FROM loader_trigger WHERE loader_id = ?),
-        (SELECT COUNT(*) FROM loader_run WHERE loader_id = ?),
-        (SELECT COUNT(*) FROM loader_event WHERE loader_id = ?),
-        (SELECT MAX(started_at) FROM loader_run WHERE loader_id = ?)`, summary.ID, summary.ID, summary.ID, summary.ID)
+		(SELECT COUNT(*) FROM loader_run WHERE loader_id = ? AND trigger_id <> ''),
+		(SELECT COUNT(*) FROM loader_event e JOIN loader_run r ON r.loader_id = e.loader_id AND r.run_id = e.run_id WHERE e.loader_id = ? AND r.trigger_id <> ''),
+		(SELECT MAX(started_at) FROM loader_run WHERE loader_id = ? AND trigger_id <> '')`, summary.ID, summary.ID, summary.ID, summary.ID)
 	var triggerCount int
 	var runCount int
 	var eventCount int

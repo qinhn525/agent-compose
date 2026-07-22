@@ -245,23 +245,29 @@ Rules:
 - `run -i --prompt` supports providers with reusable provider conversations: Codex, Claude/cc, and OpenCode. Gemini currently returns unsupported.
 - `StopRun` requests cancellation for active in-daemon runs. Pending/running runs left behind after daemon restart are reconciled to failed with a `daemon interrupted` error.
 
-## `scheduler`: Inspect and Trigger Project Schedulers
+## `scheduler`: Invoke, Inspect, and Operate Project Schedulers
 
 ```bash
 agent-compose scheduler ls [agent]
-agent-compose scheduler runs [scheduler] [--agent <agent>] [--trigger <trigger>] [--status <status>] [--limit <n>]
-agent-compose scheduler logs [run] [--run <run>] [--agent <agent>] [--trigger <trigger>] [--tail <n>]
-agent-compose scheduler trigger <agent> <trigger>
-agent-compose scheduler inspect <name-or-id> [trigger]
+agent-compose scheduler invoke <scheduler-ref> [--payload <json>]
+agent-compose scheduler trigger <scheduler-ref> <trigger-ref> [--payload <json>] [--detach]
+agent-compose scheduler runs [scheduler-ref] [--trigger <trigger-ref>] [--status <status>] [--limit <n>]
+agent-compose scheduler logs [run-ref] [--run <run-ref>] [--scheduler <scheduler-ref>] [--trigger <trigger-ref>] [--tail <n>]
+agent-compose scheduler prune [--scheduler <scheduler-ref>] [--trigger <trigger-ref>] [--status <terminal-statuses>] [--older-than <duration>] [--force]
+agent-compose scheduler inspect <scheduler-or-trigger-or-run-ref> [--scheduler <scheduler-ref>]
 ```
 
 - `scheduler ls` lists triggers from declarative scheduler config and triggers registered by scheduler scripts.
-- `scheduler runs` lists scheduler runs in the current project and the sandboxes linked to each run.
-- `scheduler logs` prints the structured event log for a scheduler run; without a run argument it selects the latest matching run.
-- `scheduler trigger` manually runs the selected trigger through the existing project run flow.
-- `scheduler trigger --prompt "..."` overrides the trigger's agent prompt for this manual run.
+- `scheduler invoke` calls the default entry point of an explicitly script-based scheduler in the foreground. It does not create trigger-run history, persisted outer logs, or artifacts. The former `scheduler run` command has been removed.
+- `scheduler trigger` manually executes a named trigger. `--detach` returns a persisted trigger run that can be inspected or stopped later.
 - `scheduler trigger --payload '{"key":"value"}'` passes a JSON payload to the scheduler trigger handler.
-- `scheduler inspect` accepts a scheduler name/ID, trigger name/ID, or scheduler run ID. The legacy `<agent> <trigger>` form remains supported.
+- `scheduler runs` lists only outer trigger runs; inner agent runs created by `scheduler.agent()` are managed by the ordinary run commands. The default is all matching runs, while `--limit` restricts the final count. Status is one of `running`, `succeeded`, `failed`, `canceled`, or `skipped`.
+- `scheduler logs` prints outer structured events for all current schedulers' trigger runs by default. `--tail N` selects the newest N matching events globally and prints them oldest-to-newest; `--tail -1` means all and `--tail 0` means none. Invocation logs and inner agent transcripts are not included.
+- For `scheduler runs/logs --trigger`, names and short IDs are resolved against the current definition first. An exact trigger ID that was removed or renamed remains queryable when persisted trigger-run history exists. If that historical ID belongs to multiple schedulers, add the scheduler positional argument for `runs` or `--scheduler` for `logs`.
+- `scheduler prune` removes outer trigger-run history and its directly owned loader events, event delivery/link rows, and canonical run artifacts. It matches all terminal (`succeeded`, `failed`, `canceled`, or `skipped`) trigger runs in the current project by default. Use `--scheduler`, `--trigger`, `--status`, or `--older-than` to narrow the scope. The default is a dry-run; only `--force` deletes data. Running runs, invocations, inner agent runs, topic events, sandboxes, loader state, and sticky bindings are retained. Historical trigger IDs use the same current-definition-first resolution as `runs` and `logs`.
+- On daemon startup, an outer trigger run left in `running` by an interrupted daemon process is reconciled to `failed` with a daemon-interrupted loader event before it can later become eligible for pruning.
+- `scheduler inspect` accepts one scheduler name/ID, trigger name/ID, or outer trigger-run ID. If a trigger reference exists in multiple schedulers, add `--scheduler <scheduler-ref>`; the old two-position-argument form is no longer supported.
+- `scheduler runs` and `scheduler logs` currently collect unary cursor pages and render once. Streaming and follow behavior are intentionally deferred to a separate change.
 
 ## `ps`: List Sandboxes
 
