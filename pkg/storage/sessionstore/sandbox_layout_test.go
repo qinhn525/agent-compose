@@ -163,6 +163,60 @@ func TestSandboxLayoutIgnoresInvalidCalendarDirectories(t *testing.T) {
 	}
 }
 
+func TestSandboxLayoutSkipsUnreadableDateSubtrees(t *testing.T) {
+	root := t.TempDir()
+	legacyDir := filepath.Join(root, "legacy")
+	validDir := filepath.Join(root, "2026", "07", "22", "valid")
+	writeLayoutSandbox(t, legacyDir, "legacy", time.Now().UTC())
+	writeLayoutSandbox(t, validDir, "valid", time.Now().UTC())
+
+	unreadable := map[string]struct{}{
+		filepath.Join(root, "2023"):             {},
+		filepath.Join(root, "2024", "01"):       {},
+		filepath.Join(root, "2025", "01", "01"): {},
+	}
+	for path := range unreadable {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("create unreadable fixture %s: %v", path, err)
+		}
+	}
+
+	layout := newSandboxLayout(root)
+	readDir := layout.readDir
+	layout.readDir = func(path string) ([]os.DirEntry, error) {
+		if _, ok := unreadable[path]; ok {
+			return nil, os.ErrPermission
+		}
+		return readDir(path)
+	}
+	locations, err := layout.discover()
+	if err != nil {
+		t.Fatalf("discover with unreadable date subtrees: %v", err)
+	}
+	got := make(map[string]string, len(locations))
+	for _, location := range locations {
+		got[location.id] = location.path
+	}
+	want := map[string]string{"legacy": legacyDir, "valid": validDir}
+	if len(got) != len(want) {
+		t.Fatalf("discovered locations = %v, want %v", got, want)
+	}
+	for id, path := range want {
+		if got[id] != path {
+			t.Fatalf("discovered path for %s = %q, want %q", id, got[id], path)
+		}
+	}
+}
+
+func TestSandboxLayoutStillRejectsUnreadableRoot(t *testing.T) {
+	layout := newSandboxLayout(t.TempDir())
+	layout.readDir = func(string) ([]os.DirEntry, error) { return nil, os.ErrPermission }
+	_, err := layout.discover()
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("discover unreadable root error = %v, want permission error", err)
+	}
+}
+
 func TestSandboxLayoutDiscoveryPreservesPendingAllocation(t *testing.T) {
 	root := t.TempDir()
 	layout := newSandboxLayout(root)

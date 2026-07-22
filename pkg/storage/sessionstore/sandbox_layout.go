@@ -2,6 +2,7 @@ package sessionstore
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,7 +20,8 @@ type sandboxLocation struct {
 // remains authoritative; the in-memory paths only avoid repeated directory
 // scans on normal ID-addressed operations.
 type sandboxLayout struct {
-	root string
+	root    string
+	readDir func(string) ([]os.DirEntry, error)
 
 	mu    sync.RWMutex
 	paths map[string]string
@@ -27,8 +29,9 @@ type sandboxLayout struct {
 
 func newSandboxLayout(root string) *sandboxLayout {
 	return &sandboxLayout{
-		root:  root,
-		paths: make(map[string]string),
+		root:    root,
+		readDir: os.ReadDir,
+		paths:   make(map[string]string),
 	}
 }
 
@@ -59,7 +62,7 @@ func (l *sandboxLayout) allocate(id string, createdAt time.Time) (string, error)
 }
 
 func (l *sandboxLayout) discover() ([]sandboxLocation, error) {
-	entries, err := os.ReadDir(l.root)
+	entries, err := l.readDirectory(l.root)
 	if err != nil {
 		return nil, fmt.Errorf("read sandbox root: %w", err)
 	}
@@ -80,7 +83,7 @@ func (l *sandboxLayout) discover() ([]sandboxLocation, error) {
 		if !validDatePart(entry.Name(), 4, 1, 9999) {
 			continue
 		}
-		if err := discoverSandboxYear(path, entry.Name(), paths, &locations); err != nil {
+		if err := l.discoverSandboxYear(path, entry.Name(), paths, &locations); err != nil {
 			return nil, err
 		}
 	}
@@ -96,28 +99,31 @@ func (l *sandboxLayout) discover() ([]sandboxLocation, error) {
 	return locations, nil
 }
 
-func discoverSandboxYear(yearPath, year string, paths map[string]string, locations *[]sandboxLocation) error {
-	months, err := os.ReadDir(yearPath)
+func (l *sandboxLayout) discoverSandboxYear(yearPath, year string, paths map[string]string, locations *[]sandboxLocation) error {
+	months, err := l.readDirectory(yearPath)
 	if err != nil {
-		return fmt.Errorf("read sandbox year directory %s: %w", yearPath, err)
+		warnSkippedSandboxDateDirectory("year", yearPath, err)
+		return nil
 	}
 	for _, month := range months {
 		if !month.IsDir() || !validDatePart(month.Name(), 2, 1, 12) {
 			continue
 		}
 		monthPath := filepath.Join(yearPath, month.Name())
-		days, err := os.ReadDir(monthPath)
+		days, err := l.readDirectory(monthPath)
 		if err != nil {
-			return fmt.Errorf("read sandbox month directory %s: %w", monthPath, err)
+			warnSkippedSandboxDateDirectory("month", monthPath, err)
+			continue
 		}
 		for _, day := range days {
 			if !day.IsDir() || !validCalendarDay(year, month.Name(), day.Name()) {
 				continue
 			}
 			dayPath := filepath.Join(monthPath, day.Name())
-			sandboxes, err := os.ReadDir(dayPath)
+			sandboxes, err := l.readDirectory(dayPath)
 			if err != nil {
-				return fmt.Errorf("read sandbox day directory %s: %w", dayPath, err)
+				warnSkippedSandboxDateDirectory("day", dayPath, err)
+				continue
 			}
 			for _, sandbox := range sandboxes {
 				if !sandbox.IsDir() {
@@ -134,6 +140,17 @@ func discoverSandboxYear(yearPath, year string, paths map[string]string, locatio
 		}
 	}
 	return nil
+}
+
+func (l *sandboxLayout) readDirectory(path string) ([]os.DirEntry, error) {
+	if l.readDir != nil {
+		return l.readDir(path)
+	}
+	return os.ReadDir(path)
+}
+
+func warnSkippedSandboxDateDirectory(level, path string, err error) {
+	slog.Warn("skipping unreadable sandbox date directory", "level", level, "path", path, "error", err)
 }
 
 func sandboxMetadataExists(path string) bool {
