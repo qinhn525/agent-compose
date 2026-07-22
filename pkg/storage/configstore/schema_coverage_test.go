@@ -5,9 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
@@ -961,24 +962,6 @@ func testConfigStoreMigrationAndTimeParsingWorkflows(t *testing.T) {
 		VALUES ('A', 'one', 1, '2026-06-02T09:00:00Z')`); err != nil {
 		t.Fatalf("insert legacy global env: %v", err)
 	}
-	if err := rebuildLegacyGlobalEnv(ctx, db); err != nil {
-		t.Fatalf("rebuildLegacyGlobalEnv returned error: %v", err)
-	}
-	columns, err := sqliteTableColumnTypes(ctx, db, "global_env")
-	if err != nil {
-		t.Fatalf("tableColumnTypes returned error: %v", err)
-	}
-	if !isIntegerColumnType(columns["updated_at"]) {
-		t.Fatalf("updated_at column type = %q, want integer", columns["updated_at"])
-	}
-	items, err := store.ListGlobalEnv(ctx)
-	if err != nil {
-		t.Fatalf("ListGlobalEnv returned error: %v", err)
-	}
-	if len(items) != 1 || items[0].Name != "A" || !items[0].Secret {
-		t.Fatalf("global env items = %#v", items)
-	}
-
 	if _, err := db.ExecContext(ctx, `CREATE TABLE workspace_config (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
@@ -994,8 +977,22 @@ func testConfigStoreMigrationAndTimeParsingWorkflows(t *testing.T) {
 		VALUES ('ws-1', 'Workspace', 'file', '{}', 'legacy', '2026-06-02T09:00:00.000Z', '2026-06-02T09:01:00Z')`); err != nil {
 		t.Fatalf("insert legacy workspace config: %v", err)
 	}
-	if err := rebuildLegacyWorkspaceConfig(ctx, db); err != nil {
-		t.Fatalf("rebuildLegacyWorkspaceConfig returned error: %v", err)
+	if err := store.initSchema(ctx); err != nil {
+		t.Fatalf("migrate legacy timestamp schemas: %v", err)
+	}
+	columns, err := sqliteTableColumnTypes(ctx, db, "global_env")
+	if err != nil {
+		t.Fatalf("tableColumnTypes returned error: %v", err)
+	}
+	if !isIntegerColumnType(columns["updated_at"]) {
+		t.Fatalf("updated_at column type = %q, want integer", columns["updated_at"])
+	}
+	items, err := store.ListGlobalEnv(ctx)
+	if err != nil {
+		t.Fatalf("ListGlobalEnv returned error: %v", err)
+	}
+	if len(items) != 1 || items[0].Name != "A" || !items[0].Secret {
+		t.Fatalf("global env items = %#v", items)
 	}
 	workspace, err := store.GetWorkspaceConfig(ctx, "ws-1")
 	if err != nil {
@@ -1019,9 +1016,6 @@ func testConfigStoreMigrationAndTimeParsingWorkflows(t *testing.T) {
 	}
 	if !ParseStoredTime("2026-06-02T09:00:00.000Z").Equal(time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)) {
 		t.Fatalf("ParseStoredTime custom layout failed")
-	}
-	if !strings.Contains(normalizeSQLiteTimestampExpr("updated_at"), "updated_at") {
-		t.Fatalf("normalizeSQLiteTimestampExpr missing column name")
 	}
 	if BoolToInt(true) != 1 || BoolToInt(false) != 0 {
 		t.Fatalf("BoolToInt returned unexpected values")
@@ -1253,10 +1247,12 @@ func assertSQLiteIndexUnique(t *testing.T, db *sql.DB, indexName string, want bo
 
 func newMemoryDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", sqliteDSN(":memory:", defaultSQLiteBusyTimeout))
+	db, err := sql.Open("sqlite", "file::memory:?_pragma=foreign_keys%281%29")
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("open SQLite test database: %v", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	t.Cleanup(func() { _ = db.Close() })
 	return db
 }

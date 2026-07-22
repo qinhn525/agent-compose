@@ -1,9 +1,8 @@
-package configstore
+package sqlite
 
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -12,38 +11,25 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/samber/do/v2"
 	_ "modernc.org/sqlite"
-
-	appconfig "agent-compose/pkg/config"
 )
 
-func TestNewConfigStoreHonorsCanceledStartupContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	root := t.TempDir()
-	di := do.New()
-	do.ProvideValue(di, ctx)
-	do.ProvideValue(di, &appconfig.Config{
-		DataRoot: root,
-		DbAddr:   filepath.Join(root, "data.db"),
-	})
-
-	store, err := NewConfigStore(di)
-	if store != nil {
-		t.Fatal("NewConfigStore returned a store for canceled startup context")
+func TestOpenReportsPingFailure(t *testing.T) {
+	database, err := Open(t.TempDir(), 0)
+	if database != nil {
+		_ = database.Close()
+		t.Fatal("Open returned a database for a directory path")
 	}
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("NewConfigStore error = %v, want context canceled", err)
+	if err == nil || !strings.Contains(err.Error(), "ping SQLite database") {
+		t.Fatalf("Open error = %v, want ping failure", err)
 	}
 }
 
-func TestConfigStoreMigrationBaseline(t *testing.T) {
+func TestMigrationBaseline(t *testing.T) {
 	ctx := context.Background()
 	db := newMemoryDB(t)
-	store := FromDB(db)
-	if err := store.InitSchema(ctx); err != nil {
-		t.Fatalf("InitSchema: %v", err)
+	if err := applyMigrations(ctx, db, embeddedMigrations); err != nil {
+		t.Fatalf("applyMigrations: %v", err)
 	}
 
 	tables := []string{
@@ -53,6 +39,7 @@ func TestConfigStoreMigrationBaseline(t *testing.T) {
 		"loader_run", "loader_event", "loader_state", "loader_binding", "project",
 		"project_revision", "project_agent", "project_scheduler", "project_run",
 		"project_run_event", "event", "webhook_source", "event_delivery", "event_sandbox_link",
+		"sandbox_projection_meta", "sandboxes",
 	}
 	for _, table := range tables {
 		var count int
@@ -74,15 +61,19 @@ func TestConfigStoreMigrationBaseline(t *testing.T) {
 	}
 	for _, index := range []string{
 		"idx_agent_definition_deleted_enabled", "idx_agent_definition_managed_project", "idx_agent_definition_workspace",
-		"idx_event_correlation", "idx_event_delivery_run", "idx_event_delivery_status", "idx_event_dispatch",
-		"idx_event_dispatch_attempt", "idx_event_idempotency", "idx_event_parent", "idx_event_sandbox_link_run",
-		"idx_event_sandbox_link_sandbox", "idx_event_topic_sequence", "idx_llm_facade_token_sandbox",
-		"idx_loader_event_created", "idx_loader_managed_project", "idx_loader_run_started", "idx_loader_trigger_schedule",
-		"idx_project_agent_id", "idx_project_agent_managed_agent", "idx_project_name", "idx_project_revision_hash",
-		"idx_project_run_agent", "idx_project_run_event_sequence", "idx_project_run_project_status",
-		"idx_project_run_sandbox", "idx_project_run_scheduler", "idx_project_scheduler_agent",
-		"idx_project_scheduler_id", "idx_project_scheduler_managed_loader", "idx_project_short_id",
-		"idx_project_source_path", "idx_project_volumes_volume", "idx_volumes_driver", "idx_volumes_project",
+		"idx_event_correlation", "idx_event_delivery_loader_run", "idx_event_delivery_run", "idx_event_delivery_status",
+		"idx_event_dispatch", "idx_event_dispatch_attempt", "idx_event_idempotency", "idx_event_parent",
+		"idx_event_sandbox_link_loader_run", "idx_event_sandbox_link_run", "idx_event_sandbox_link_sandbox",
+		"idx_event_topic_sequence", "idx_llm_facade_token_sandbox", "idx_loader_event_created",
+		"idx_loader_event_run_created", "idx_loader_managed_project", "idx_loader_run_prune",
+		"idx_loader_run_started", "idx_loader_run_status_started", "idx_loader_run_trigger_started",
+		"idx_loader_trigger_schedule", "idx_project_agent_id", "idx_project_agent_managed_agent",
+		"idx_project_name", "idx_project_revision_hash", "idx_project_run_agent",
+		"idx_project_run_event_sequence", "idx_project_run_project_status", "idx_project_run_sandbox",
+		"idx_project_run_scheduler", "idx_project_scheduler_agent", "idx_project_scheduler_id",
+		"idx_project_scheduler_managed_loader", "idx_project_short_id", "idx_project_source_path",
+		"idx_project_volumes_volume", "idx_sandboxes_type_updated", "idx_sandboxes_updated",
+		"idx_sandboxes_vm_status_updated", "idx_volumes_driver", "idx_volumes_project",
 		"idx_webhook_source_enabled_topic",
 	} {
 		assertSQLiteIndexExists(t, db, index)
@@ -101,16 +92,42 @@ func TestConfigStoreMigrationBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadMigrations: %v", err)
 	}
-	var version int64
-	var name string
-	var checksum string
-	if err := db.QueryRowContext(ctx,
-		`SELECT version, name, checksum FROM schema_migrations`).Scan(&version, &name, &checksum); err != nil {
+	appliedAt := make(map[int64]int64, len(available))
+	rows, err := db.QueryContext(ctx,
+		`SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY version`)
+	if err != nil {
 		t.Fatalf("query migration history: %v", err)
 	}
-	if version != baselineMigrationVersion || name != available[0].name || checksum != available[0].checksum {
-		t.Fatalf("migration history = (%d, %q, %q), want (%d, %q, %q)",
-			version, name, checksum, baselineMigrationVersion, available[0].name, available[0].checksum)
+	migrationIndex := 0
+	for rows.Next() {
+		var version, timestamp int64
+		var name, checksum string
+		if err := rows.Scan(&version, &name, &checksum, &timestamp); err != nil {
+			_ = rows.Close()
+			t.Fatalf("scan migration history: %v", err)
+		}
+		if migrationIndex >= len(available) {
+			_ = rows.Close()
+			t.Fatalf("unexpected migration history row (%d, %q)", version, name)
+		}
+		expected := available[migrationIndex]
+		if version != expected.version || name != expected.name || checksum != expected.checksum {
+			_ = rows.Close()
+			t.Fatalf("migration history row %d = (%d, %q, %q), want (%d, %q, %q)",
+				migrationIndex, version, name, checksum, expected.version, expected.name, expected.checksum)
+		}
+		appliedAt[version] = timestamp
+		migrationIndex++
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		t.Fatalf("iterate migration history: %v", err)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatalf("close migration history: %v", err)
+	}
+	if migrationIndex != len(available) {
+		t.Fatalf("migration history row count = %d, want %d", migrationIndex, len(available))
 	}
 
 	if _, err := db.ExecContext(ctx,
@@ -121,19 +138,15 @@ func TestConfigStoreMigrationBaseline(t *testing.T) {
 		`INSERT INTO global_env(name, value, secret, updated_at) VALUES('PRESERVED', 'before', 0, 1234)`); err != nil {
 		t.Fatalf("insert data before second initialization: %v", err)
 	}
-	var appliedAt int64
-	if err := db.QueryRowContext(ctx, `SELECT applied_at FROM schema_migrations WHERE version = 1`).Scan(&appliedAt); err != nil {
-		t.Fatalf("query initial migration time: %v", err)
-	}
-	if err := store.InitSchema(ctx); err != nil {
-		t.Fatalf("second InitSchema: %v", err)
+	if err := applyMigrations(ctx, db, embeddedMigrations); err != nil {
+		t.Fatalf("second applyMigrations: %v", err)
 	}
 	var historyCount int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&historyCount); err != nil {
 		t.Fatalf("count migration history: %v", err)
 	}
-	if historyCount != 1 {
-		t.Fatalf("migration history count = %d, want 1", historyCount)
+	if historyCount != len(available) {
+		t.Fatalf("migration history count = %d, want %d", historyCount, len(available))
 	}
 	var value string
 	var updatedAt int64
@@ -144,12 +157,76 @@ func TestConfigStoreMigrationBaseline(t *testing.T) {
 	if value != "before" || updatedAt != 1234 {
 		t.Fatalf("data after second initialization = (%q, %d), want (%q, %d)", value, updatedAt, "before", 1234)
 	}
-	var reappliedAt int64
-	if err := db.QueryRowContext(ctx, `SELECT applied_at FROM schema_migrations WHERE version = 1`).Scan(&reappliedAt); err != nil {
-		t.Fatalf("query migration time after second initialization: %v", err)
+	for _, item := range available {
+		var currentAppliedAt int64
+		if err := db.QueryRowContext(ctx,
+			`SELECT applied_at FROM schema_migrations WHERE version = ?`, item.version).Scan(&currentAppliedAt); err != nil {
+			t.Fatalf("query migration %d time after second initialization: %v", item.version, err)
+		}
+		if currentAppliedAt != appliedAt[item.version] {
+			t.Fatalf("migration %d applied_at changed from %d to %d", item.version, appliedAt[item.version], currentAppliedAt)
+		}
 	}
-	if reappliedAt != appliedAt {
-		t.Fatalf("migration applied_at changed from %d to %d", appliedAt, reappliedAt)
+}
+
+func TestBaselineIncludesPreviouslyOmittedSchema(t *testing.T) {
+	ctx := context.Background()
+	db := newMemoryDB(t)
+	if err := applyMigrations(ctx, db, embeddedMigrations); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	indexDefinitions := []struct {
+		name       string
+		columns    []string
+		descending []bool
+	}{
+		{name: "idx_sandboxes_updated", columns: []string{"updated_at", "id"}, descending: []bool{true, true}},
+		{name: "idx_sandboxes_vm_status_updated", columns: []string{"vm_status_search", "updated_at", "id"}, descending: []bool{false, true, true}},
+		{name: "idx_sandboxes_type_updated", columns: []string{"sandbox_type", "updated_at", "id"}, descending: []bool{false, true, true}},
+		{name: "idx_loader_run_trigger_started", columns: []string{"loader_id", "trigger_id", "started_at", "run_id"}, descending: []bool{false, false, true, true}},
+		{name: "idx_loader_run_status_started", columns: []string{"loader_id", "status", "started_at", "run_id"}, descending: []bool{false, false, true, true}},
+		{name: "idx_loader_run_prune", columns: []string{"loader_id", "status", "completed_at", "started_at", "run_id"}, descending: []bool{false, false, false, false, false}},
+		{name: "idx_loader_event_run_created", columns: []string{"loader_id", "run_id", "created_at", "event_id"}, descending: []bool{false, false, true, true}},
+		{name: "idx_event_sandbox_link_loader_run", columns: []string{"loader_id", "run_id"}, descending: []bool{false, false}},
+		{name: "idx_event_delivery_loader_run", columns: []string{"loader_id", "run_id"}, descending: []bool{false, false}},
+	}
+	for _, definition := range indexDefinitions {
+		assertSQLiteIndexColumns(t, db, definition.name, definition.columns, definition.descending)
+	}
+}
+func assertSQLiteIndexColumns(t *testing.T, db *sql.DB, indexName string, columns []string, descending []bool) {
+	t.Helper()
+	if len(columns) != len(descending) {
+		t.Fatalf("index %s expectation has %d columns and %d sort directions", indexName, len(columns), len(descending))
+	}
+	rows, err := db.QueryContext(context.Background(),
+		`SELECT name, "desc" FROM pragma_index_xinfo(?) WHERE key = 1 ORDER BY seqno`, indexName)
+	if err != nil {
+		t.Fatalf("query index %s columns: %v", indexName, err)
+	}
+	defer func() { _ = rows.Close() }()
+	position := 0
+	for rows.Next() {
+		var name string
+		var desc int
+		if err := rows.Scan(&name, &desc); err != nil {
+			t.Fatalf("scan index %s column: %v", indexName, err)
+		}
+		if position >= len(columns) {
+			t.Fatalf("index %s has unexpected column %q", indexName, name)
+		}
+		if name != columns[position] || (desc != 0) != descending[position] {
+			t.Fatalf("index %s column %d = (%q, desc=%v), want (%q, desc=%v)",
+				indexName, position, name, desc != 0, columns[position], descending[position])
+		}
+		position++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate index %s columns: %v", indexName, err)
+	}
+	if position != len(columns) {
+		t.Fatalf("index %s column count = %d, want %d", indexName, position, len(columns))
 	}
 }
 
@@ -318,7 +395,7 @@ func TestSQLiteDSNConfiguresProductionConnection(t *testing.T) {
 	}
 }
 
-func TestConfigStoreMigratesEveryLegacyAddedColumn(t *testing.T) {
+func TestMigratesEveryLegacyAddedColumn(t *testing.T) {
 	ctx := context.Background()
 	db := newMemoryDB(t)
 	available, err := loadMigrations(embeddedMigrations)
@@ -370,19 +447,39 @@ func TestConfigStoreMigratesEveryLegacyAddedColumn(t *testing.T) {
 		t.Fatalf("insert legacy project: %v", err)
 	}
 
-	store := FromDB(db)
-	if err := store.InitSchema(ctx); err != nil {
+	if err := applyMigrations(ctx, db, embeddedMigrations); err != nil {
 		t.Fatalf("migrate legacy columns: %v", err)
 	}
 	for table, columns := range legacyColumns {
-		assertTableColumns(t, store, table, columns...)
+		types, err := sqliteTableColumnTypes(ctx, db, table)
+		if err != nil {
+			t.Fatalf("inspect migrated table %s: %v", table, err)
+		}
+		for _, column := range columns {
+			if _, ok := types[column]; !ok {
+				t.Fatalf("migrated table %s missing column %s", table, column)
+			}
+		}
 	}
 	for _, index := range []string{
 		"idx_agent_definition_managed_project", "idx_loader_managed_project",
 		"idx_project_short_id", "idx_project_agent_id", "idx_project_scheduler_id",
 		"idx_project_run_sandbox", "idx_event_dispatch_attempt", "idx_event_parent",
+		"idx_loader_run_trigger_started", "idx_loader_run_status_started", "idx_loader_run_prune",
+		"idx_loader_event_run_created", "idx_event_sandbox_link_loader_run", "idx_event_delivery_loader_run",
+		"idx_sandboxes_updated", "idx_sandboxes_vm_status_updated", "idx_sandboxes_type_updated",
 	} {
 		assertSQLiteIndexExists(t, db, index)
+	}
+	for _, table := range []string{"sandbox_projection_meta", "sandboxes"} {
+		var count int
+		if err := db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
+			t.Fatalf("query migrated table %s: %v", table, err)
+		}
+		if count != 1 {
+			t.Fatalf("migrated table %s count = %d, want 1", table, count)
+		}
 	}
 	for table, id := range map[string]string{"agent_definition": "agent-1", "loader": "loader-1", "project": "project-1"} {
 		var name string
@@ -395,7 +492,7 @@ func TestConfigStoreMigratesEveryLegacyAddedColumn(t *testing.T) {
 	}
 }
 
-func TestConfigStoreMigratesLegacyTimestampTables(t *testing.T) {
+func TestMigratesLegacyTimestampTables(t *testing.T) {
 	ctx := context.Background()
 	db := newMemoryDB(t)
 	statements := []string{
@@ -409,8 +506,7 @@ func TestConfigStoreMigratesLegacyTimestampTables(t *testing.T) {
 			t.Fatalf("prepare legacy timestamp fixture: %v", err)
 		}
 	}
-	store := FromDB(db)
-	if err := store.InitSchema(ctx); err != nil {
+	if err := applyMigrations(ctx, db, embeddedMigrations); err != nil {
 		t.Fatalf("migrate legacy timestamp tables: %v", err)
 	}
 	for table, columns := range map[string][]string{
@@ -427,15 +523,17 @@ func TestConfigStoreMigratesLegacyTimestampTables(t *testing.T) {
 			}
 		}
 	}
-	if items, err := store.ListGlobalEnv(ctx); err != nil || len(items) != 1 || items[0].Name != "A" {
-		t.Fatalf("migrated global env = %#v, err=%v", items, err)
+	var globalName string
+	if err := db.QueryRowContext(ctx, `SELECT name FROM global_env WHERE name = 'A'`).Scan(&globalName); err != nil || globalName != "A" {
+		t.Fatalf("migrated global env name = %q, err=%v", globalName, err)
 	}
-	if workspace, err := store.GetWorkspaceConfig(ctx, "ws-1"); err != nil || workspace.Name != "Workspace" {
-		t.Fatalf("migrated workspace = %#v, err=%v", workspace, err)
+	var workspaceName string
+	if err := db.QueryRowContext(ctx, `SELECT name FROM workspace_config WHERE id = 'ws-1'`).Scan(&workspaceName); err != nil || workspaceName != "Workspace" {
+		t.Fatalf("migrated workspace name = %q, err=%v", workspaceName, err)
 	}
 }
 
-func TestConfigStoreMigratesLegacyLoaderTimestampsOnce(t *testing.T) {
+func TestMigratesLegacyLoaderTimestampsOnce(t *testing.T) {
 	ctx := context.Background()
 	db := newMemoryDB(t)
 	available, err := loadMigrations(embeddedMigrations)
@@ -461,10 +559,9 @@ func TestConfigStoreMigratesLegacyLoaderTimestampsOnce(t *testing.T) {
 		}
 	}
 
-	store := FromDB(db)
 	for pass := 1; pass <= 2; pass++ {
-		if err := store.InitSchema(ctx); err != nil {
-			t.Fatalf("InitSchema pass %d: %v", pass, err)
+		if err := applyMigrations(ctx, db, embeddedMigrations); err != nil {
+			t.Fatalf("applyMigrations pass %d: %v", pass, err)
 		}
 	}
 	var nextFireAt, lastFiredAt, startedAt, completedAt, eventCreatedAt int64
@@ -507,6 +604,45 @@ func TestMigrationFSReadError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "read embedded SQLite migrations") {
 		t.Fatalf("loadMigrations error = %v", err)
 	}
+}
+
+func assertSQLiteIndexExists(t *testing.T, db *sql.DB, indexName string) {
+	t.Helper()
+	var count int
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, indexName).Scan(&count); err != nil {
+		t.Fatalf("query SQLite index %s: %v", indexName, err)
+	}
+	if count != 1 {
+		t.Fatalf("SQLite index %s count = %d, want 1", indexName, count)
+	}
+}
+
+func assertSQLiteIndexUnique(t *testing.T, db *sql.DB, indexName string, want bool) {
+	t.Helper()
+	var unique int
+	if err := db.QueryRowContext(context.Background(), `
+		SELECT il."unique"
+		FROM sqlite_master AS sm, pragma_index_list(sm.tbl_name) AS il
+		WHERE sm.type = 'index' AND sm.name = ? AND il.name = sm.name
+	`, indexName).Scan(&unique); err != nil {
+		t.Fatalf("query SQLite index %s uniqueness: %v", indexName, err)
+	}
+	if (unique != 0) != want {
+		t.Fatalf("SQLite index %s unique = %v, want %v", indexName, unique != 0, want)
+	}
+}
+
+func newMemoryDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", sqliteDSN(":memory:", defaultBusyTimeout))
+	if err != nil {
+		t.Fatalf("open in-memory SQLite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	return db
 }
 
 type failingMigrationFS struct{}

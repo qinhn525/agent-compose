@@ -12,8 +12,6 @@ import (
 	"agent-compose/pkg/storage/storeutil"
 )
 
-const storedUnixMillisecondThreshold int64 = storeutil.StoredUnixMillisecondThreshold
-
 func NormalizeWorkspaceConfig(item domain.WorkspaceConfig, assignID bool) (domain.WorkspaceConfig, error) {
 	item.ID = strings.TrimSpace(item.ID)
 	item.Name = strings.TrimSpace(item.Name)

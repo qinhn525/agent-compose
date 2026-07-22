@@ -5,16 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
-
-	"github.com/samber/do/v2"
-
 	"agent-compose/pkg/capabilities"
-	appconfig "agent-compose/pkg/config"
 	domain "agent-compose/pkg/model"
 )
 
@@ -44,10 +38,10 @@ type coreStore struct {
 // promotes every domain method onto ConfigStore, so callers and the domain
 // packages' consumer interfaces are unaffected by the internal split.
 //
-// ConfigStore must be constructed via NewConfigStore or FromDB, which wire the
-// embedded sub-stores. The zero value (or a struct literal) leaves them nil and
-// every promoted method would panic; the sub-store types are unexported to keep
-// direct construction confined to this package.
+// ConfigStore must be constructed via FromDB, which wires the embedded
+// sub-stores. The zero value (or a struct literal) leaves them nil and every
+// promoted method would panic; the sub-store types are unexported to keep direct
+// construction confined to this package.
 type ConfigStore struct {
 	db *sql.DB
 
@@ -58,26 +52,6 @@ type ConfigStore struct {
 	*llmStore
 	*capabilityGatewayStore
 	*volumeStore
-}
-
-func NewConfigStore(di do.Injector) (*ConfigStore, error) {
-	config := do.MustInvoke[*appconfig.Config](di)
-	ctx := do.MustInvoke[context.Context](di)
-	if err := os.MkdirAll(config.DataRoot, 0o755); err != nil {
-		return nil, fmt.Errorf("create agent-compose data root: %w", err)
-	}
-	db, err := sql.Open("sqlite", sqliteDSN(config.DbAddr, config.DbTimeout))
-	if err != nil {
-		return nil, fmt.Errorf("failed to open sqlite db: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	store := FromDB(db)
-	if err := store.initSchema(ctx); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	return store, nil
 }
 
 func FromDB(db *sql.DB) *ConfigStore {

@@ -1,7 +1,7 @@
 # SQLite migrations
 
 Migration files are embedded into the agent-compose binary and applied by the
-`configstore` package before any store is used.
+`storage/sqlite` package before the shared database is provided to any store.
 
 - Name files `NNNNNN_description.sql` with a unique, increasing six-digit
   version.

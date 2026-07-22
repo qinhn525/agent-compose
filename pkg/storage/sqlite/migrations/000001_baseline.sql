@@ -199,6 +199,12 @@ CREATE TABLE IF NOT EXISTS loader_run (
 );
 CREATE INDEX IF NOT EXISTS idx_loader_run_started
     ON loader_run(loader_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_loader_run_trigger_started
+    ON loader_run(loader_id, trigger_id, started_at DESC, run_id DESC);
+CREATE INDEX IF NOT EXISTS idx_loader_run_status_started
+    ON loader_run(loader_id, status, started_at DESC, run_id DESC);
+CREATE INDEX IF NOT EXISTS idx_loader_run_prune
+    ON loader_run(loader_id, status, completed_at, started_at, run_id);
 
 CREATE TABLE IF NOT EXISTS loader_event (
     loader_id TEXT NOT NULL,
@@ -218,6 +224,8 @@ CREATE TABLE IF NOT EXISTS loader_event (
 );
 CREATE INDEX IF NOT EXISTS idx_loader_event_created
     ON loader_event(loader_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_loader_event_run_created
+    ON loader_event(loader_id, run_id, created_at DESC, event_id DESC);
 
 CREATE TABLE IF NOT EXISTS loader_state (
     loader_id TEXT NOT NULL,
@@ -434,6 +442,8 @@ CREATE TABLE IF NOT EXISTS event_delivery (
 CREATE INDEX IF NOT EXISTS idx_event_delivery_run ON event_delivery(run_id);
 CREATE INDEX IF NOT EXISTS idx_event_delivery_status
     ON event_delivery(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_event_delivery_loader_run
+    ON event_delivery(loader_id, run_id);
 
 CREATE TABLE IF NOT EXISTS event_sandbox_link (
     event_id TEXT NOT NULL,
@@ -449,3 +459,43 @@ CREATE TABLE IF NOT EXISTS event_sandbox_link (
 CREATE INDEX IF NOT EXISTS idx_event_sandbox_link_sandbox
     ON event_sandbox_link(sandbox_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_event_sandbox_link_run ON event_sandbox_link(run_id);
+CREATE INDEX IF NOT EXISTS idx_event_sandbox_link_loader_run
+    ON event_sandbox_link(loader_id, run_id);
+
+CREATE TABLE IF NOT EXISTS sandbox_projection_meta (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    version INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sandboxes (
+    id                         TEXT PRIMARY KEY,
+    short_id                   TEXT NOT NULL DEFAULT '',
+    title                      TEXT NOT NULL DEFAULT '',
+    trigger_source             TEXT NOT NULL DEFAULT '',
+    driver                     TEXT NOT NULL DEFAULT '',
+    vm_status                  TEXT NOT NULL DEFAULT '',
+    workspace_path             TEXT NOT NULL DEFAULT '',
+    workspace_id               TEXT NOT NULL DEFAULT '',
+    nested_workspace_id        TEXT NOT NULL DEFAULT '',
+    workspace_name             TEXT NOT NULL DEFAULT '',
+    workspace_type             TEXT NOT NULL DEFAULT '',
+    created_at                 INTEGER NOT NULL DEFAULT 0,
+    updated_at                 INTEGER NOT NULL DEFAULT 0,
+    sandbox_type               TEXT NOT NULL DEFAULT '',
+    title_search               TEXT NOT NULL DEFAULT '',
+    trigger_source_search      TEXT NOT NULL DEFAULT '',
+    driver_search              TEXT NOT NULL DEFAULT '',
+    vm_status_search           TEXT NOT NULL DEFAULT '',
+    workspace_path_search      TEXT NOT NULL DEFAULT '',
+    workspace_id_search        TEXT NOT NULL DEFAULT '',
+    nested_workspace_id_search TEXT NOT NULL DEFAULT '',
+    workspace_name_search      TEXT NOT NULL DEFAULT '',
+    workspace_type_search      TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_sandboxes_updated
+    ON sandboxes(updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_sandboxes_vm_status_updated
+    ON sandboxes(vm_status_search, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_sandboxes_type_updated
+    ON sandboxes(sandbox_type, updated_at DESC, id DESC);

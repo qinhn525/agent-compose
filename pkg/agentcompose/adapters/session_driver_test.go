@@ -9,10 +9,10 @@ import (
 
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/internal/testutil"
 	"agent-compose/pkg/llms"
 	"agent-compose/pkg/llms/runtimefacade"
 	domain "agent-compose/pkg/model"
-	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
 
 	"github.com/samber/do/v2"
@@ -244,7 +244,7 @@ func TestSandboxDriverStopPreservesFacadeTokensUntilRemove(t *testing.T) {
 	di := do.New()
 	do.ProvideValue(di, ctx)
 	do.ProvideValue(di, config)
-	configDB, err := configstore.NewConfigStore(di)
+	configDB, err := testutil.OpenConfigStore(t, di)
 	if err != nil {
 		t.Fatalf("NewConfigStore returned error: %v", err)
 	}
@@ -419,7 +419,7 @@ func TestSandboxDriverStartSandboxVMInjectsOpenAIAndAnthropicFacadeEnv(t *testin
 	di := do.New()
 	do.ProvideValue(di, ctx)
 	do.ProvideValue(di, config)
-	configDB, err := configstore.NewConfigStore(di)
+	configDB, err := testutil.OpenConfigStore(t, di)
 	if err != nil {
 		t.Fatalf("NewConfigStore returned error: %v", err)
 	}
@@ -529,7 +529,7 @@ func TestSandboxDriverStartSandboxVMIgnoresOptionalClaudeConfigError(t *testing.
 	di := do.New()
 	do.ProvideValue(di, ctx)
 	do.ProvideValue(di, config)
-	configDB, err := configstore.NewConfigStore(di)
+	configDB, err := testutil.OpenConfigStore(t, di)
 	if err != nil {
 		t.Fatalf("NewConfigStore returned error: %v", err)
 	}

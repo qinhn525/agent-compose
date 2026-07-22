@@ -1,9 +1,11 @@
-package configstore
+package sqlite
 
 import (
 	"context"
 	"fmt"
 	"strings"
+
+	"agent-compose/pkg/storage/storeutil"
 )
 
 // prepareLegacySchema upgrades only schema shapes that existed before
@@ -262,11 +264,11 @@ func rebuildLegacyLoaderBinding(ctx context.Context, conn migrationConn) error {
 
 func migrateLegacyLoaderTimestamps(ctx context.Context, conn migrationConn) error {
 	statements := []string{
-		fmt.Sprintf(`UPDATE loader_trigger SET next_fire_at = next_fire_at * 1000 WHERE next_fire_at > 0 AND next_fire_at < %d`, storedUnixMillisecondThreshold),
-		fmt.Sprintf(`UPDATE loader_trigger SET last_fired_at = last_fired_at * 1000 WHERE last_fired_at > 0 AND last_fired_at < %d`, storedUnixMillisecondThreshold),
-		fmt.Sprintf(`UPDATE loader_run SET started_at = started_at * 1000 WHERE started_at > 0 AND started_at < %d`, storedUnixMillisecondThreshold),
-		fmt.Sprintf(`UPDATE loader_run SET completed_at = completed_at * 1000 WHERE completed_at > 0 AND completed_at < %d`, storedUnixMillisecondThreshold),
-		fmt.Sprintf(`UPDATE loader_event SET created_at = created_at * 1000 WHERE created_at > 0 AND created_at < %d`, storedUnixMillisecondThreshold),
+		fmt.Sprintf(`UPDATE loader_trigger SET next_fire_at = next_fire_at * 1000 WHERE next_fire_at > 0 AND next_fire_at < %d`, storeutil.StoredUnixMillisecondThreshold),
+		fmt.Sprintf(`UPDATE loader_trigger SET last_fired_at = last_fired_at * 1000 WHERE last_fired_at > 0 AND last_fired_at < %d`, storeutil.StoredUnixMillisecondThreshold),
+		fmt.Sprintf(`UPDATE loader_run SET started_at = started_at * 1000 WHERE started_at > 0 AND started_at < %d`, storeutil.StoredUnixMillisecondThreshold),
+		fmt.Sprintf(`UPDATE loader_run SET completed_at = completed_at * 1000 WHERE completed_at > 0 AND completed_at < %d`, storeutil.StoredUnixMillisecondThreshold),
+		fmt.Sprintf(`UPDATE loader_event SET created_at = created_at * 1000 WHERE created_at > 0 AND created_at < %d`, storeutil.StoredUnixMillisecondThreshold),
 	}
 	return execLegacyStatements(ctx, conn, "migrate loader timestamp precision", statements)
 }

@@ -13,9 +13,9 @@ import (
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
 	"agent-compose/pkg/execution"
+	"agent-compose/pkg/internal/testutil"
 	"agent-compose/pkg/llms"
 	domain "agent-compose/pkg/model"
-	"agent-compose/pkg/storage/configstore"
 )
 
 func TestEnsureSessionLLMFacadeConfigCreatesCodexEnvAndToken(t *testing.T) {
@@ -39,7 +39,7 @@ func TestEnsureSessionLLMFacadeConfigCreatesCodexEnvAndToken(t *testing.T) {
 	di := do.New()
 	do.ProvideValue(di, ctx)
 	do.ProvideValue(di, config)
-	store, err := configstore.NewConfigStore(di)
+	store, err := testutil.OpenConfigStore(t, di)
 	if err != nil {
 		t.Fatalf("NewConfigStore returned error: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestEnsureSessionAgentRuntimeConfigClaudeAndOpenCodeWorkflows(t *testing.T)
 	di := do.New()
 	do.ProvideValue(di, ctx)
 	do.ProvideValue(di, config)
-	store, err := configstore.NewConfigStore(di)
+	store, err := testutil.OpenConfigStore(t, di)
 	if err != nil {
 		t.Fatalf("NewConfigStore returned error: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestEnsureSessionAgentRuntimeConfigClaudePreservesProviderlessCompatibility
 	di := do.New()
 	do.ProvideValue(di, ctx)
 	do.ProvideValue(di, config)
-	store, err := configstore.NewConfigStore(di)
+	store, err := testutil.OpenConfigStore(t, di)
 	if err != nil {
 		t.Fatalf("NewConfigStore returned error: %v", err)
 	}

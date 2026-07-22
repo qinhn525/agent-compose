@@ -1,4 +1,4 @@
-package configstore
+package sqlite
 
 import (
 	"context"
@@ -9,18 +9,13 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 )
 
-const (
-	baselineMigrationVersion int64 = 1
-	defaultSQLiteBusyTimeout       = 16 * time.Second
-)
+const baselineMigrationVersion int64 = 1
 
 var migrationFilenamePattern = regexp.MustCompile(`^([0-9]{6})_([a-z0-9]+(?:_[a-z0-9]+)*)\.sql$`)
 
@@ -46,17 +41,13 @@ type migrationConn interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-func (s *ConfigStore) initSchema(ctx context.Context) error {
-	if s == nil || s.db == nil {
-		return fmt.Errorf("config store is required")
+// Migrate upgrades an already-open application database. Production callers
+// should use Open so connection ownership and migration ordering stay unified.
+func Migrate(ctx context.Context, db *sql.DB) error {
+	if db == nil {
+		return fmt.Errorf("SQLite database is required")
 	}
-	return applyMigrations(ctx, s.db, embeddedMigrations)
-}
-
-// InitSchema upgrades the configuration database to the schema embedded in
-// this binary. Migrations are forward-only and applied before the store is used.
-func (s *ConfigStore) InitSchema(ctx context.Context) error {
-	return s.initSchema(ctx)
+	return applyMigrations(ctx, db, embeddedMigrations)
 }
 
 func applyMigrations(ctx context.Context, db *sql.DB, migrationFS fs.FS) error {
@@ -146,34 +137,6 @@ func applyMigrationSet(ctx context.Context, db *sql.DB, migrations []migration) 
 		slog.Info("SQLite migration applied", "version", item.version, "name", item.name)
 	}
 	return nil
-}
-
-func sqliteDSN(path string, busyTimeout time.Duration) string {
-	if busyTimeout <= 0 {
-		busyTimeout = defaultSQLiteBusyTimeout
-	}
-	var uri *url.URL
-	if strings.HasPrefix(path, "file:") {
-		parsed, err := url.Parse(path)
-		if err == nil {
-			uri = parsed
-		}
-	}
-	if uri == nil {
-		if path == ":memory:" {
-			uri = &url.URL{Scheme: "file", Opaque: ":memory:"}
-		} else {
-			uri = &url.URL{Scheme: "file", Path: path}
-		}
-	}
-	query := uri.Query()
-	// Apply the complete production SQLite configuration whenever the pool opens
-	// its single physical connection.
-	query.Add("_pragma", "foreign_keys(1)")
-	query.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds()))
-	query.Add("_pragma", "journal_mode(WAL)")
-	uri.RawQuery = query.Encode()
-	return uri.String()
 }
 
 func loadMigrations(migrationFS fs.FS) ([]migration, error) {

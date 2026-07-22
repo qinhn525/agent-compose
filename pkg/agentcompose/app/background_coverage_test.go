@@ -11,8 +11,8 @@ import (
 
 	appconfig "agent-compose/pkg/config"
 	driverpkg "agent-compose/pkg/driver"
+	"agent-compose/pkg/internal/testutil"
 	domain "agent-compose/pkg/model"
-	"agent-compose/pkg/storage/configstore"
 	"agent-compose/pkg/storage/sessionstore"
 )
 
@@ -79,7 +79,7 @@ func TestReconcilePersistedProjectRunsMarksInterruptedRunsFailed(t *testing.T) {
 	di := do.New()
 	do.ProvideValue(di, ctx)
 	do.ProvideValue(di, config)
-	store, err := configstore.NewConfigStore(di)
+	store, err := testutil.OpenConfigStore(t, di)
 	if err != nil {
 		t.Fatalf("NewConfigStore returned error: %v", err)
 	}
