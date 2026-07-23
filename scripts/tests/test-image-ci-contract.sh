@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+TASKFILE="$ROOT_DIR/Taskfile.yml"
 WORKFLOW="$ROOT_DIR/.github/workflows/images.yml"
 INSTALLER_BUILDER="$ROOT_DIR/scripts/build-installer-assets.sh"
 INSTALLER_TEST="$ROOT_DIR/scripts/tests/test-installer-assets.sh"
@@ -9,6 +10,7 @@ IMAGE_E2E="$ROOT_DIR/scripts/test-image-docker-e2e.sh"
 DAEMON_BUILDER="$ROOT_DIR/scripts/build-agent-compose.sh"
 GUEST_BUILDER="$ROOT_DIR/scripts/build-agent-compose-guest.sh"
 GUEST_DOCKERFILE="$ROOT_DIR/guest-images/Dockerfile.agent-compose-guest"
+ARCHLINUX_GUEST_DOCKERFILE="$ROOT_DIR/guest-images/Dockerfile.agent-compose-guest-archlinux"
 
 failures=0
 TEST_ROOT=$(mktemp -d)
@@ -282,6 +284,18 @@ fi
 [[ -x $DAEMON_BUILDER ]] || fail 'executable scripts/build-agent-compose.sh'
 [[ -x $GUEST_BUILDER ]] || fail 'executable scripts/build-agent-compose-guest.sh'
 [[ -f $GUEST_DOCKERFILE ]] || fail 'default guest Dockerfile'
+[[ -f $ARCHLINUX_GUEST_DOCKERFILE ]] || fail 'Arch Linux guest Dockerfile'
+if [[ -f $TASKFILE ]]; then
+  taskfile_source=$(<"$TASKFILE")
+  require_regex "$taskfile_source" 'image:agent-compose-guest-archlinux:' \
+    'Arch Linux guest image task'
+  require_regex "$taskfile_source" 'GUEST_IMAGE_DOCKERFILE=.*Dockerfile\.agent-compose-guest-archlinux' \
+    'Arch Linux guest Dockerfile selection in task'
+  require_regex "$taskfile_source" 'agent-compose-guest-archlinux:latest' \
+    'Arch Linux guest default local tag'
+  require_regex "$taskfile_source" 'BUILD_PLATFORM=.*linux/amd64' \
+    'Arch Linux guest amd64 build platform'
+fi
 if [[ -f $DAEMON_BUILDER ]]; then
   daemon_builder_source=$(<"$DAEMON_BUILDER")
   require_regex "$daemon_builder_source" 'docker[[:space:]]+build' \
@@ -339,6 +353,37 @@ if [[ -f $GUEST_DOCKERFILE ]]; then
   done <"$GUEST_DOCKERFILE"
   [[ $npm_install_run_count -gt 0 ]] || fail 'npm install layers in default guest Dockerfile'
 fi
+if [[ -f $ARCHLINUX_GUEST_DOCKERFILE ]]; then
+  archlinux_guest_source=$(<"$ARCHLINUX_GUEST_DOCKERFILE")
+  require_regex "$archlinux_guest_source" 'FROM[[:space:]]+\$\{REGISTRY_MIRROR\}/library/archlinux:\$\{ARCHLINUX_TAG\}' \
+    'configurable Arch Linux base image'
+  require_regex "$archlinux_guest_source" 'pacman[[:space:]]+-Syu' \
+    'Arch Linux package installation'
+  require_regex "$archlinux_guest_source" 'nodejs-lts-jod' \
+    'Node.js 22 LTS in Arch Linux guest image'
+  forbid_regex "$archlinux_guest_source" '^[[:space:]]*base-devel[[:space:]]*\\' \
+    'full Arch Linux development package group'
+  require_regex "$archlinux_guest_source" 'allow-scripts=.*@anthropic-ai/claude-code.*opencode-ai' \
+    'required npm install scripts in Arch Linux guest image'
+  require_regex "$archlinux_guest_source" 'BUILDPLATFORM.*!=.*TARGETPLATFORM' \
+    'cross-platform pacman sandbox compatibility guard'
+  require_regex "$archlinux_guest_source" "sed -i 's/\^DisableSandboxSyscalls/#DisableSandboxSyscalls/'" \
+    'pacman syscall sandbox restoration'
+  require_regex "$archlinux_guest_source" 'COPY[[:space:]]+runtime/javascript[[:space:]]+/tmp/agent-compose-runtime' \
+    'runtime source in Arch Linux guest image'
+  require_regex "$archlinux_guest_source" 'agent-compose-runtime-sdk\.tgz' \
+    'offline runtime SDK in Arch Linux guest image'
+  require_regex "$archlinux_guest_source" 'arm64\|aarch64.*claude-code-linux-arm64' \
+    'architecture-aware Claude Code package in Arch Linux guest image'
+  require_regex "$archlinux_guest_source" 'ENTRYPOINT[[:space:]]+\["/usr/bin/catatonit",[[:space:]]*"--"\]' \
+    'catatonit entrypoint in Arch Linux guest image'
+  require_regex "$archlinux_guest_source" 'CMD[[:space:]]+\["/usr/local/bin/agent-compose-env"' \
+    'long-running default command in Arch Linux guest image'
+  for provider_cli in codex claude gemini opencode; do
+    require_regex "$archlinux_guest_source" "$provider_cli[[:space:]]+--version" \
+      "$provider_cli build-time validation in Arch Linux guest image"
+  done
+fi
 
 FAKE_BIN="$TEST_ROOT/fake-bin"
 FAKE_DOCKER_LOG="$TEST_ROOT/docker.log"
@@ -374,8 +419,10 @@ run_guest_builder() { # remaining arguments are environment overrides
     FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" \
     GUEST_IMAGE_DOCKERFILE="$ROOT_DIR/guest-images/Dockerfile.agent-compose-guest" \
     IMAGE_TAG=agent-compose-guest:contract \
+    BUILD_PLATFORM= \
     REGISTRY_MIRROR= GOPROXY= GO_VERSION= GRPCURL_VERSION= \
-    PYPI_INDEX_URL= PYPI_TRUSTED_HOST= \
+    PYPI_INDEX_URL= PYPI_TRUSTED_HOST= ARCHLINUX_TAG= ARCHLINUX_MIRROR= \
+    CODEX_VERSION= CLAUDE_CODE_VERSION= GEMINI_CLI_VERSION= OPENCODE_VERSION= \
     "$@" \
     "$GUEST_BUILDER" >/dev/null
 }
@@ -414,9 +461,18 @@ if ! run_guest_builder; then
   fail 'guest image helper default build invocation'
 else
   guest_log=$(<"$FAKE_DOCKER_LOG")
-  for omitted in REGISTRY_MIRROR GOPROXY GO_VERSION GRPCURL_VERSION PYPI_INDEX_URL PYPI_TRUSTED_HOST; do
+  for omitted in REGISTRY_MIRROR GOPROXY GO_VERSION GRPCURL_VERSION PYPI_INDEX_URL PYPI_TRUSTED_HOST \
+    ARCHLINUX_TAG ARCHLINUX_MIRROR CODEX_VERSION CLAUDE_CODE_VERSION GEMINI_CLI_VERSION OPENCODE_VERSION; do
     forbid_regex "$guest_log" "^$omitted=" "empty guest $omitted build argument"
   done
+fi
+
+if ! run_guest_builder BUILD_PLATFORM=linux/amd64; then
+  fail 'guest image helper platform override invocation'
+else
+  guest_log=$(<"$FAKE_DOCKER_LOG")
+  require_regex "$guest_log" '^--platform$' 'guest build platform flag'
+  require_regex "$guest_log" '^linux/amd64$' 'guest build platform value'
 fi
 
 if ! run_guest_builder \
@@ -425,7 +481,13 @@ if ! run_guest_builder \
   GO_VERSION=1.99.0 \
   GRPCURL_VERSION=v9.9.1 \
   PYPI_INDEX_URL=https://python.example.invalid/simple \
-  PYPI_TRUSTED_HOST=python.example.invalid; then
+  PYPI_TRUSTED_HOST=python.example.invalid \
+  ARCHLINUX_TAG=base-test \
+  ARCHLINUX_MIRROR=https://arch.example.invalid \
+  CODEX_VERSION=9.1.0 \
+  CLAUDE_CODE_VERSION=9.2.0 \
+  GEMINI_CLI_VERSION=9.3.0 \
+  OPENCODE_VERSION=9.4.0; then
   fail 'guest image helper override build invocation'
 else
   guest_log=$(<"$FAKE_DOCKER_LOG")
@@ -435,7 +497,13 @@ else
     'GO_VERSION=1.99.0' \
     'GRPCURL_VERSION=v9.9.1' \
     'PYPI_INDEX_URL=https://python.example.invalid/simple' \
-    'PYPI_TRUSTED_HOST=python.example.invalid'; do
+    'PYPI_TRUSTED_HOST=python.example.invalid' \
+    'ARCHLINUX_TAG=base-test' \
+    'ARCHLINUX_MIRROR=https://arch.example.invalid' \
+    'CODEX_VERSION=9.1.0' \
+    'CLAUDE_CODE_VERSION=9.2.0' \
+    'GEMINI_CLI_VERSION=9.3.0' \
+    'OPENCODE_VERSION=9.4.0'; do
     require_regex "$guest_log" "^$forwarded$" "guest $forwarded build argument"
   done
 fi
