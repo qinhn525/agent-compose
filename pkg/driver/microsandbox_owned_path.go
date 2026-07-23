@@ -9,10 +9,6 @@ import (
 	"strings"
 )
 
-func validateMicrosandboxLegacyDockerOwnedPath(home, path string) error {
-	return validateMicrosandboxPathUnder(home, "docker-disks", path)
-}
-
 func validateMicrosandboxRootfsOwnedPath(home, path string) error {
 	return validateMicrosandboxPathUnder(home, "rootfs-disks", path)
 }
@@ -29,7 +25,7 @@ func validateMicrosandboxAnyOwnedPath(home, path string) error {
 	if microsandboxPathWithinRoot(rootfsRoot, clean) && rootfsRoot != clean {
 		return validateMicrosandboxRootfsOwnedPath(home, path)
 	}
-	return validateMicrosandboxLegacyDockerOwnedPath(home, path)
+	return fmt.Errorf("microsandbox owned path is outside rootfs-disks: %s", path)
 }
 
 func validateMicrosandboxPathUnder(home, directory, path string) error {

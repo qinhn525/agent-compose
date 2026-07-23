@@ -95,14 +95,7 @@ func TestSmokeMicrosandboxRootfsIsolation(t *testing.T) {
 	if err := runtimeDriver.RemoveSandbox(ctx, first, firstState); err != nil {
 		t.Fatalf("remove first microsandbox: %v", err)
 	}
-	legacyDockerPaths := []string{
-		runtimeDriver.legacyHashedDockerDiskPath(first.Summary.ID),
-		runtimeDriver.legacyUnhashedDockerDiskPath(first.Summary.ID),
-	}
 	removedPaths := []string{firstDisk, firstDisk + ".owner.json"}
-	for _, path := range legacyDockerPaths {
-		removedPaths = append(removedPaths, path, path+".owner.json")
-	}
 	for _, path := range removedPaths {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("removed sandbox resource %s remains: %v", path, err)

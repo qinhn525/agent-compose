@@ -21,7 +21,7 @@ agent-compose [global options] <command> [command options] [arguments]
 | --- | --- |
 | `-f, --file <path>` | 指定 project 配置文件。支持 `agent-compose.yml` 和 `agent-compose.yaml`。使用该参数后，可以在任意目录操作该 project，project root 为配置文件所在目录。 |
 | `--host <endpoint>` | 指定 daemon 地址。可以连接本机 daemon，也可以连接远程 daemon。 |
-| `--project-name <name>` | 覆盖配置文件中的 project 名称。适用于同一份配置在不同环境中以不同 project 名称运行的场景。 |
+| `--project-name <name>` | 设置 compose project 名称。未指定 `--file` 时，已部署项目命令用它直接选择 daemon 中的 project，不读取配置文件；与 `--file` 同时使用时，它覆盖文件中声明的名称。 |
 | `--json` | 使用 JSON 输出，供脚本、AI 和自动化系统解析。 |
 
 示例：
@@ -34,7 +34,9 @@ agent-compose --host http://10.0.0.12:7410 ls --json
 
 使用规则：
 
-- 未指定 `-f` 时，CLI 在当前目录查找 `agent-compose.yml` 或 `agent-compose.yaml`。
+- 未指定 `-f` 和 `--project-name` 时，project 范围的命令在当前目录查找 `agent-compose.yml` 或 `agent-compose.yaml`。
+- 指定 `--project-name` 且未指定 `-f` 时，已部署项目命令直接选择 daemon project，不读取当前目录的默认 compose 文件。
+- 同时指定 `-f` 和 `--project-name` 时，文件提供 project 定义和 source path，`--project-name` 覆盖文件中声明的名称。
 - 使用 `-f` 时，不需要切换到 project root。
 - `--host` 只决定 CLI 连接哪个 daemon；sandbox 实际运行在 daemon 所在环境中。
 - daemon 不再消费浏览器登录用的 `AUTH_*` / `OAUTH_*` 配置；UI 浏览器认证由 agent-compose-ui server 处理。
@@ -273,6 +275,7 @@ agent-compose scheduler inspect <scheduler-or-trigger-or-run-ref> [--scheduler <
 
 查看当前 project 下的 sandbox。默认只显示运行中的 sandbox。使用 `--all` 时仍限定当前 project，但会包含所有状态。
 该 project 必须已经存在于 daemon 中；执行 `agent-compose down` 后，需要先重新执行 `agent-compose up`，再使用 `ps`。
+不带 `--file` 使用 `--project-name <name>` 时，会直接选择 daemon 中已有的 project，且不会读取当前目录的默认 compose 文件；显式指定但不存在的 `--file` 仍会报错。
 
 ```bash
 agent-compose ps
@@ -630,7 +633,7 @@ agent-compose cache rm <cache-id> --force
 
 Microsandbox 根文件系统使用 `DATA_ROOT/image-cache` 下的不可变 qcow2 母盘，并为每个 sandbox 在 `MICROSANDBOX_HOME/rootfs-disks` 下创建私有 qcow2 子盘。只要任何 rootfs sidecar 仍指向母盘，该母盘就会被标记为 referenced 且不可删除。stop/resume 保留私有子盘；sandbox remove/prune 删除子盘及其 ownership sidecar。母盘与子盘记录的是 daemon 挂载命名空间中的路径，因此备份和迁移必须同时移动两棵目录树，并保持 daemon 可见路径不变。一个 `DATA_ROOT` 只能由一个 daemon 实例独占，不能并发共享。只有当 sidecar 指向该 image cache 内合法的母盘路径时，母盘才会被计入引用；sidecar 无法读取或指向其他位置时会输出 warning，并把所有母盘标记为 `unknown` 直到它被修复或删除——因为此时已无法确认它保护的是哪一块母盘。
 
-新建 Microsandbox sandbox 会把 `/var/lib/docker` 直接放在这块私有 ext4 根盘中，不再创建独立的 `docker-disks/*.raw` mount。因此 `SANDBOX_DISK_SIZE_GB` 是系统文件与 Docker 数据共享的一份逻辑容量，默认 6 GiB，不会自动翻倍。旧版本创建的 sandbox 可以继续使用其持久化配置中的 legacy raw 盘，直至 sandbox 被删除；sandbox remove 与 managed-resource prune 仍会识别归属可靠的旧盘，无法可靠归属的文件则保守保留，启动时不会自动清扫。
+新建 Microsandbox sandbox 会把 `/var/lib/docker` 直接放在这块私有 ext4 根盘中，不再创建独立的 `docker-disks/*.raw` mount。因此 `SANDBOX_DISK_SIZE_GB` 是系统文件与 Docker 数据共享的一份逻辑容量，默认 6 GiB，不会自动翻倍。该变更不兼容旧版本创建的 Microsandbox sandbox：agent-compose 不再识别、迁移或删除旧 Docker raw 盘。升级前必须使用旧版本排空并删除这些 sandbox；确认数据不再需要后，再手工归档或删除 `<MICROSANDBOX_HOME>/docker-disks`。升级后不要依赖 `sandbox remove` 或 managed-resource prune 清理该目录。
 
 Microsandbox 解析 guest 镜像时优先使用可达的 Docker daemon，daemon 不可用时改用 agent-compose 自己的 image cache，顺序与 BoxLite driver 一致；Microsandbox 自身始终不访问任何 registry。两条路径的认证方式不同：Docker daemon 使用它自己的凭据，image cache 使用 daemon 进程的 keychain 以及 `IMAGE_REGISTRY`、`IMAGE_INSECURE_REGISTRIES`，因此没有 Docker daemon 的部署需要配置 image cache 一侧。发生回退时会输出 warning，且来源会写入母盘的 cache identity，`cache ls` 可以看出每块母盘由哪条路径产出。pull policy 失败不触发回退，`pull_policy=never` 不会被另一条路径绕过。两条路径使用不同的解包实现，因此各自持有独立母盘；同一镜像若两条路径都解析过会构建两份。
 

@@ -24,7 +24,6 @@ type microsandboxDiskOwnership struct {
 
 const (
 	microsandboxDiskOwnershipVersion = 2
-	microsandboxLegacyDockerDiskKind = "microsandbox-docker-data"
 	microsandboxRootfsDiskKind       = "microsandbox-rootfs"
 )
 

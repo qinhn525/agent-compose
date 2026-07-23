@@ -45,6 +45,22 @@ type microsandboxExecCollector struct {
 
 const microsandboxExecExitIdleGracePeriod = 2 * time.Second
 
+// microsandboxExecSilenceProbeInterval is how long a stream may produce nothing
+// at all before the guest is asked whether the process is still there.
+//
+// The guest agent reports a process exit only after both of its output pipes
+// reach EOF, and a pipe reaches EOF only once every process that inherited it
+// has exited. A command that leaves a background helper running therefore ends
+// without the stream ever saying so, and waiting on the next event is a wait
+// that never returns. Silence alone proves nothing -- a build can be quiet for
+// a long time -- so it only triggers the question, and the answer decides.
+const microsandboxExecSilenceProbeInterval = 2 * time.Minute
+
+// microsandboxExecLivenessProbeTimeout bounds the liveness question itself, so
+// a guest agent that has stopped answering cannot turn the probe into a second
+// place to hang.
+const microsandboxExecLivenessProbeTimeout = 30 * time.Second
+
 const (
 	microsandboxManagedLabel   = "agent-compose.managed"
 	microsandboxSandboxIDLabel = "agent-compose.sandbox_id"
@@ -53,16 +69,61 @@ const (
 type microsandboxExecEventReceiver func(context.Context) (*microsandbox.ExecEvent, error)
 type microsandboxExecHandleCloser func() error
 
+type microsandboxExecReceiveResult struct {
+	event *microsandbox.ExecEvent
+	err   error
+}
+
+// microsandboxExecLivenessProbe reports whether the guest process is still
+// present. A nil probe, or a probe that cannot answer, leaves the stream
+// waiting: only a definite "the process is gone" is allowed to end it.
+type microsandboxExecLivenessProbe func(ctx context.Context, pid uint32) (bool, error)
+
 func consumeMicrosandboxExecStream(
 	ctx context.Context,
 	recv microsandboxExecEventReceiver,
 	closeHandle microsandboxExecHandleCloser,
 	collector *microsandboxExecCollector,
 	idleGrace time.Duration,
+	probeAlive microsandboxExecLivenessProbe,
+	silenceInterval time.Duration,
 ) (ExecResult, error) {
 	exitCode := 0
 	sawExit := false
-	var idleDeadline time.Time
+	var pid uint32
+	receiveCtx, cancelReceive := context.WithCancel(ctx)
+	received := receiveMicrosandboxExecEvents(receiveCtx, recv)
+	stopReceiving := func() {
+		cancelReceive()
+		for range received {
+		}
+	}
+	defer stopReceiving()
+
+	var waitTimer *time.Timer
+	var wait <-chan time.Time
+	stopWaitTimer := func() {
+		if waitTimer == nil {
+			return
+		}
+		if !waitTimer.Stop() {
+			select {
+			case <-waitTimer.C:
+			default:
+			}
+		}
+		wait = nil
+	}
+	defer stopWaitTimer()
+	resetWaitTimer := func(duration time.Duration) {
+		stopWaitTimer()
+		if waitTimer == nil {
+			waitTimer = time.NewTimer(duration)
+		} else {
+			waitTimer.Reset(duration)
+		}
+		wait = waitTimer.C
+	}
 
 	closeAfterDrainTimeout := func() {
 		slog.Warn(
@@ -76,69 +137,165 @@ func consumeMicrosandboxExecStream(
 	}
 
 	for {
-		recvCtx := ctx
-		var recvCancel context.CancelFunc
-		if sawExit {
-			remaining := time.Until(idleDeadline)
-			if remaining <= 0 {
+		select {
+		case <-ctx.Done():
+			collector.finish()
+			return ExecResult{}, ctx.Err()
+		case <-wait:
+			if sawExit {
+				stopReceiving()
 				closeAfterDrainTimeout()
-				break
+				return microsandboxExecResult(collector, exitCode, exitCode == 0), nil
 			}
-			recvCtx, recvCancel = context.WithTimeout(ctx, remaining)
-		}
-
-		event, err := recv(recvCtx)
-		if recvCancel != nil {
-			recvCancel()
-		}
-		if err != nil {
-			if sawExit && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
-				closeAfterDrainTimeout()
-				break
+			gone, probeErr := microsandboxExecProcessGone(ctx, probeAlive, pid)
+			if probeErr != nil {
+				slog.Warn("failed to probe microsandbox exec process liveness; continuing to wait", "pid", pid, "error", probeErr)
+				resetWaitTimer(silenceInterval)
+				continue
+			}
+			if !gone {
+				resetWaitTimer(silenceInterval)
+				continue
+			}
+			slog.Warn(
+				"microsandbox exec process is gone but the stream never reported its exit; closing handle",
+				"pid", pid,
+				"silence_window", silenceInterval,
+			)
+			stopReceiving()
+			if closeErr := closeHandle(); closeErr != nil {
+				slog.Warn("failed to close microsandbox exec handle after a lost exit", "error", closeErr)
 			}
 			collector.finish()
-			return ExecResult{}, err
-		}
-		if event == nil || event.Kind == microsandbox.ExecEventDone {
-			break
-		}
+			return microsandboxExecResult(collector, -1, false), fmt.Errorf("microsandbox exec process %d exited without reporting its status; a process it started is still holding the output pipes open", pid)
+		case result, ok := <-received:
+			if !ok {
+				collector.finish()
+				if !sawExit {
+					return microsandboxExecResult(collector, -1, false), fmt.Errorf("microsandbox exec stream ended without reporting a process exit status")
+				}
+				return microsandboxExecResult(collector, exitCode, exitCode == 0), nil
+			}
+			if result.err != nil {
+				collector.finish()
+				return ExecResult{}, result.err
+			}
+			event := result.event
+			if event == nil || event.Kind == microsandbox.ExecEventDone {
+				collector.finish()
+				if !sawExit {
+					return microsandboxExecResult(collector, -1, false), fmt.Errorf("microsandbox exec stream ended without reporting a process exit status")
+				}
+				return microsandboxExecResult(collector, exitCode, exitCode == 0), nil
+			}
 
-		switch event.Kind {
-		case microsandbox.ExecEventStdout:
-			collector.writeChunk(ExecChunk{Text: string(event.Data)})
-			if sawExit {
-				idleDeadline = time.Now().Add(idleGrace)
+			switch event.Kind {
+			case microsandbox.ExecEventStarted:
+				pid = event.PID
+				if probeAlive != nil && silenceInterval > 0 && pid != 0 {
+					resetWaitTimer(silenceInterval)
+				}
+			case microsandbox.ExecEventStdout:
+				collector.writeChunk(ExecChunk{Text: string(event.Data)})
+				if sawExit {
+					resetWaitTimer(idleGrace)
+				} else if probeAlive != nil && silenceInterval > 0 && pid != 0 {
+					resetWaitTimer(silenceInterval)
+				}
+			case microsandbox.ExecEventStderr:
+				collector.writeChunk(ExecChunk{Text: string(event.Data), Stream: StdioStderr})
+				if sawExit {
+					resetWaitTimer(idleGrace)
+				} else if probeAlive != nil && silenceInterval > 0 && pid != 0 {
+					resetWaitTimer(silenceInterval)
+				}
+			case microsandbox.ExecEventExited:
+				exitCode = event.ExitCode
+				sawExit = true
+				resetWaitTimer(idleGrace)
+			case microsandbox.ExecEventFailed:
+				collector.finish()
+				return ExecResult{}, formatMicrosandboxExecFailure(event.Failure)
+			case microsandbox.ExecEventStdinError:
+				collector.writeChunk(ExecChunk{Text: formatMicrosandboxExecFailure(event.Failure).Error() + "\n", Stream: StdioStderr})
 			}
-		case microsandbox.ExecEventStderr:
-			collector.writeChunk(ExecChunk{Text: string(event.Data), Stream: StdioStderr})
-			if sawExit {
-				idleDeadline = time.Now().Add(idleGrace)
-			}
-		case microsandbox.ExecEventExited:
-			exitCode = event.ExitCode
-			sawExit = true
-			idleDeadline = time.Now().Add(idleGrace)
-		case microsandbox.ExecEventFailed:
-			collector.finish()
-			return ExecResult{}, formatMicrosandboxExecFailure(event.Failure)
-		case microsandbox.ExecEventStdinError:
-			collector.writeChunk(ExecChunk{Text: formatMicrosandboxExecFailure(event.Failure).Error() + "\n", Stream: StdioStderr})
 		}
 	}
+}
 
-	collector.finish()
-	if !sawExit {
-		exitCode = 0
-	}
+func receiveMicrosandboxExecEvents(ctx context.Context, recv microsandboxExecEventReceiver) <-chan microsandboxExecReceiveResult {
+	received := make(chan microsandboxExecReceiveResult, 1)
+	go func() {
+		defer close(received)
+		for {
+			// ExecHandle is not safe for concurrent use. More importantly, the
+			// SDK documents that canceling Recv only releases the Go caller while
+			// the Rust receive continues in the background. Keep exactly one Recv
+			// loop for the lifetime of the stream; silence timers must never use
+			// Recv cancellation as their clock.
+			event, err := recv(ctx)
+			select {
+			case received <- microsandboxExecReceiveResult{event: event, err: err}:
+			case <-ctx.Done():
+				return
+			}
+			if err != nil || event == nil || event.Kind == microsandbox.ExecEventDone {
+				return
+			}
+		}
+	}()
+	return received
+}
 
-	result := ExecResult{
+func microsandboxExecResult(collector *microsandboxExecCollector, exitCode int, success bool) ExecResult {
+	return ExecResult{
 		ExitCode: exitCode,
+		Success:  success,
 		Stdout:   collector.stdout.String(),
 		Stderr:   collector.stderr.String(),
 		Output:   collector.output.String(),
 	}
-	result.Success = result.ExitCode == 0
-	return result, nil
+}
+
+// microsandboxExecLivenessProbeFor asks the guest about a pid over a separate
+// exec session, which is unaffected by the pipes the original session is still
+// waiting on.
+func microsandboxExecLivenessProbeFor(sandbox *microsandbox.Sandbox) microsandboxExecLivenessProbe {
+	if sandbox == nil {
+		return nil
+	}
+	return func(ctx context.Context, pid uint32) (bool, error) {
+		output, err := sandbox.Exec(ctx, "sh", []string{"-c", microsandboxExecLivenessProbeCommand(pid)})
+		if err != nil {
+			return false, err
+		}
+		return output.ExitCode() == 0, nil
+	}
+}
+
+func microsandboxExecLivenessProbeCommand(pid uint32) string {
+	return fmt.Sprintf(
+		"kill -0 %[1]d 2>/dev/null || exit 1; "+
+			"stat=$(cat /proc/%[1]d/stat 2>/dev/null) || exit 0; "+
+			"rest=${stat##*) }; state=${rest%%%% *}; [ \"$state\" != Z ]",
+		pid,
+	)
+}
+
+// microsandboxExecProcessGone answers only when it is sure. A probe that fails
+// leaves the caller waiting, because "the guest could not be asked" and "the
+// process is gone" must not lead to the same decision.
+func microsandboxExecProcessGone(ctx context.Context, probeAlive microsandboxExecLivenessProbe, pid uint32) (bool, error) {
+	if probeAlive == nil || pid == 0 {
+		return false, nil
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, microsandboxExecLivenessProbeTimeout)
+	defer cancel()
+	alive, err := probeAlive(probeCtx, pid)
+	if err != nil {
+		return false, err
+	}
+	return !alive, nil
 }
 
 func newMicrosandboxRuntime(config *appconfig.Config) (SandboxRuntime, error) {
@@ -284,9 +441,6 @@ func (r *microsandboxRuntime) RemoveSandbox(ctx context.Context, session *Sandbo
 		!microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
 		return fmt.Errorf("remove microsandbox %s: %w", name, err)
 	}
-	if err := r.removeLegacyDockerDiskFiles(session.Summary.ID); err != nil {
-		return err
-	}
 	if err := r.removeRootfsDiskFiles(session.Summary.ID); err != nil {
 		return err
 	}
@@ -359,7 +513,15 @@ func (r *microsandboxRuntime) ExecStream(ctx context.Context, session *Sandbox, 
 			}()
 
 			collector := &microsandboxExecCollector{stream: stream, filter: newExecOutputFilter()}
-			return consumeMicrosandboxExecStream(ctx, handle.Recv, closeHandle, collector, microsandboxExecExitIdleGracePeriod)
+			return consumeMicrosandboxExecStream(
+				ctx,
+				handle.Recv,
+				closeHandle,
+				collector,
+				microsandboxExecExitIdleGracePeriod,
+				microsandboxExecLivenessProbeFor(sandbox),
+				microsandboxExecSilenceProbeInterval,
+			)
 		},
 	)
 }

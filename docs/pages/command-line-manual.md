@@ -21,7 +21,7 @@ Global options are placed between `agent-compose` and the subcommand, and apply 
 | --- | --- |
 | `-f, --file <path>` | Path to the project config file. Both `agent-compose.yml` and `agent-compose.yaml` are supported. When this option is used, the project root is the config file directory, so you do not need to `cd` into it. |
 | `--host <endpoint>` | Daemon HTTP endpoint. This can target a local daemon or a remote daemon. |
-| `--project-name <name>` | Override the project name from the config file. Useful when running the same config under different environment names. |
+| `--project-name <name>` | Set the compose project name. Without `--file`, deployed-project commands use it to select an existing daemon project without reading a config file. With `--file`, it overrides the name declared by that file. |
 | `--json` | Print machine-readable JSON for scripts, AI agents, and automation. |
 
 Examples:
@@ -34,7 +34,9 @@ agent-compose --host http://10.0.0.12:7410 ls --json
 
 Rules:
 
-- Without `-f`, the CLI looks for `agent-compose.yml` or `agent-compose.yaml` in the current directory.
+- Without `-f` or `--project-name`, project-scoped commands look for `agent-compose.yml` or `agent-compose.yaml` in the current directory.
+- With `--project-name` and no `-f`, deployed-project commands select that daemon project directly and do not read default compose files from the current directory.
+- With both `-f` and `--project-name`, the file supplies the project definition and source path while `--project-name` overrides its declared name.
 - With `-f`, the CLI can operate on a project from any working directory.
 - `--host` only selects the daemon. Sandboxes run in the daemon environment.
 - Automation should use `--json` and avoid parsing human-readable tables.
@@ -273,6 +275,7 @@ agent-compose scheduler inspect <scheduler-or-trigger-or-run-ref> [--scheduler <
 
 List sandboxes in the current project. By default, only running sandboxes are shown. With `--all`, the command includes all statuses while remaining scoped to the current project.
 The project must already exist on the daemon; after `agent-compose down`, run `agent-compose up` again before using `ps`.
+Use `--project-name <name>` without `--file` to select an existing daemon project. Default compose files in the current directory are not read in this mode. An explicit missing `--file` remains an error.
 
 ```bash
 agent-compose ps
@@ -622,7 +625,7 @@ agent-compose cache rm <cache-id> --force
 
 Microsandbox root filesystems use an immutable qcow2 base disk in `DATA_ROOT/image-cache` and a private qcow2 overlay in `MICROSANDBOX_HOME/rootfs-disks` for every sandbox. A base disk is reported as referenced and cannot be removed while any rootfs sidecar points to it. Stop/resume preserves the private overlay; sandbox remove/prune deletes that overlay and its ownership sidecar. Base and overlay paths are recorded from the daemon mount namespace, so backups and migrations must move both trees together without changing their daemon-visible paths. A `DATA_ROOT` is owned by one daemon instance and must not be shared concurrently. A base disk is only counted as referenced when a sidecar names it as a base disk inside that image cache; a sidecar that cannot be read, or that points anywhere else, is reported as a warning and makes every base disk `unknown` until it is repaired or removed, because the disk it protects can no longer be identified.
 
-New Microsandbox sandboxes store `/var/lib/docker` directly on that private ext4 root disk and do not create a separate `docker-disks/*.raw` mount. `SANDBOX_DISK_SIZE_GB` is therefore one shared logical capacity for system files and Docker data; it defaults to 6 GiB and is not doubled. Sandboxes created by an older version may keep their persisted legacy raw-disk mount until they are removed. Sandbox remove and managed-resource prune still recognize safely owned legacy disks, while files without reliable ownership are retained and are never swept automatically at startup.
+New Microsandbox sandboxes store `/var/lib/docker` directly on that private ext4 root disk and do not create a separate `docker-disks/*.raw` mount. `SANDBOX_DISK_SIZE_GB` is therefore one shared logical capacity for system files and Docker data; it defaults to 6 GiB and is not doubled. This change is not compatible with Microsandbox sandboxes created by older versions: agent-compose no longer discovers, migrates, or removes legacy raw Docker disks. Before upgrading, drain and remove those sandboxes with the old version, then manually archive or delete `<MICROSANDBOX_HOME>/docker-disks` after verifying that no data is needed. Do not rely on `sandbox remove` or managed-resource prune to clean up that directory after upgrading.
 
 Microsandbox resolves a guest image through the Docker daemon when one is reachable, and otherwise through the agent-compose image cache, the same order the BoxLite driver uses. Microsandbox itself never contacts a registry. The two paths authenticate differently: the Docker daemon uses its own credentials, while the image cache uses the daemon process keychain together with `IMAGE_REGISTRY` and `IMAGE_INSECURE_REGISTRIES`. A deployment without a Docker daemon therefore has to configure the image cache side. Falling back is logged at warning level, and the source is recorded in the base disk cache identity, so `cache ls` shows which path produced each base disk. A pull policy failure never falls back, so `pull_policy=never` cannot be satisfied by the other path. Because the two paths lay an image out with different extractors, each keeps its own base disk; an image resolved both ways is built twice.
 
