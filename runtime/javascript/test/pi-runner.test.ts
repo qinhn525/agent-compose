@@ -25,13 +25,15 @@ vi.mock("node:child_process", () => ({
         queueMicrotask(() => listener(processState.error));
         return child;
       }
-      if (event === "exit" && !processState.error) {
-        queueMicrotask(() => listener(processState.exitCode));
+      if (event === "close" && !processState.error) {
+        queueMicrotask(() => {
+          processState.stderr.forEach((chunk) => child.stderr.emit("data", chunk));
+          listener(processState.exitCode);
+        });
         return child;
       }
       return once(event, listener);
     }) as typeof child.once;
-    queueMicrotask(() => processState.stderr.forEach((chunk) => child.stderr.emit("data", chunk)));
     return child;
   }),
 }));
@@ -152,6 +154,23 @@ describe("PiRunner", () => {
       }
       expect(processState.calls[0].args).toEqual(expect.arrayContaining(["--session-id", "existing"]));
       expect(JSON.parse(await fs.readFile(statePath, "utf8")).threadId).toBe("existing");
+    });
+  });
+
+  it("streams and bounds stderr lines that cannot be session warnings", async () => {
+    const { PiRunner } = await import("../src/runners/pi.js");
+    await withTempSession(async (root) => {
+      processState.lines = [JSON.stringify({ type: "session", id: "pi-session" })];
+      processState.stderr = ["x".repeat(80 * 1024)];
+      processState.exitCode = 2;
+      const stdio = captureStdio();
+      try {
+        await expect(new PiRunner(runnerOptions(root, "", "pi")).runPrompt("prompt")).rejects.toThrow(
+          `pi exited with code 2: ${"x".repeat(64 * 1024)}`,
+        );
+      } finally {
+        stdio.restore();
+      }
     });
   });
 

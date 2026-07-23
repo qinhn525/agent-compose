@@ -9,6 +9,7 @@ import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
 import type { AgentResult, RunnerOptions } from "../types.js";
 
 const maxDiagnosticBytes = 64 * 1024;
+const maxFilteredStderrLineBytes = 1024;
 const piSessionCreationWarning = /^Warning: No project session found with id '[A-Za-z0-9._-]+'; creating a new session with that id\.$/;
 
 export class PiRunner {
@@ -60,6 +61,7 @@ export class PiRunner {
 
       let stderrBytes: Buffer = Buffer.alloc(0);
       let pendingStderr = "";
+      let passthroughStderrLine = false;
       const emitStderrLine = (line: string, terminated: boolean): void => {
         if (piSessionCreationWarning.test(line.replace(/\r$/, ""))) return;
         const text = terminated ? `${line}\n` : line;
@@ -68,9 +70,22 @@ export class PiRunner {
       };
       child.stderr?.on("data", (chunk) => {
         pendingStderr += String(chunk || "");
-        const lines = pendingStderr.split("\n");
-        pendingStderr = lines.pop() || "";
-        for (const line of lines) emitStderrLine(line, true);
+        for (;;) {
+          const newline = pendingStderr.indexOf("\n");
+          if (newline >= 0) {
+            emitStderrLine(pendingStderr.slice(0, newline), true);
+            pendingStderr = pendingStderr.slice(newline + 1);
+            passthroughStderrLine = false;
+            continue;
+          }
+          if (passthroughStderrLine || Buffer.byteLength(pendingStderr) > maxFilteredStderrLineBytes) {
+            stderrBytes = appendBounded(stderrBytes, Buffer.from(pendingStderr), maxDiagnosticBytes);
+            this.writer.write(pendingStderr);
+            pendingStderr = "";
+            passthroughStderrLine = true;
+          }
+          break;
+        }
       });
 
       const result: AgentResult = {
@@ -261,7 +276,7 @@ function piFacadeModel(model: string): string {
 function waitForExit(child: ReturnType<typeof spawn>): Promise<{ exitCode: number; spawnError?: Error }> {
   return new Promise((resolve) => {
     child.once("error", (error) => resolve({ exitCode: 1, spawnError: new Error("failed to start pi", { cause: error }) }));
-    child.once("exit", (code) => resolve({ exitCode: code ?? 1 }));
+    child.once("close", (code) => resolve({ exitCode: code ?? 1 }));
   });
 }
 
