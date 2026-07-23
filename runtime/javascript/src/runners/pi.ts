@@ -9,7 +9,6 @@ import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
 import type { AgentResult, RunnerOptions } from "../types.js";
 
 const maxDiagnosticBytes = 64 * 1024;
-const maxToolResultBytes = 16 * 1024;
 
 export class PiRunner {
   private reportedError: Error | null = null;
@@ -163,13 +162,7 @@ export class PiRunner {
       }
       return;
     }
-    if (type === "tool_execution_start") {
-      this.writer.line(`\n[tool:${firstString(event, "toolName", "tool_name", "name") || "tool"}]`);
-      return;
-    }
-    if (type === "tool_execution_end") {
-      const output = extractText(event.result) || extractText(event.content) || jsonString(event.result);
-      if (output.trim()) this.writer.line(truncateUTF8(output, maxToolResultBytes));
+    if (type.startsWith("tool_execution_")) {
       return;
     }
     if (type === "agent_end") {
@@ -269,11 +262,6 @@ function appendBounded(current: Buffer, next: Buffer, limit: number): Buffer {
 
 function truncate(value: string, limit: number): string {
   return value.length <= limit ? value : `${value.slice(0, limit)}...[truncated]`;
-}
-
-function truncateUTF8(value: string, limit: number): string {
-  const bytes = Buffer.from(value);
-  return bytes.length <= limit ? value : `${bytes.subarray(0, limit).toString("utf8")}...[truncated]`;
 }
 
 function isWithin(root: string, target: string): boolean {

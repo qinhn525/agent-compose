@@ -103,9 +103,7 @@ pi --mode json
 | `session` | 获取并保存 `id` 为 `AgentResult.threadId` |
 | `message_update` + `assistantMessageEvent.type=text_delta` | 把 `delta` 追加到 transcript |
 | `message_end`（assistant） | 从 message content 提取最终文本，更新 `finalText` |
-| `tool_execution_start` | 输出标准化的 `\n[tool:<toolName>]` |
-| `tool_execution_update` | 默认不输出，防止大段重复 partial result；需要时做有界摘要 |
-| `tool_execution_end` | 输出文本结果或有界 JSON；`isError=true` 记入 transcript，但由最终 agent/进程状态决定 run 是否失败 |
+| `tool_execution_start/update/end` | 不写入用户可见 transcript；与其他 provider 保持一致，只展示 assistant 文本。工具仍正常执行，最终失败由 assistant/进程状态报告 |
 | `agent_end` | 将 stop reason 设为 `completed`，从 messages 兜底提取最后 assistant text |
 | `auto_retry_*`、`compaction_*` | 输出简短状态行，不能混入 `finalText` |
 | 子进程非零退出、`error` message/异常终止 | 返回带 provider 和 exit code 上下文的 error |

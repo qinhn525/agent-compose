@@ -59,9 +59,9 @@ describe("PiRunner", () => {
         JSON.stringify({ type: "session", id: "pi-session" }),
         JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hel" }, message: { content: "hel" } }),
         JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "lo" }, message: { content: "hello" } }),
-        JSON.stringify({ type: "tool_execution_start", toolName: "read" }),
+        JSON.stringify({ type: "tool_execution_start", toolName: "secret-tool" }),
         JSON.stringify({ type: "tool_execution_update", result: "ignored partial" }),
-        JSON.stringify({ type: "tool_execution_end", result: { content: [{ type: "text", text: "contents" }] } }),
+        JSON.stringify({ type: "tool_execution_end", result: { content: [{ type: "text", text: "secret tool output" }] } }),
         JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "final answer" }] } }),
         JSON.stringify({ type: "agent_end", stopReason: "end_turn" }),
       ];
@@ -79,8 +79,8 @@ describe("PiRunner", () => {
           finalText: "final answer",
         });
         expect(result.transcript).toContain("hello");
-        expect(result.transcript).toContain("[tool:read]");
-        expect(result.transcript).toContain("contents");
+        expect(result.transcript).not.toContain("secret-tool");
+        expect(result.transcript).not.toContain("secret tool output");
         expect(result.transcript).not.toContain("ignored partial");
       } finally {
         stdio.restore();
