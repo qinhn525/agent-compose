@@ -349,6 +349,7 @@ func runComposeRunCommand(cmd *cobra.Command, cli cliOptions, options composeRun
 	if normalizedOptions.Detach {
 		return startDetachedRun(cmd, cli, normalized.Name, client, runReq)
 	}
+	client = clients.runStream
 	if normalizedOptions.Interactive {
 		if normalizedOptions.TTY {
 			attachClient, err := newCLIRunAttachServiceClient(cli)

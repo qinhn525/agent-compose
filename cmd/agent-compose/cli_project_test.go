@@ -577,11 +577,13 @@ type projectServiceStub struct {
 	getScheduler               func(context.Context, *connect.Request[agentcomposev2.GetSchedulerRequest]) (*connect.Response[agentcomposev2.GetSchedulerResponse], error)
 	listSchedulerEvents        func(context.Context, *connect.Request[agentcomposev2.ListSchedulerEventsRequest]) (*connect.Response[agentcomposev2.ListSchedulerEventsResponse], error)
 	listProjectSchedulerEvents func(context.Context, *connect.Request[agentcomposev2.ListProjectSchedulerEventsRequest]) (*connect.Response[agentcomposev2.ListProjectSchedulerEventsResponse], error)
+	streamSchedulerEvents      func(context.Context, *connect.Request[agentcomposev2.StreamProjectSchedulerEventsRequest], *connect.ServerStream[agentcomposev2.StreamProjectSchedulerEventsResponse]) error
 	invokeScheduler            func(context.Context, *connect.Request[agentcomposev2.InvokeSchedulerRequest]) (*connect.Response[agentcomposev2.InvokeSchedulerResponse], error)
 	runScheduler               func(context.Context, *connect.Request[agentcomposev2.RunSchedulerRequest]) (*connect.Response[agentcomposev2.RunSchedulerResponse], error)
 	startSchedulerRun          func(context.Context, *connect.Request[agentcomposev2.StartSchedulerRunRequest]) (*connect.Response[agentcomposev2.StartSchedulerRunResponse], error)
 	getSchedulerRun            func(context.Context, *connect.Request[agentcomposev2.GetSchedulerRunRequest]) (*connect.Response[agentcomposev2.GetSchedulerRunResponse], error)
 	listSchedulerRuns          func(context.Context, *connect.Request[agentcomposev2.ListSchedulerRunsRequest]) (*connect.Response[agentcomposev2.ListSchedulerRunsResponse], error)
+	streamSchedulerRuns        func(context.Context, *connect.Request[agentcomposev2.StreamSchedulerRunsRequest], *connect.ServerStream[agentcomposev2.StreamSchedulerRunsResponse]) error
 	stopSchedulerRun           func(context.Context, *connect.Request[agentcomposev2.StopSchedulerRunRequest]) (*connect.Response[agentcomposev2.StopSchedulerRunResponse], error)
 	pruneSchedulerRuns         func(context.Context, *connect.Request[agentcomposev2.PruneSchedulerRunsRequest]) (*connect.Response[agentcomposev2.PruneSchedulerRunsResponse], error)
 
@@ -600,6 +602,13 @@ func (s projectServiceStub) ListProjectSchedulerEvents(ctx context.Context, req 
 		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("ListProjectSchedulerEvents stub is not configured"))
 	}
 	return s.listProjectSchedulerEvents(ctx, req)
+}
+
+func (s projectServiceStub) StreamProjectSchedulerEvents(ctx context.Context, req *connect.Request[agentcomposev2.StreamProjectSchedulerEventsRequest], stream *connect.ServerStream[agentcomposev2.StreamProjectSchedulerEventsResponse]) error {
+	if s.streamSchedulerEvents == nil {
+		return connect.NewError(connect.CodeUnimplemented, fmt.Errorf("StreamProjectSchedulerEvents stub is not configured"))
+	}
+	return s.streamSchedulerEvents(ctx, req, stream)
 }
 
 func (s projectServiceStub) InvokeScheduler(ctx context.Context, req *connect.Request[agentcomposev2.InvokeSchedulerRequest]) (*connect.Response[agentcomposev2.InvokeSchedulerResponse], error) {
