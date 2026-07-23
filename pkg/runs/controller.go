@@ -2128,11 +2128,11 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 			if err := c.stopProjectRunSandbox(ctx, sandbox); err != nil {
 				return SandboxResult{Sandbox: sandbox, Created: true, Warnings: volumeWarnings}, fmt.Errorf("retire unclaimed sticky sandbox: %w", err)
 			}
-			winner, found, err := bindingStore.GetLoaderBinding(ctx, stickyLoaderID, stickyTriggerID)
+			winner, compatible, err := loadCompatibleStickyLoaderBinding(ctx, bindingStore, stickyLoaderID, stickyTriggerID, stickyConfigHash)
 			if err != nil {
 				return SandboxResult{Sandbox: sandbox, Created: true, Warnings: volumeWarnings}, fmt.Errorf("load concurrently claimed sticky sandbox: %w", err)
 			}
-			if _, retiring := loaders.RetiringLoaderBindingConfigHash(winner); found && !retiring && winner.SandboxConfigHash == stickyConfigHash {
+			if compatible {
 				reuseRequest := req
 				reuseRequest.SandboxID = winner.SandboxID
 				reuseRequest.Volumes = nil

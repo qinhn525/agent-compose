@@ -453,6 +453,63 @@ func TestLoaderSandboxRunnerStickyRunningMatchingConfigSkipsEnsurerAndPreservesW
 	}
 }
 
+func TestLoaderSandboxRunnerAdoptsLegacyStickyBindingWithoutStoppingSandbox(t *testing.T) {
+	tests := []struct {
+		name  string
+		reuse func(context.Context, *LoaderSandboxRunner, domain.Loader, string, string) (*domain.Sandbox, string, bool, error)
+	}{
+		{
+			name: "initial reuse",
+			reuse: func(ctx context.Context, runner *LoaderSandboxRunner, loader domain.Loader, triggerID, configHash string) (*domain.Sandbox, string, bool, error) {
+				sandbox, eventType, reused, _, err := runner.reuseCompatibleLoaderBinding(ctx, loader, triggerID, configHash)
+				return sandbox, eventType, reused, err
+			},
+		},
+		{
+			name: "concurrent winner",
+			reuse: func(ctx context.Context, runner *LoaderSandboxRunner, loader domain.Loader, triggerID, configHash string) (*domain.Sandbox, string, bool, error) {
+				return runner.reuseWinningLoaderBinding(ctx, loader.Summary.ID, triggerID, configHash)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			bridge, driver := newTestSandboxRPCBridge(t)
+			runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, &recordingLoaderWorkspaceEnsurer{}, driver, nil, nil, bridge.streams, nil, nil)
+			loader := domain.Loader{Summary: domain.LoaderSummary{ID: "legacy-loader", SandboxPolicy: domain.LoaderSandboxPolicySticky}}
+			const triggerID = "legacy-trigger"
+			const configHash = "sha256:current"
+			running, err := bridge.store.CreateSandbox(ctx, "legacy sticky", "", driverpkg.RuntimeDriverDocker, "", "", domain.SandboxTypeScript+":"+loader.Summary.ID, nil, nil, nil)
+			if err != nil {
+				t.Fatalf("CreateSandbox returned error: %v", err)
+			}
+			running.Summary.VMStatus = domain.VMStatusRunning
+			if err := bridge.store.UpdateSandbox(ctx, running); err != nil {
+				t.Fatalf("UpdateSandbox returned error: %v", err)
+			}
+			if err := bridge.configDB.UpsertLoaderBinding(ctx, domain.LoaderBinding{LoaderID: loader.Summary.ID, TriggerID: triggerID, SandboxID: running.Summary.ID}); err != nil {
+				t.Fatalf("UpsertLoaderBinding returned error: %v", err)
+			}
+
+			reusedSandbox, eventType, reused, err := test.reuse(ctx, runner, loader, triggerID, configHash)
+			if err != nil {
+				t.Fatalf("reuse legacy binding returned error: %v", err)
+			}
+			if !reused || reusedSandbox == nil || reusedSandbox.Summary.ID != running.Summary.ID || eventType != "" {
+				t.Fatalf("reuse result = %#v/%q/%v, want sandbox %q/empty/true", reusedSandbox, eventType, reused, running.Summary.ID)
+			}
+			if len(driver.stopCalls) != 0 || len(driver.startCalls) != 0 {
+				t.Fatalf("driver stop/start calls = %#v/%#v, want none", driver.stopCalls, driver.startCalls)
+			}
+			binding, found, err := bridge.configDB.GetLoaderBinding(ctx, loader.Summary.ID, triggerID)
+			if err != nil || !found || binding.SandboxID != running.Summary.ID || binding.SandboxConfigHash != configHash {
+				t.Fatalf("adopted binding = %#v found=%v err=%v, want sandbox %q hash %q", binding, found, err, running.Summary.ID, configHash)
+			}
+		})
+	}
+}
+
 func TestLoaderSandboxRunnerConcurrentStickyClaimReusesWinner(t *testing.T) {
 	ctx := context.Background()
 	bridge, driver := newTestSandboxRPCBridge(t)

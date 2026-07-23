@@ -22,6 +22,13 @@ func (r *LoaderSandboxRunner) reuseCompatibleLoaderBinding(ctx context.Context, 
 		if err != nil || !found {
 			return nil, "", false, nil, err
 		}
+		binding, current, err := r.claimLegacyLoaderBindingConfigHash(ctx, binding, configHash)
+		if err != nil {
+			return nil, "", false, &binding, err
+		}
+		if !current {
+			continue
+		}
 		retiringHash, retiring := loaders.RetiringLoaderBindingConfigHash(binding)
 		if !retiring && binding.SandboxConfigHash == configHash {
 			session, eventType, current, err := r.loadOrResumeLoaderBinding(ctx, binding)
@@ -96,19 +103,41 @@ func (r *LoaderSandboxRunner) bindLoaderSandbox(ctx context.Context, loader doma
 	})
 }
 
+func (r *LoaderSandboxRunner) claimLegacyLoaderBindingConfigHash(ctx context.Context, binding domain.LoaderBinding, configHash string) (domain.LoaderBinding, bool, error) {
+	replacement, legacy := loaders.AdoptLegacyLoaderBindingConfigHash(binding, configHash)
+	if !legacy {
+		return binding, true, nil
+	}
+	claimed, err := r.ConfigDB.CompareAndSwapLoaderBinding(ctx, &binding, replacement)
+	if err != nil {
+		return binding, false, err
+	}
+	return replacement, claimed, nil
+}
+
 func (r *LoaderSandboxRunner) reuseWinningLoaderBinding(ctx context.Context, loaderID, triggerID, configHash string) (*domain.Sandbox, string, bool, error) {
-	binding, found, err := r.ConfigDB.GetLoaderBinding(ctx, loaderID, triggerID)
-	if err != nil || !found {
-		return nil, "", false, err
+	for range 3 {
+		binding, found, err := r.ConfigDB.GetLoaderBinding(ctx, loaderID, triggerID)
+		if err != nil || !found {
+			return nil, "", false, err
+		}
+		binding, current, err := r.claimLegacyLoaderBindingConfigHash(ctx, binding, configHash)
+		if err != nil {
+			return nil, "", false, err
+		}
+		if !current {
+			continue
+		}
+		if _, retiring := loaders.RetiringLoaderBindingConfigHash(binding); retiring || binding.SandboxConfigHash != configHash {
+			return nil, "", false, nil
+		}
+		session, eventType, current, err := r.loadOrResumeLoaderBinding(ctx, binding)
+		if err != nil || !current {
+			return nil, "", false, err
+		}
+		return session, eventType, true, nil
 	}
-	if _, retiring := loaders.RetiringLoaderBindingConfigHash(binding); retiring || binding.SandboxConfigHash != configHash {
-		return nil, "", false, nil
-	}
-	session, eventType, current, err := r.loadOrResumeLoaderBinding(ctx, binding)
-	if err != nil || !current {
-		return nil, "", false, err
-	}
-	return session, eventType, true, nil
+	return nil, "", false, fmt.Errorf("loader sticky sandbox binding changed concurrently")
 }
 
 func loaderSandboxConfigHash(loader domain.Loader) (string, error) {

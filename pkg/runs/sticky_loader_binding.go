@@ -75,8 +75,17 @@ func (c *Controller) resolveStickyLoaderBinding(ctx context.Context, store stick
 		if retiring && retiringHash == configHash {
 			return "", &binding, nil, nil
 		}
-		if !retiring && (configHash == "" || binding.SandboxConfigHash == configHash) {
-			return binding.SandboxID, &binding, nil, nil
+		if !retiring {
+			binding, current, err := claimLegacyStickyLoaderBindingConfigHash(ctx, store, binding, configHash)
+			if err != nil {
+				return "", &binding, nil, fmt.Errorf("adopt legacy sticky sandbox configuration: %w", err)
+			}
+			if !current {
+				continue
+			}
+			if configHash == "" || binding.SandboxConfigHash == configHash {
+				return binding.SandboxID, &binding, nil, nil
+			}
 		}
 
 		retiringBinding := loaders.RetiringLoaderBinding(binding, configHash)
@@ -103,6 +112,39 @@ func (c *Controller) resolveStickyLoaderBinding(ctx context.Context, store stick
 		return "", &retiringBinding, []string{fmt.Sprintf("sticky sandbox %s used stale loader configuration; created a replacement", binding.SandboxID)}, nil
 	}
 	return "", nil, nil, fmt.Errorf("sticky sandbox binding changed concurrently")
+}
+
+func claimLegacyStickyLoaderBindingConfigHash(ctx context.Context, store stickyBindingStore, binding domain.LoaderBinding, configHash string) (domain.LoaderBinding, bool, error) {
+	replacement, legacy := loaders.AdoptLegacyLoaderBindingConfigHash(binding, configHash)
+	if !legacy {
+		return binding, true, nil
+	}
+	claimed, err := store.CompareAndSwapLoaderBinding(ctx, &binding, replacement)
+	if err != nil {
+		return binding, false, err
+	}
+	return replacement, claimed, nil
+}
+
+func loadCompatibleStickyLoaderBinding(ctx context.Context, store stickyBindingStore, loaderID, triggerID, configHash string) (domain.LoaderBinding, bool, error) {
+	for range 3 {
+		binding, found, err := store.GetLoaderBinding(ctx, loaderID, triggerID)
+		if err != nil || !found {
+			return domain.LoaderBinding{}, false, err
+		}
+		if _, retiring := loaders.RetiringLoaderBindingConfigHash(binding); retiring {
+			return domain.LoaderBinding{}, false, nil
+		}
+		binding, current, err := claimLegacyStickyLoaderBindingConfigHash(ctx, store, binding, configHash)
+		if err != nil {
+			return domain.LoaderBinding{}, false, err
+		}
+		if !current {
+			continue
+		}
+		return binding, binding.SandboxConfigHash == configHash, nil
+	}
+	return domain.LoaderBinding{}, false, fmt.Errorf("sticky sandbox binding changed concurrently")
 }
 
 func stickyLoaderBindingMatches(current, expected domain.LoaderBinding) bool {

@@ -104,6 +104,36 @@ func TestResolveStickyLoaderBindingInvalidatesBeforeRuntimeStop(t *testing.T) {
 	}
 }
 
+func TestResolveStickyLoaderBindingAdoptsLegacyConfigHashWithoutStoppingSandbox(t *testing.T) {
+	fixture := newControllerRunFixture(t)
+	sandbox, err := fixture.store.CreateSandbox(fixture.ctx, "sticky", "", "docker", "guest:v1", "", domain.SandboxTypeManual, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	sandbox.Summary.VMStatus = domain.VMStatusRunning
+	if err := fixture.store.UpdateSandbox(fixture.ctx, sandbox); err != nil {
+		t.Fatalf("UpdateSandbox returned error: %v", err)
+	}
+	fixture.configDB.bindings = map[string]domain.LoaderBinding{
+		"loader-1/trigger-1": {LoaderID: "loader-1", TriggerID: "trigger-1", SandboxID: sandbox.Summary.ID},
+	}
+
+	gotSandboxID, binding, warnings, err := fixture.controller.resolveStickyLoaderBinding(fixture.ctx, fixture.configDB, "loader-1", "trigger-1", "sha256:current")
+	if err != nil {
+		t.Fatalf("resolveStickyLoaderBinding returned error: %v", err)
+	}
+	if gotSandboxID != sandbox.Summary.ID || binding == nil || binding.SandboxConfigHash != "sha256:current" {
+		t.Fatalf("resolveStickyLoaderBinding result = %q/%#v, want adopted binding for %q", gotSandboxID, binding, sandbox.Summary.ID)
+	}
+	if len(warnings) != 0 || fixture.driver.stopped {
+		t.Fatalf("legacy reuse warnings/stopped = %#v/%v, want none/false", warnings, fixture.driver.stopped)
+	}
+	stored := fixture.configDB.bindings["loader-1/trigger-1"]
+	if stored.SandboxID != sandbox.Summary.ID || stored.SandboxConfigHash != "sha256:current" {
+		t.Fatalf("stored binding = %#v, want adopted legacy binding", stored)
+	}
+}
+
 func TestResolveStickyLoaderBindingDoesNotReuseRetiringLegacyBinding(t *testing.T) {
 	fixture := newControllerRunFixture(t)
 	sandbox, err := fixture.store.CreateSandbox(fixture.ctx, "sticky", "", "docker", "guest:v1", "", domain.SandboxTypeManual, nil, nil, nil)
