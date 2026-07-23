@@ -105,7 +105,9 @@ func NewWithConfig(config *appconfig.Config) (*Store, error) {
 
 // NewWithDatabase constructs a Store using the application's shared data.db
 // connection. The caller owns db; closing the Store only releases index-owned
-// resources and never closes the shared database.
+// resources and never closes the shared database. The database must have been
+// opened with storage/sqlite.Open or successfully passed through
+// storage/sqlite.Migrate before this function is called.
 func NewWithDatabase(config *appconfig.Config, db *sql.DB, projectResolvers ...SandboxProjectResolver) (*Store, error) {
 	index, _, err := openSandboxCacheDB(context.Background(), db)
 	var projectResolver SandboxProjectResolver
