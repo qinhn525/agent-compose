@@ -185,7 +185,7 @@ SECRET_VALUE:
 
 | 字段 | 类型 | 必填 | 作用 |
 | --- | --- | --- | --- |
-| `name` | string | 条件必填 | 项目标识。省略时尝试使用配置文件所在目录名；最终必须符合稳定标识符格式。也可由 CLI `--project-name` 覆盖。 |
+| `name` | string | 条件必填 | 项目标识。省略时尝试使用配置文件所在目录名；最终必须符合稳定标识符格式。 |
 | `env_file` | string 或 string[] | 否 | 指定插值使用的 dotenv 文件。相对路径以配置文件目录为基准。 |
 | `variables` | map | 否 | 项目级命名变量及 secret 元数据，写入规范化项目配置。它们不会自动继承到 Agent 的 `env`，也不会成为其他 `${NAME}` 的变量来源。 |
 | `workspaces` | map | 否 | 可复用的项目级 Workspace 定义。只能使用复数形式。 |
@@ -693,10 +693,13 @@ Scheduler 可以使用声明式 `triggers`，也可以使用 JavaScript `script`
 | --- | --- | --- | --- |
 | `enabled` | bool | `true` | 是否启用该 Agent 的 Scheduler。禁用 Agent 也会使其 Scheduler 无效。 |
 | `sandbox_policy` | string | `new` | Scheduler 默认 sandbox 策略：`new` 或 `sticky`。 |
+| `concurrency_policy` | string | `skip` | 整个 Agent Scheduler 的重叠运行策略：`skip` 或 `parallel`。 |
 | `triggers` | list | 空 | 声明式触发器。 |
 | `script` | string/object | 空 | 内联 JavaScript，或扁平的 `file`/`http`/`git` 来源配置。不能和 `triggers` 同时使用。 |
 
 `new` 为每次调用创建新 sandbox；`sticky` 允许 Scheduler 绑定并复用 sandbox。单个 Trigger 的 `sandbox_policy` 可覆盖执行 Agent 时的策略。
+
+`concurrency_policy` 作用于整个 Agent Scheduler，包括全部声明式或脚本注册的 Trigger，以及手动 Scheduler 调用。`skip` 会把与同一 Scheduler 既有运行重叠的新 run 记录为 `skipped`，且不会排队补跑；`parallel` 允许重叠 run 并行执行。它不是 Trigger 级策略。
 
 #### 声明式 Trigger
 
@@ -706,6 +709,7 @@ Scheduler 可以使用声明式 `triggers`，也可以使用 JavaScript `script`
 scheduler:
   enabled: true
   sandbox_policy: sticky
+  concurrency_policy: parallel
   triggers:
     - name: nightly
       cron: "0 2 * * *"

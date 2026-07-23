@@ -186,7 +186,7 @@ SECRET_VALUE:
 
 | Field | Type | Required | Purpose |
 | --- | --- | --- | --- |
-| `name` | string | Conditionally | Project identifier. If omitted, the compose directory name is used; the final value must be a stable identifier. CLI `--project-name` overrides it. |
+| `name` | string | Conditionally | Project identifier. If omitted, the compose directory name is used; the final value must be a stable identifier. |
 | `env_file` | string or string[] | No | Dotenv files used for interpolation. Relative paths are resolved from the compose directory. |
 | `variables` | map | No | Project-level named values and secret metadata stored in the normalized project specification. |
 | `workspaces` | map | No | Reusable project workspace definitions. Only the plural top-level form is valid. |
@@ -688,10 +688,13 @@ A scheduler uses either declarative `triggers` or JavaScript `script`; the two f
 | --- | --- | --- | --- |
 | `enabled` | bool | `true` | Enables this agent's scheduler. Disabling the Agent also prevents its scheduler from being enabled. |
 | `sandbox_policy` | string | `new` | Scheduler default sandbox policy: `new` or `sticky`. |
+| `concurrency_policy` | string | `skip` | Overlapping run policy for the entire agent scheduler: `skip` or `parallel`. |
 | `triggers` | list | Empty | Declarative triggers. |
 | `script` | string/object | Empty | Inline JavaScript or a flat `file`/`http`/`git` source mapping. Cannot coexist with `triggers`. |
 
 `new` creates a new sandbox for scheduler calls. `sticky` allows the scheduler to bind and reuse a sandbox. A trigger-level `sandbox_policy` controls the generated agent call for that trigger.
+
+`concurrency_policy` applies to the whole agent scheduler, including all declarative or script-registered triggers and manual scheduler invocations. With `skip`, a run that overlaps another run from the same scheduler is recorded as `skipped` and is not queued. With `parallel`, overlapping runs may execute concurrently. It is not a per-trigger policy.
 
 #### Declarative triggers
 
@@ -701,6 +704,7 @@ Each trigger must set exactly one kind field: `cron`, `interval`, `timeout`, or 
 scheduler:
   enabled: true
   sandbox_policy: sticky
+  concurrency_policy: parallel
   triggers:
     - name: nightly
       cron: "0 2 * * *"

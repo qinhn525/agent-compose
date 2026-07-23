@@ -157,13 +157,19 @@ type composeSandboxOutput struct {
 }
 
 func listAllSandboxes(ctx context.Context, client agentcomposev2connect.SandboxServiceClient) ([]*agentcomposev2.Sandbox, error) {
+	return listFilteredSandboxes(ctx, client, "", nil)
+}
+
+func listFilteredSandboxes(ctx context.Context, client agentcomposev2connect.SandboxServiceClient, projectID string, statuses []string) ([]*agentcomposev2.Sandbox, error) {
 	var result []*agentcomposev2.Sandbox
 	var cursor string
 	const limit uint32 = 100
 	for {
 		resp, err := client.ListSandboxes(ctx, connect.NewRequest(&agentcomposev2.ListSandboxesRequest{
-			Cursor: cursor,
-			Limit:  limit,
+			Cursor:    cursor,
+			Limit:     limit,
+			ProjectId: strings.TrimSpace(projectID),
+			Status:    append([]string(nil), statuses...),
 		}))
 		if err != nil {
 			return nil, err
@@ -286,11 +292,11 @@ func resolveComposeSandboxRefsForCommand(ctx context.Context, cli cliOptions, cl
 			continue
 		}
 		if projectID == "" {
-			_, _, id, err := resolveComposeProject(cli)
+			runtimeProject, err := resolveComposeRuntimeProject(ctx, clients.project, cli, "resolve sandbox", runtimeProjectIdentityOnly)
 			if err != nil {
 				return nil, err
 			}
-			projectID = id
+			projectID = runtimeProject.id()
 		}
 		sandboxID, err := resolveComposeSandboxRefWithProject(ctx, clients, projectID, ref)
 		if err != nil {
@@ -309,11 +315,11 @@ func resolveComposeSandboxRefForCommand(ctx context.Context, cli cliOptions, cli
 	if !shouldResolveComposeLogResourceRef(ref) {
 		return ref, nil
 	}
-	_, _, projectID, err := resolveComposeProject(cli)
+	runtimeProject, err := resolveComposeRuntimeProject(ctx, clients.project, cli, "resolve sandbox", runtimeProjectIdentityOnly)
 	if err != nil {
 		return "", err
 	}
-	return resolveComposeSandboxRefWithProject(ctx, clients, projectID, ref)
+	return resolveComposeSandboxRefWithProject(ctx, clients, runtimeProject.id(), ref)
 }
 
 func resolveComposeSandboxRefWithProject(ctx context.Context, clients cliServiceClients, projectID, ref string) (string, error) {

@@ -836,6 +836,20 @@ func (s projectServiceStub) ListSchedulerRuns(ctx context.Context, req *connect.
 	return s.listSchedulerRuns(ctx, req)
 }
 
+func (s projectServiceStub) BatchGetLatestSchedulerRuns(ctx context.Context, req *connect.Request[agentcomposev2.BatchGetLatestSchedulerRunsRequest]) (*connect.Response[agentcomposev2.BatchGetLatestSchedulerRunsResponse], error) {
+	if s.batchGetLatestSchedulerRuns == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("BatchGetLatestSchedulerRuns stub is not configured"))
+	}
+	return s.batchGetLatestSchedulerRuns(ctx, req)
+}
+
+func (s projectServiceStub) StreamSchedulerRuns(ctx context.Context, req *connect.Request[agentcomposev2.StreamSchedulerRunsRequest], stream *connect.ServerStream[agentcomposev2.StreamSchedulerRunsResponse]) error {
+	if s.streamSchedulerRuns == nil {
+		return connect.NewError(connect.CodeUnimplemented, fmt.Errorf("StreamSchedulerRuns stub is not configured"))
+	}
+	return s.streamSchedulerRuns(ctx, req, stream)
+}
+
 func (s projectServiceStub) StopSchedulerRun(ctx context.Context, req *connect.Request[agentcomposev2.StopSchedulerRunRequest]) (*connect.Response[agentcomposev2.StopSchedulerRunResponse], error) {
 	if s.stopSchedulerRun == nil {
 		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("StopSchedulerRun stub is not configured"))

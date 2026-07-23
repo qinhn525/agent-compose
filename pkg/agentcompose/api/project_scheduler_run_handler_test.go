@@ -3,6 +3,9 @@ package api
 import (
 	"context"
 	"fmt"
+	"slices"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,6 +165,45 @@ func TestProjectHandlerSchedulerRunLifecycle(t *testing.T) {
 	}
 }
 
+func TestProjectHandlerBatchGetsLatestSchedulerRuns(t *testing.T) {
+	store, _, handler := newSchedulerRunHandlerFixture()
+	run := domain.LoaderRunSummary{
+		ID: "run-associated", LoaderID: store.scheduler.ManagedLoaderID, TriggerID: "trigger-1",
+		Status: domain.LoaderRunStatusSucceeded, StartedAt: time.Unix(200, 0).UTC(),
+	}
+	store.batchRunsBySandbox = map[string]domain.LoaderRunSummary{"sandbox-a": run}
+	response, err := handler.BatchGetLatestSchedulerRuns(context.Background(), connect.NewRequest(&agentcomposev2.BatchGetLatestSchedulerRunsRequest{
+		Project:    &agentcomposev2.ProjectRef{ProjectId: store.project.ID},
+		SandboxIds: []string{" sandbox-a ", "sandbox-missing", "sandbox-a", ""},
+	}))
+	if err != nil {
+		t.Fatalf("BatchGetLatestSchedulerRuns returned error: %v", err)
+	}
+	if !slices.Equal(store.lastBatchLoaderIDs, []string{store.scheduler.ManagedLoaderID}) ||
+		!slices.Equal(store.lastBatchSandboxIDs, []string{"sandbox-a", "sandbox-missing"}) {
+		t.Fatalf("batch filters=%#v/%#v", store.lastBatchLoaderIDs, store.lastBatchSandboxIDs)
+	}
+	results := response.Msg.GetResults()
+	if len(results) != 2 || results[0].GetSandboxId() != "sandbox-a" || results[0].GetRun().GetRunId() != run.ID ||
+		results[0].GetRun().GetProjectId() != store.project.ID || results[1].GetSandboxId() != "sandbox-missing" || results[1].GetRun() != nil {
+		t.Fatalf("batch results=%#v", results)
+	}
+}
+
+func TestProjectHandlerRejectsExcessiveSchedulerRunBatch(t *testing.T) {
+	store, _, handler := newSchedulerRunHandlerFixture()
+	sandboxIDs := make([]string, maxSchedulerRunBatchSandboxIDs+1)
+	for index := range sandboxIDs {
+		sandboxIDs[index] = fmt.Sprintf("sandbox-%d", index)
+	}
+	_, err := handler.BatchGetLatestSchedulerRuns(context.Background(), connect.NewRequest(&agentcomposev2.BatchGetLatestSchedulerRunsRequest{
+		Project: &agentcomposev2.ProjectRef{ProjectId: store.project.ID}, SandboxIds: sandboxIDs,
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("excessive batch query code=%v err=%v", connect.CodeOf(err), err)
+	}
+}
+
 func TestProjectHandlerListsProjectSchedulerEventsWithIdentityAndCursor(t *testing.T) {
 	store, _, handler := newSchedulerRunHandlerFixture()
 	createdAt := time.Unix(300, 0).UTC()
@@ -268,28 +310,62 @@ func newSchedulerRunHandlerFixture() (*schedulerRunProjectStoreFake, *schedulerR
 }
 
 type schedulerRunProjectStoreFake struct {
-	project       domain.ProjectRecord
-	scheduler     domain.ProjectSchedulerRecord
-	schedulers    []domain.ProjectSchedulerRecord
-	runs          []domain.LoaderRunSummary
-	events        []domain.LoaderEvent
-	sandboxIDs    map[loaders.LoaderRunKey][]string
-	lastRunFilter loaders.LoaderRunPageFilter
+	project             domain.ProjectRecord
+	scheduler           domain.ProjectSchedulerRecord
+	schedulers          []domain.ProjectSchedulerRecord
+	runs                []domain.LoaderRunSummary
+	events              []domain.LoaderEvent
+	sandboxIDs          map[loaders.LoaderRunKey][]string
+	lastRunFilter       loaders.LoaderRunPageFilter
+	batchRunsBySandbox  map[string]domain.LoaderRunSummary
+	lastBatchLoaderIDs  []string
+	lastBatchSandboxIDs []string
 }
 
 func (s *schedulerRunProjectStoreFake) ListLoaderEventsPage(_ context.Context, filter loaders.LoaderEventPageFilter) ([]domain.LoaderEvent, error) {
-	start := 0
-	if filter.BeforeEventID != "" {
-		start = len(s.events)
-		for index, event := range s.events {
-			if event.ID == filter.BeforeEventID {
-				start = index + 1
-				break
-			}
+	items := make([]domain.LoaderEvent, 0, len(s.events))
+	for _, event := range s.events {
+		if !slices.Contains(filter.LoaderIDs, event.LoaderID) || (filter.RequireTrigger && event.TriggerID == "") ||
+			(strings.TrimSpace(filter.TriggerID) != "" && event.TriggerID != filter.TriggerID) || (strings.TrimSpace(filter.RunID) != "" && event.RunID != filter.RunID) {
+			continue
 		}
+		if !filter.BeforeCreatedAt.IsZero() && compareLoaderEventKey(event, filter.BeforeCreatedAt, filter.BeforeLoaderID, filter.BeforeEventID) >= 0 {
+			continue
+		}
+		if !filter.AfterCreatedAt.IsZero() && compareLoaderEventKey(event, filter.AfterCreatedAt, filter.AfterLoaderID, filter.AfterEventID) <= 0 {
+			continue
+		}
+		if !filter.FromCreatedAt.IsZero() && compareLoaderEventKey(event, filter.FromCreatedAt, filter.FromLoaderID, filter.FromEventID) < 0 {
+			continue
+		}
+		if !filter.ThroughCreatedAt.IsZero() && compareLoaderEventKey(event, filter.ThroughCreatedAt, filter.ThroughLoaderID, filter.ThroughEventID) > 0 {
+			continue
+		}
+		items = append(items, event)
 	}
-	end := min(start+filter.Limit, len(s.events))
-	return append([]domain.LoaderEvent(nil), s.events[start:end]...), nil
+	sort.Slice(items, func(i, j int) bool {
+		comparison := compareLoaderEventKey(items[i], items[j].CreatedAt, items[j].LoaderID, items[j].ID)
+		if filter.Ascending {
+			return comparison < 0
+		}
+		return comparison > 0
+	})
+	start := min(max(filter.Offset, 0), len(items))
+	end := min(start+filter.Limit, len(items))
+	return append([]domain.LoaderEvent(nil), items[start:end]...), nil
+}
+
+func compareLoaderEventKey(event domain.LoaderEvent, createdAt time.Time, loaderID, eventID string) int {
+	if !event.CreatedAt.Equal(createdAt) {
+		if event.CreatedAt.Before(createdAt) {
+			return -1
+		}
+		return 1
+	}
+	if comparison := strings.Compare(event.LoaderID, loaderID); comparison != 0 {
+		return comparison
+	}
+	return strings.Compare(event.ID, eventID)
 }
 
 func (s *schedulerRunProjectStoreFake) GetProject(context.Context, string) (domain.ProjectRecord, error) {
@@ -347,6 +423,12 @@ func (s *schedulerRunProjectStoreFake) ListLoaderRunsPage(_ context.Context, fil
 
 func (s *schedulerRunProjectStoreFake) ListLoaderRunSandboxIDs(_ context.Context, _ []loaders.LoaderRunKey) (map[loaders.LoaderRunKey][]string, error) {
 	return s.sandboxIDs, nil
+}
+
+func (s *schedulerRunProjectStoreFake) BatchGetLatestLoaderRunsBySandboxIDs(_ context.Context, loaderIDs, sandboxIDs []string) (map[string]domain.LoaderRunSummary, error) {
+	s.lastBatchLoaderIDs = append([]string(nil), loaderIDs...)
+	s.lastBatchSandboxIDs = append([]string(nil), sandboxIDs...)
+	return s.batchRunsBySandbox, nil
 }
 
 type schedulerRunRuntimeFake struct {
