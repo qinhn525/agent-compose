@@ -267,55 +267,43 @@ func parseSchedulerRunStatusFilter(value string) (agentcomposev2.SchedulerRunSta
 	return status, value, nil
 }
 
-func listSchedulerRuntimeRuns(ctx context.Context, client agentcomposev2connect.ProjectServiceClient, projectID, agentName, schedulerID, loaderID string, limit uint32) ([]composeSchedulerRunItem, error) {
-	runs, err := listSchedulerRunsFromAPI(ctx, client, projectID, agentName, schedulerID, loaderID, limit)
-	if err != nil {
-		if connect.CodeOf(err) == connect.CodeUnimplemented {
-			return nil, commandExitError{Code: exitCodeUnsupported, Err: fmt.Errorf("daemon does not support scheduler run queries; upgrade the daemon")}
-		}
-		return nil, commandExitErrorForConnect(fmt.Errorf("list scheduler runs for agent %s: %w", agentName, err))
-	}
-	return runs, nil
-}
+const (
+	schedulerQueryPageSize = uint32(500)
+	maxSchedulerQueryPages = 1000
+)
 
-func listSchedulerRunsFromAPI(ctx context.Context, client agentcomposev2connect.ProjectServiceClient, projectID, agentName, schedulerID, loaderID string, limit uint32) ([]composeSchedulerRunItem, error) {
-	if limit == 0 || limit > 500 {
-		limit = 500
-	}
-	runs := make([]composeSchedulerRunItem, 0, limit)
+func visitSchedulerRunsFromAPI(ctx context.Context, client agentcomposev2connect.ProjectServiceClient, projectID, agentName string, visit func(*agentcomposev2.SchedulerRun) error) error {
 	cursor := ""
 	seenCursors := make(map[string]struct{})
-	for uint32(len(runs)) < limit {
-		pageLimit := uint32(100)
-		if remaining := limit - uint32(len(runs)); remaining < pageLimit {
-			pageLimit = remaining
-		}
+	for range maxSchedulerQueryPages {
 		resp, err := client.ListSchedulerRuns(ctx, connect.NewRequest(&agentcomposev2.ListSchedulerRunsRequest{
-			Project: &agentcomposev2.ProjectRef{ProjectId: projectID}, AgentName: agentName, Limit: pageLimit, Cursor: cursor,
+			Project: &agentcomposev2.ProjectRef{ProjectId: projectID}, AgentName: agentName, Limit: schedulerQueryPageSize, Cursor: cursor,
 		}))
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, run := range resp.Msg.GetRuns() {
 			if strings.TrimSpace(run.GetTriggerId()) == "" {
 				continue
 			}
-			runs = append(runs, schedulerRuntimeRunItem(schedulerID, loaderID, run))
-			if uint32(len(runs)) == limit {
-				return runs, nil
+			if err := visit(run); err != nil {
+				return err
 			}
 		}
 		next := strings.TrimSpace(resp.Msg.GetNextCursor())
 		if next == "" {
-			return runs, nil
+			return nil
+		}
+		if next == cursor {
+			return fmt.Errorf("daemon returned a repeated scheduler run cursor")
 		}
 		if _, ok := seenCursors[next]; ok {
-			return nil, fmt.Errorf("daemon returned a repeated scheduler run cursor")
+			return fmt.Errorf("daemon returned a repeated scheduler run cursor")
 		}
 		seenCursors[next] = struct{}{}
 		cursor = next
 	}
-	return runs, nil
+	return fmt.Errorf("daemon returned more than %d scheduler run pages", maxSchedulerQueryPages)
 }
 
 func schedulerRuntimeRunItem(schedulerID, loaderID string, run *agentcomposev2.SchedulerRun) composeSchedulerRunItem {
@@ -368,12 +356,14 @@ func listProjectSchedulerLogEvents(ctx context.Context, client agentcomposev2con
 	}
 	cursor := ""
 	seenCursors := make(map[string]struct{})
-	for {
-		pageLimit := uint32(500)
+	completed := false
+	for range maxSchedulerQueryPages {
+		pageLimit := schedulerQueryPageSize
 		if tail > 0 && tail-len(events) < int(pageLimit) {
 			pageLimit = uint32(tail - len(events))
 		}
 		if pageLimit == 0 {
+			completed = true
 			break
 		}
 		resp, err := client.ListProjectSchedulerEvents(ctx, connect.NewRequest(&agentcomposev2.ListProjectSchedulerEventsRequest{
@@ -396,10 +386,12 @@ func listProjectSchedulerLogEvents(ctx context.Context, client agentcomposev2con
 			}
 		}
 		if tail > 0 && len(events) >= tail {
+			completed = true
 			break
 		}
 		next := strings.TrimSpace(resp.Msg.GetNextCursor())
 		if next == "" {
+			completed = true
 			break
 		}
 		if next == cursor {
@@ -410,6 +402,9 @@ func listProjectSchedulerLogEvents(ctx context.Context, client agentcomposev2con
 		}
 		seenCursors[next] = struct{}{}
 		cursor = next
+	}
+	if !completed {
+		return nil, fmt.Errorf("daemon returned more than %d scheduler event pages", maxSchedulerQueryPages)
 	}
 	for left, right := 0, len(events)-1; left < right; left, right = left+1, right-1 {
 		events[left], events[right] = events[right], events[left]

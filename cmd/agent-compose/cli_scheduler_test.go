@@ -5,6 +5,7 @@ import (
 	"agent-compose/pkg/identity"
 	domain "agent-compose/pkg/model"
 	agentcomposev2 "agent-compose/proto/agentcompose/v2"
+	agentcomposev2connect "agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,26 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+func TestListProjectSchedulerLogEventsRejectsExcessivePages(t *testing.T) {
+	requests := 0
+	server := newComposeServiceStubServer(t, composeServiceStubs{project: projectServiceStub{
+		listProjectSchedulerEvents: func(_ context.Context, _ *connect.Request[agentcomposev2.ListProjectSchedulerEventsRequest]) (*connect.Response[agentcomposev2.ListProjectSchedulerEventsResponse], error) {
+			requests++
+			return connect.NewResponse(&agentcomposev2.ListProjectSchedulerEventsResponse{NextCursor: fmt.Sprintf("page-%d", requests)}), nil
+		},
+	}})
+	t.Cleanup(server.Close)
+	client := agentcomposev2connect.NewProjectServiceClient(server.Client(), server.URL)
+
+	_, err := listProjectSchedulerLogEvents(t.Context(), client, "project-1", "reviewer", "", "", -1)
+	if err == nil || !strings.Contains(err.Error(), "more than 1000 scheduler event pages") {
+		t.Fatalf("list excessive scheduler event pages error = %v", err)
+	}
+	if requests != maxSchedulerQueryPages {
+		t.Fatalf("scheduler event page requests = %d, want %d", requests, maxSchedulerQueryPages)
+	}
+}
 
 func TestConfigCommandExpandsSchedulerScriptURLs(t *testing.T) {
 	const script = `scheduler.interval("from-url", "1h");`
