@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"agent-compose/pkg/capabilities"
 	appconfig "agent-compose/pkg/config"
@@ -1711,7 +1712,7 @@ func bytesIndexByte(data []byte, needle byte) int {
 func runAttachStartedResponse(run domain.ProjectRunRecord, sandbox *domain.Sandbox, warnings []string, startedAt time.Time) *agentcomposev2.RunAttachResponse {
 	resp := newRunAttachResponse()
 	if !startedAt.IsZero() {
-		resp.CreatedAt = startedAt.UTC().Format(time.RFC3339Nano)
+		resp.CreatedAt = timestamppb.New(startedAt)
 	}
 	resp.Frame = &agentcomposev2.RunAttachResponse_Started{Started: &agentcomposev2.AttachStarted{
 		OperationId: run.RunID,
@@ -1785,7 +1786,7 @@ func runAttachErrorResponse(code, message string, terminal bool) *agentcomposev2
 func newRunAttachResponse() *agentcomposev2.RunAttachResponse {
 	return &agentcomposev2.RunAttachResponse{
 		ServerFrameId: uuid.NewString(),
-		CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
+		CreatedAt:     timestamppb.Now(),
 	}
 }
 
