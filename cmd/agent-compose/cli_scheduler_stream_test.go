@@ -90,6 +90,20 @@ agents:
 	}
 }
 
+func TestSchedulerJSONStreamWriterRejectsNonObjectPrefix(t *testing.T) {
+	for name, prefix := range map[string]any{
+		"nil":    nil,
+		"string": "prefix",
+		"slice":  []string{"prefix"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := newSchedulerJSONStreamWriter[string](io.Discard, prefix, "items"); err == nil || !strings.Contains(err.Error(), "must encode a JSON object") {
+				t.Fatalf("newSchedulerJSONStreamWriter error = %v", err)
+			}
+		})
+	}
+}
+
 type markerWriter struct {
 	mu     sync.Mutex
 	marker string

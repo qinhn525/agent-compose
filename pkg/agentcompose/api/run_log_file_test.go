@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"connectrpc.com/connect"
 
@@ -60,6 +61,50 @@ func TestReadRunLogChunkFromOffsetKeepsUTF8CodePointsIntact(t *testing.T) {
 	}
 	if !atEnd || first+second != want {
 		t.Fatalf("reassembled UTF-8 log end/length = %t/%d, want true/%d", atEnd, len(first+second), len(want))
+	}
+}
+
+func TestReadRunLogChunkFromOffsetDefersIncompleteUTF8AtEOF(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	runeBytes := []byte("界")
+	initial := append([]byte("ready "), runeBytes[:2]...)
+	if err := os.WriteFile(path, initial, 0o600); err != nil {
+		t.Fatalf("write partial log: %v", err)
+	}
+	first, offset, atEnd, err := readRunLogChunkFromOffset(path, 0)
+	if err != nil {
+		t.Fatalf("read partial log: %v", err)
+	}
+	if first != "ready " || offset != uint64(len("ready ")) || !atEnd || !utf8.ValidString(first) {
+		t.Fatalf("partial chunk/data offset/end/valid = %q/%d/%t/%t", first, offset, atEnd, utf8.ValidString(first))
+	}
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open partial log for append: %v", err)
+	}
+	if _, err := file.Write(runeBytes[2:]); err != nil {
+		_ = file.Close()
+		t.Fatalf("complete log rune: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close completed log: %v", err)
+	}
+	second, next, atEnd, err := readRunLogChunkFromOffset(path, offset)
+	if err != nil {
+		t.Fatalf("read completed rune: %v", err)
+	}
+	if second != "界" || next != uint64(len(initial)+1) || !atEnd || !utf8.ValidString(second) {
+		t.Fatalf("completed chunk/data offset/end/valid = %q/%d/%t/%t", second, next, atEnd, utf8.ValidString(second))
+	}
+}
+
+func TestReadRunLogChunkFromOffsetRejectsInvalidUTF8(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	if err := os.WriteFile(path, []byte{'o', 'k', 0xff}, 0o600); err != nil {
+		t.Fatalf("write invalid log: %v", err)
+	}
+	if _, _, _, err := readRunLogChunkFromOffset(path, 0); err == nil || !strings.Contains(err.Error(), "invalid UTF-8") {
+		t.Fatalf("read invalid log error = %v", err)
 	}
 }
 

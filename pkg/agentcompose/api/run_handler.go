@@ -482,16 +482,33 @@ func readRunLogChunkFromOffset(path string, offset uint64) (string, uint64, bool
 		return "", offset, false, err
 	}
 	nextOffset := offset + uint64(n)
-	if nextOffset < uint64(info.Size()) && !utf8.Valid(data[:n]) {
-		for trim := 1; trim < utf8.UTFMax && trim < n; trim++ {
-			if utf8.Valid(data[:n-trim]) {
-				n -= trim
-				nextOffset = offset + uint64(n)
-				break
-			}
+	atSnapshotEnd := nextOffset >= uint64(info.Size())
+	if !utf8.Valid(data[:n]) {
+		prefixLength, incomplete := incompleteUTF8SuffixStart(data[:n])
+		if !incomplete {
+			return "", offset, false, fmt.Errorf("run log contains invalid UTF-8 at or after byte offset %d", offset)
+		}
+		n = prefixLength
+		nextOffset = offset + uint64(n)
+		if atSnapshotEnd {
+			return string(data[:n]), nextOffset, true, nil
 		}
 	}
 	return string(data[:n]), nextOffset, nextOffset >= uint64(info.Size()), nil
+}
+
+func incompleteUTF8SuffixStart(data []byte) (int, bool) {
+	if len(data) == 0 || utf8.Valid(data) {
+		return len(data), false
+	}
+	start := len(data) - 1
+	for start > 0 && !utf8.RuneStart(data[start]) {
+		start--
+	}
+	if !utf8.RuneStart(data[start]) || utf8.FullRune(data[start:]) || !utf8.Valid(data[:start]) {
+		return 0, false
+	}
+	return start, true
 }
 
 func tailRunLogOffset(path string, lines int) (uint64, error) {

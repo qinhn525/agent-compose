@@ -209,6 +209,9 @@ func newSchedulerJSONStreamWriter[T any](out io.Writer, prefix any, fieldName st
 	if err != nil {
 		return nil, err
 	}
+	if len(data) < 2 || data[0] != '{' || data[len(data)-1] != '}' {
+		return nil, fmt.Errorf("scheduler JSON stream prefix must encode a JSON object")
+	}
 	return &schedulerJSONStreamWriter[T]{out: out, prefix: data, fieldName: fieldName}, nil
 }
 
