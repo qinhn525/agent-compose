@@ -120,6 +120,9 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 	if err != nil {
 		return nil, "", err
 	}
+	if err := validateLoaderRuntimeDriverCompiled(driver); err != nil {
+		return nil, "", err
+	}
 	guestImage := r.guestImage(request, loader, agentDefinition, driver)
 	volumeMounts, volumeWarnings, err := r.resolveVolumeMounts(ctx, loader, request, agentDefinition)
 	if err != nil {
@@ -142,9 +145,6 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 		} else {
 			previousBinding = binding
 		}
-	}
-	if err := validateLoaderRuntimeDriverCompiled(driver); err != nil {
-		return nil, "", err
 	}
 
 	capabilityVars, capabilityTags := capabilities.BuildGatewaySandboxVars(capabilities.ProxyTarget(r.Cap), loader.Summary.CapsetIDs)
@@ -217,7 +217,16 @@ func (r *LoaderSandboxRunner) Ensure(ctx context.Context, loader domain.Loader, 
 			return nil, "", fmt.Errorf("persist loader sticky sandbox binding: %w", err)
 		}
 		if !claimed {
-			_ = r.Shutdown(ctx, session.Summary.ID)
+			if err := r.Shutdown(ctx, session.Summary.ID); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return nil, "", fmt.Errorf("retire unclaimed loader sticky sandbox: %w", err)
+			}
+			winner, eventType, reused, err := r.reuseWinningLoaderBinding(ctx, loader.Summary.ID, request.BindingTriggerID, configHash)
+			if err != nil {
+				return nil, "", fmt.Errorf("reuse concurrently claimed loader sticky sandbox: %w", err)
+			}
+			if reused {
+				return winner, eventType, nil
+			}
 			return nil, "", fmt.Errorf("loader sticky sandbox binding changed concurrently")
 		}
 	}
@@ -245,6 +254,10 @@ func (r *LoaderSandboxRunner) Load(ctx context.Context, sessionID string) (*doma
 func (r *LoaderSandboxRunner) LoadOrResume(ctx context.Context, sessionID string) (*domain.Sandbox, string, error) {
 	unlock := r.LifecycleLocks.Lock(sessionID)
 	defer unlock()
+	return r.loadOrResumeLocked(ctx, sessionID)
+}
+
+func (r *LoaderSandboxRunner) loadOrResumeLocked(ctx context.Context, sessionID string) (*domain.Sandbox, string, error) {
 	session, err := r.Store.GetSandbox(ctx, sessionID)
 	if err != nil {
 		return nil, "", err

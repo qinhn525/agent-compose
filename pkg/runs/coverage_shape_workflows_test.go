@@ -2543,10 +2543,17 @@ type fakeControllerDriver struct {
 	stopErr   error
 	removeErr error
 	store     *sessionstore.Store
+	onStart   func(*domain.Sandbox) error
+	onStop    func(*domain.Sandbox) error
 }
 
 func (d *fakeControllerDriver) StartSandboxVM(_ context.Context, session *domain.Sandbox) error {
 	d.started = true
+	if d.onStart != nil {
+		if err := d.onStart(session); err != nil {
+			return err
+		}
+	}
 	if d.startErr != nil {
 		return d.startErr
 	}
@@ -2556,8 +2563,13 @@ func (d *fakeControllerDriver) StartSandboxVM(_ context.Context, session *domain
 	return nil
 }
 
-func (d *fakeControllerDriver) StopSandboxVM(context.Context, *domain.Sandbox) error {
+func (d *fakeControllerDriver) StopSandboxVM(_ context.Context, sandbox *domain.Sandbox) error {
 	d.stopped = true
+	if d.onStop != nil {
+		if err := d.onStop(sandbox); err != nil {
+			return err
+		}
+	}
 	if d.stopErr != nil {
 		return d.stopErr
 	}

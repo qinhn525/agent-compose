@@ -453,6 +453,70 @@ func TestLoaderSandboxRunnerStickyRunningMatchingConfigSkipsEnsurerAndPreservesW
 	}
 }
 
+func TestLoaderSandboxRunnerConcurrentStickyClaimReusesWinner(t *testing.T) {
+	ctx := context.Background()
+	bridge, driver := newTestSandboxRPCBridge(t)
+	runner := NewLoaderSandboxRunner(bridge.config, bridge.store, bridge.configDB, &recordingLoaderWorkspaceEnsurer{}, driver, nil, nil, bridge.streams, nil, nil)
+	loader := domain.Loader{Summary: domain.LoaderSummary{
+		ID:                "loader-concurrent-sticky",
+		Name:              "Concurrent Sticky",
+		Driver:            driverpkg.RuntimeDriverDocker,
+		SandboxPolicy:     domain.LoaderSandboxPolicySticky,
+		ConcurrencyPolicy: domain.LoaderConcurrencyPolicyParallel,
+	}}
+	request := domain.LoaderAgentRequest{Agent: "codex", BindingTriggerID: "trigger-1"}
+	guestImage := runner.guestImage(request, loader, nil, driverpkg.RuntimeDriverDocker)
+	baseConfigHash, err := loaderSandboxConfigHash(loader)
+	if err != nil {
+		t.Fatalf("loaderSandboxConfigHash returned error: %v", err)
+	}
+	configHash, err := loaderRequestSandboxConfigHash(baseConfigHash, request, nil, nil, nil, nil, driverpkg.RuntimeDriverDocker, guestImage, nil)
+	if err != nil {
+		t.Fatalf("loaderRequestSandboxConfigHash returned error: %v", err)
+	}
+	winner, err := bridge.store.CreateSandbox(ctx, "winner", "", driverpkg.RuntimeDriverDocker, guestImage, "", domain.SandboxTypeScript+":"+loader.Summary.ID, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox winner returned error: %v", err)
+	}
+	winner.Summary.VMStatus = domain.VMStatusRunning
+	if err := bridge.store.UpdateSandbox(ctx, winner); err != nil {
+		t.Fatalf("UpdateSandbox winner returned error: %v", err)
+	}
+	var bindErr error
+	driver.onStart = func(*domain.Sandbox) {
+		if bindErr != nil {
+			return
+		}
+		bindErr = bridge.configDB.UpsertLoaderBinding(ctx, domain.LoaderBinding{
+			LoaderID:          loader.Summary.ID,
+			TriggerID:         request.BindingTriggerID,
+			SandboxID:         winner.Summary.ID,
+			SandboxConfigHash: configHash,
+		})
+	}
+
+	reused, eventType, err := runner.Ensure(ctx, loader, request, false)
+	if bindErr != nil {
+		t.Fatalf("seed winning binding returned error: %v", bindErr)
+	}
+	if err != nil {
+		t.Fatalf("Ensure returned error: %v", err)
+	}
+	if reused.Summary.ID != winner.Summary.ID || eventType != "" {
+		t.Fatalf("Ensure result = %q/%q, want winning sandbox %q with no resume event", reused.Summary.ID, eventType, winner.Summary.ID)
+	}
+	if len(driver.startCalls) != 1 {
+		t.Fatalf("driver starts = %#v, want one losing sandbox start", driver.startCalls)
+	}
+	loser, err := bridge.store.GetSandbox(ctx, driver.startCalls[0])
+	if err != nil {
+		t.Fatalf("GetSandbox loser returned error: %v", err)
+	}
+	if loser.Summary.VMStatus != domain.VMStatusStopped {
+		t.Fatalf("losing sandbox status = %q, want stopped", loser.Summary.VMStatus)
+	}
+}
+
 func TestLoaderSandboxRunnerStickyWorkspaceConfigChangeCreatesReplacement(t *testing.T) {
 	ctx := context.Background()
 	bridge, driver := newTestSandboxRPCBridge(t)

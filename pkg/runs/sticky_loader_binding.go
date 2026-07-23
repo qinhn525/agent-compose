@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"agent-compose/pkg/capabilities"
+	"agent-compose/pkg/loaders"
 	domain "agent-compose/pkg/model"
 	"agent-compose/pkg/storage/sessionstore"
 )
@@ -27,38 +28,31 @@ type stickyProjectRunSandboxConfig struct {
 	EnvItems         []domain.SandboxEnvVar            `json:"env_items,omitempty"`
 	CapsetIDs        []string                          `json:"capset_ids,omitempty"`
 	Workspace        *domain.SandboxWorkspace          `json:"workspace,omitempty"`
-	Volumes          []domain.VolumeMountSpec          `json:"volumes,omitempty"`
+	VolumeMounts     []domain.SandboxVolumeMount       `json:"volume_mounts,omitempty"`
 	Jupyter          sessionstore.CreateSandboxOptions `json:"jupyter"`
 }
 
-func stickyProjectRunConfigHash(baseHash string, run domain.ProjectRunRecord, prepared Preparation, request RunAgentRequest, jupyter sessionstore.CreateSandboxOptions) (string, error) {
+func stickyProjectRunConfigHash(baseHash string, run domain.ProjectRunRecord, prepared Preparation, driver, guestImage string, volumeMounts []domain.SandboxVolumeMount, jupyter sessionstore.CreateSandboxOptions) (string, error) {
 	baseHash = strings.TrimSpace(baseHash)
 	if baseHash == "" {
 		return "", nil
 	}
 	capsetIDs := capabilities.NormalizeCapsetIDs(prepared.CapsetIDs)
 	sort.Strings(capsetIDs)
-	volumeSpecs := prepared.Volumes
-	if len(request.Volumes) > 0 {
-		volumeSpecs = request.Volumes
-	}
-	volumes, err := domain.NormalizeVolumeMountSpecs(volumeSpecs)
-	if err != nil {
-		return "", err
-	}
-	sort.Slice(volumes, func(i, j int) bool { return volumes[i].Target < volumes[j].Target })
+	volumeMounts = domain.NormalizeSandboxVolumeMounts(volumeMounts)
+	sort.Slice(volumeMounts, func(i, j int) bool { return volumeMounts[i].Target < volumeMounts[j].Target })
 	payload, err := json.Marshal(stickyProjectRunSandboxConfig{
 		LoaderConfigHash: baseHash,
 		ProjectID:        run.ProjectID,
 		ProjectRevision:  run.ProjectRevision,
 		AgentName:        run.AgentName,
 		ManagedAgentID:   run.ManagedAgentID,
-		Driver:           run.Driver,
-		ImageRef:         run.ImageRef,
+		Driver:           strings.TrimSpace(driver),
+		ImageRef:         strings.TrimSpace(guestImage),
 		EnvItems:         domain.NormalizeEnvItems(prepared.EnvItems),
 		CapsetIDs:        capsetIDs,
 		Workspace:        prepared.Workspace,
-		Volumes:          volumes,
+		VolumeMounts:     volumeMounts,
 		Jupyter:          jupyter,
 	})
 	if err != nil {
@@ -69,28 +63,51 @@ func stickyProjectRunConfigHash(baseHash string, run domain.ProjectRunRecord, pr
 }
 
 func (c *Controller) resolveStickyLoaderBinding(ctx context.Context, store stickyBindingStore, loaderID, triggerID, configHash string) (string, *domain.LoaderBinding, []string, error) {
-	binding, found, err := store.GetLoaderBinding(ctx, loaderID, triggerID)
-	if err != nil {
-		return "", nil, nil, fmt.Errorf("load sticky sandbox binding: %w", err)
-	}
-	if !found {
-		return "", nil, nil, nil
-	}
-	if configHash == "" || binding.SandboxConfigHash == configHash {
-		return binding.SandboxID, &binding, nil, nil
-	}
-
-	unlock := c.lifecycleLocks.Lock(binding.SandboxID)
-	defer unlock()
-	sandbox, err := c.store.GetSandbox(ctx, binding.SandboxID)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", &binding, []string{fmt.Sprintf("stale sticky sandbox %s is unavailable; creating a replacement", binding.SandboxID)}, nil
+	for range 3 {
+		binding, found, err := store.GetLoaderBinding(ctx, loaderID, triggerID)
+		if err != nil {
+			return "", nil, nil, fmt.Errorf("load sticky sandbox binding: %w", err)
 		}
-		return "", &binding, nil, fmt.Errorf("load stale sticky sandbox %s: %w", binding.SandboxID, err)
+		if !found {
+			return "", nil, nil, nil
+		}
+		retiringHash, retiring := loaders.RetiringLoaderBindingConfigHash(binding)
+		if retiring && retiringHash == configHash {
+			return "", &binding, nil, nil
+		}
+		if !retiring && (configHash == "" || binding.SandboxConfigHash == configHash) {
+			return binding.SandboxID, &binding, nil, nil
+		}
+
+		retiringBinding := loaders.RetiringLoaderBinding(binding, configHash)
+		claimed, err := store.CompareAndSwapLoaderBinding(ctx, &binding, retiringBinding)
+		if err != nil {
+			return "", &binding, nil, fmt.Errorf("claim stale sticky sandbox %s retirement: %w", binding.SandboxID, err)
+		}
+		if !claimed {
+			continue
+		}
+
+		unlock := c.lifecycleLocks.Lock(binding.SandboxID)
+		sandbox, err := c.store.GetSandbox(ctx, binding.SandboxID)
+		if err == nil {
+			err = c.stopProjectRunSandbox(ctx, sandbox)
+		}
+		unlock()
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return "", &retiringBinding, []string{fmt.Sprintf("stale sticky sandbox %s is unavailable; creating a replacement", binding.SandboxID)}, nil
+			}
+			return "", &retiringBinding, nil, fmt.Errorf("retire stale sticky sandbox %s: %w", binding.SandboxID, err)
+		}
+		return "", &retiringBinding, []string{fmt.Sprintf("sticky sandbox %s used stale loader configuration; created a replacement", binding.SandboxID)}, nil
 	}
-	if err := c.stopProjectRunSandbox(ctx, sandbox); err != nil {
-		return "", &binding, nil, fmt.Errorf("retire stale sticky sandbox %s: %w", binding.SandboxID, err)
-	}
-	return "", &binding, []string{fmt.Sprintf("sticky sandbox %s used stale loader configuration; created a replacement", binding.SandboxID)}, nil
+	return "", nil, nil, fmt.Errorf("sticky sandbox binding changed concurrently")
+}
+
+func stickyLoaderBindingMatches(current, expected domain.LoaderBinding) bool {
+	return strings.TrimSpace(current.LoaderID) == strings.TrimSpace(expected.LoaderID) &&
+		strings.TrimSpace(current.TriggerID) == strings.TrimSpace(expected.TriggerID) &&
+		strings.TrimSpace(current.SandboxID) == strings.TrimSpace(expected.SandboxID) &&
+		strings.TrimSpace(current.SandboxConfigHash) == strings.TrimSpace(expected.SandboxConfigHash)
 }
